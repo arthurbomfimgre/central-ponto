@@ -6,11 +6,8 @@
   <meta name="description" content="Central de Ponto — Gestão de ponto e ocorrências"/>
   <title>Central de Ponto</title>
 
-  <!-- React 18 (UMD / production) -->
   <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
   <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
-
-  <!-- SheetJS — exportação XLSX -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 
   <style>
@@ -22,32 +19,33 @@
       -webkit-font-smoothing: antialiased;
     }
     #root { min-height: 100vh; }
-
-    /* Loading screen */
     #loading {
       position: fixed; inset: 0; background: #f8fafc;
       display: flex; flex-direction: column; align-items: center; justify-content: center;
-      gap: 16px; z-index: 9999; transition: opacity .3s;
+      gap: 16px; z-index: 9999; transition: opacity .4s;
     }
     #loading .logo {
       width: 64px; height: 64px; border-radius: 20px;
-      background: linear-gradient(135deg,#6366f1,#8b5cf6);
+      background: linear-gradient(135deg, #6366f1, #8b5cf6);
       display: flex; align-items: center; justify-content: center;
       font-size: 28px; box-shadow: 0 8px 24px rgba(99,102,241,.35);
     }
     #loading p { font-size: 14px; color: #94a3b8; font-weight: 500; }
     #loading.hide { opacity: 0; pointer-events: none; }
-
-    /* Scrollbar */
+    #error-box {
+      display: none; position: fixed; inset: 0; background: #fff;
+      align-items: center; justify-content: center; z-index: 99999;
+      flex-direction: column; gap: 12px; padding: 32px; text-align: center;
+    }
+    #error-box.show { display: flex; }
+    #error-box h2 { color: #dc2626; font-size: 18px; }
+    #error-box p { color: #64748b; font-size: 13px; max-width: 480px; line-height: 1.6; }
+    #error-box pre { background: #f1f5f9; border-radius: 8px; padding: 12px 16px; font-size: 11px; color: #374151; text-align: left; max-width: 560px; overflow: auto; }
     ::-webkit-scrollbar { width: 6px; height: 6px; }
     ::-webkit-scrollbar-track { background: #f1f5f9; }
     ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
     ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
-
-    /* Toast animation */
     @keyframes slideIn { from { transform: translateX(110%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
-
-    /* Mobile */
     button, a { -webkit-tap-highlight-color: transparent; }
     html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
   </style>
@@ -55,13 +53,35 @@
 <body>
 
 <div id="loading">
-  <div class="logo">⏱</div>
-  <p>Carregando Central de Ponto…</p>
+  <div class="logo">&#9201;</div>
+  <p>Carregando Central de Ponto&#8230;</p>
+</div>
+
+<div id="error-box">
+  <h2>&#9888;&#65039; Erro ao inicializar</h2>
+  <p>O app nao conseguiu carregar. Verifique sua conexao com a internet (os CDNs do React precisam ser acessiveis) e tente recarregar a pagina.</p>
+  <pre id="error-detail"></pre>
+  <button onclick="location.reload()" style="margin-top:8px;padding:10px 24px;border-radius:10px;border:none;background:#6366f1;color:#fff;font-size:14px;font-weight:700;cursor:pointer;">Recarregar</button>
 </div>
 
 <div id="root"></div>
 
 <script>
+// Detecta se os CDNs carregaram
+window.__cdnCheck = function() {
+  if (typeof React === 'undefined' || typeof ReactDOM === 'undefined') {
+    document.getElementById('error-detail').textContent =
+      'React ou ReactDOM nao carregaram. Verifique a conexao com a internet.';
+    document.getElementById('error-box').classList.add('show');
+    document.getElementById('loading').classList.add('hide');
+    return false;
+  }
+  return true;
+};
+</script>
+
+<script>
+// ── App (pre-compilado — JSX -> JS puro) ─────────────────────────────────────
 const {
   useState,
   useMemo,
@@ -69,7 +89,7 @@ const {
   useEffect,
   useCallback
 } = React;
-const XLSX = window.XLSX;
+// XLSX disponível globalmente via CDN (window.XLSX)
 
 // ─── STORAGE COMPARTILHADO (sincronização em tempo real entre abas) ───────────
 const SK_OCS = "cp_ocorrencias_v4";
@@ -81,14 +101,14 @@ function lerLS(key, fb) {
   try {
     const v = localStorage.getItem(key);
     return v ? JSON.parse(v) : fb;
-  } catch {
+  } catch (_e) {
     return fb;
   }
 }
 function salvarLS(key, val) {
   try {
     localStorage.setItem(key, JSON.stringify(val));
-  } catch {}
+  } catch (_e) {}
 }
 function useSharedState(key, initial) {
   const [state, setRaw] = useState(() => lerLS(key, initial));
@@ -97,7 +117,7 @@ function useSharedState(key, initial) {
       if (e.key === key) {
         try {
           setRaw(JSON.parse(e.newValue));
-        } catch {}
+        } catch (_e) {}
       }
     }
     window.addEventListener("storage", onStorage);
@@ -880,7 +900,7 @@ function fmtHora(iso) {
       hour: "2-digit",
       minute: "2-digit"
     });
-  } catch {
+  } catch (_e) {
     return "";
   }
 }
@@ -892,7 +912,7 @@ function fmtDateHora(iso) {
       hour: "2-digit",
       minute: "2-digit"
     });
-  } catch {
+  } catch (_e) {
     return "";
   }
 }
@@ -5093,15 +5113,40 @@ function App() {
 // ── Boot ─────────────────────────────────────────────────────────────────────
 (function () {
   var loading = document.getElementById('loading');
-  ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(App));
-  requestAnimationFrame(function () {
-    requestAnimationFrame(function () {
-      if (loading) {
-        loading.classList.add('hide');
-        setTimeout(function () { loading.remove(); }, 350);
-      }
+  var errBox  = document.getElementById('error-box');
+  var errDetail = document.getElementById('error-detail');
+
+  function hideLoading() {
+    if (loading) {
+      loading.classList.add('hide');
+      setTimeout(function() { if (loading) loading.style.display = 'none'; }, 450);
+    }
+  }
+
+  function showError(msg) {
+    hideLoading();
+    if (errDetail) errDetail.textContent = String(msg);
+    if (errBox) errBox.classList.add('show');
+  }
+
+  // Verifica CDNs
+  if (typeof React === 'undefined' || typeof ReactDOM === 'undefined' || typeof ReactDOM.createRoot === 'undefined') {
+    showError('CDN nao carregado: React=' + (typeof React) + ' ReactDOM=' + (typeof ReactDOM));
+    return;
+  }
+
+  try {
+    var root = document.getElementById('root');
+    ReactDOM.createRoot(root).render(React.createElement(App));
+    // Remove loading apos dois frames (React ja pintou na tela)
+    requestAnimationFrame(function() {
+      requestAnimationFrame(function() {
+        hideLoading();
+      });
     });
-  });
+  } catch(err) {
+    showError(err && (err.stack || err.message || String(err)));
+  }
 })();
 </script>
 
