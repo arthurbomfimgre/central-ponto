@@ -9,6 +9,7 @@
   <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
   <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -91,56 +92,132 @@ const {
 } = React;
 // XLSX disponível globalmente via CDN (window.XLSX)
 
-// ─── STORAGE COMPARTILHADO (sincronização em tempo real entre abas) ───────────
-const SK_OCS = "cp_ocorrencias_v4";
-const SK_FUNCS = "cp_funcionarios_v4";
-const SK_EASYMOB = "cp_easymob_v4";
+// ─── SUPABASE — banco de dados compartilhado entre dispositivos ───────────────
+const SUPA_URL  = "https://vteziaryedaycjorirod.supabase.co";
+const SUPA_KEY  = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ0ZXppYXJ5ZWRheWNqb3Jpcm9kIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2MzYwNjQsImV4cCI6MjA5NzIxMjA2NH0.swYa6kwbsWUeWI58M6G5sEJ_G7KL6SsV01EOe1CWb3c";
+const supa      = window.supabase.createClient(SUPA_URL, SUPA_KEY);
+
+// Mapeamento: chave -> tabela Supabase
+const SK_OCS    = "cp_ocorrencias_v4";
+const SK_FUNCS  = "cp_funcionarios_v4";
+const SK_EASYMOB= "cp_easymob_v4";
 const SK_NOTIFS = "cp_notifs_v4";
-const SK_RECADOS = "cp_recados_v4";
+const SK_RECADOS= "cp_recados_v4";
+
+const KEY_TABLE = {
+  [SK_OCS]:     "ocorrencias",
+  [SK_FUNCS]:   "funcionarios",
+  [SK_NOTIFS]:  "notificacoes",
+  [SK_RECADOS]: "recados",
+  [SK_EASYMOB]: "easymob",
+};
+
+// Cache local para evitar flickering
+const _cache = {};
+
+// Fallback localStorage
 function lerLS(key, fb) {
-  try {
-    const v = localStorage.getItem(key);
-    return v ? JSON.parse(v) : fb;
-  } catch (_e) {
-    return fb;
-  }
+  try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fb; } catch (_e) { return fb; }
 }
 function salvarLS(key, val) {
-  try {
-    localStorage.setItem(key, JSON.stringify(val));
-  } catch (_e) {}
+  try { localStorage.setItem(key, JSON.stringify(val)); } catch (_e) {}
 }
-function useSharedState(key, initial) {
-  const [state, setRaw] = useState(() => lerLS(key, initial));
-  useEffect(() => {
-    function onStorage(e) {
-      if (e.key === key) {
-        try {
-          setRaw(JSON.parse(e.newValue));
-        } catch (_e) {}
-      }
+
+// Ler do Supabase (retorna array de objetos ou valor easymob)
+async function lerSupa(key, fb) {
+  try {
+    const table = KEY_TABLE[key];
+    if (!table) return fb;
+    if (key === SK_EASYMOB) {
+      const { data } = await supa.from(table).select("*");
+      if (!data || data.length === 0) return fb;
+      // easymob armazena chave/valor simples
+      const obj = {};
+      data.forEach(r => { obj[r.chave] = r.data; });
+      return obj;
     }
-    window.addEventListener("storage", onStorage);
-    return () => window.removeEventListener("storage", onStorage);
-  }, [key]);
+    const { data } = await supa.from(table).select("data");
+    if (!data || data.length === 0) return fb;
+    const result = data.map(r => r.data);
+    _cache[key] = result;
+    salvarLS(key, result);
+    return result;
+  } catch (_e) {
+    return _cache[key] ?? lerLS(key, fb);
+  }
+}
+
+// Salvar no Supabase (substitui todos os registros da tabela)
+async function salvarSupa(key, val) {
+  try {
+    _cache[key] = val;
+    salvarLS(key, val); // cache local imediato
+    const table = KEY_TABLE[key];
+    if (!table) return;
+
+    if (key === SK_EASYMOB) {
+      // easymob é um objeto chave->valor
+      if (typeof val !== "object" || !val) return;
+      for (const [chave, dado] of Object.entries(val)) {
+        await supa.from(table).upsert({ chave, data: dado }, { onConflict: "chave" });
+      }
+      return;
+    }
+
+    // Para listas: upsert cada item pelo id
+    if (!Array.isArray(val)) return;
+    if (val.length === 0) {
+      await supa.from(table).delete().neq("id", -999999);
+      return;
+    }
+    const rows = val.map(item => ({ id: item.id, data: item }));
+    await supa.from(table).upsert(rows, { onConflict: "id" });
+
+    // Remove ids que não existem mais
+    const ids = val.map(i => i.id);
+    await supa.from(table).delete().not("id", "in", "(" + ids.join(",") + ")");
+  } catch (_e) {
+    // falha silenciosa — já salvou no localStorage como fallback
+  }
+}
+
+// Hook principal — carrega do Supabase, mantém sincronia via polling
+function useSharedState(key, initial) {
+  const [state, setRaw] = useState(() => _cache[key] ?? lerLS(key, initial));
+  const loaded = useRef(false);
+
+  // Carga inicial do Supabase
   useEffect(() => {
-    const id = setInterval(() => {
-      const fresh = lerLS(key, null);
-      if (fresh !== null) setRaw(prev => {
-        const ps = JSON.stringify(prev),
-          fs = JSON.stringify(fresh);
-        return ps !== fs ? fresh : prev;
-      });
-    }, 200);
+    lerSupa(key, initial).then(val => {
+      if (val !== null && val !== undefined) {
+        setRaw(val);
+        loaded.current = true;
+      }
+    });
+  }, [key]);
+
+  // Polling a cada 3s para sincronizar entre dispositivos
+  useEffect(() => {
+    const id = setInterval(async () => {
+      const fresh = await lerSupa(key, null);
+      if (fresh !== null && fresh !== undefined) {
+        setRaw(prev => {
+          const ps = JSON.stringify(prev), fs = JSON.stringify(fresh);
+          return ps !== fs ? fresh : prev;
+        });
+      }
+    }, 3000);
     return () => clearInterval(id);
   }, [key]);
+
   const setState = useCallback(valOrFn => {
     setRaw(prev => {
       const next = typeof valOrFn === "function" ? valOrFn(prev) : valOrFn;
-      salvarLS(key, next);
+      salvarSupa(key, next);
       return next;
     });
   }, [key]);
+
   return [state, setState];
 }
 
@@ -5131,7 +5208,7 @@ function App() {
 
   // Verifica CDNs
   if (typeof React === 'undefined' || typeof ReactDOM === 'undefined' || typeof ReactDOM.createRoot === 'undefined') {
-    showError('CDN nao carregado: React=' + (typeof React) + ' ReactDOM=' + (typeof ReactDOM));
+    showError('CDN nao carregado: React=' + (typeof React) + ' ReactDOM=' + (typeof ReactDOM) + ' Supabase=' + (typeof window.supabase));
     return;
   }
 
