@@ -922,6 +922,20 @@ const TIPOS_OCORRENCIA = ["Esquecimento", "Erro de Registro", "Atestado Médico"
 const TIPO_EXIGE_EASYMOB = "Erro de Registro";
 // Tipos que vão direto para pendências sem o colaborador precisar justificar
 const TIPOS_DIRETO = ["Falta", "Banco de Horas", "Abono", "Integração", "Atestado Médico"];
+// Tipo genérico criado pelo admin: o colaborador é quem especifica o motivo depois
+const TIPO_PENDENTE_ESPECIFICACAO = "Pendência do dia";
+// Opções que o colaborador pode escolher para especificar a pendência do dia
+const TIPOS_ESPECIFICAVEIS = TIPOS_OCORRENCIA;
+// Campo do contador de funcionário associado a cada tipo especificável
+const CAMPO_POR_TIPO = {
+  "Esquecimento": "esquecimentos",
+  "Erro de Registro": "erros_registro",
+  "Atestado Médico": "atestados",
+  "Falta": "faltas",
+  "Banco de Horas": "banco_horas",
+  "Abono": "abonos",
+  "Integração": "integracoes"
+};
 const USUARIOS_BASE = [{
   id: "admin",
   nome: "ABRAAO MOREIRA",
@@ -1017,6 +1031,7 @@ function avatarColor(id) {
 }
 function tipoIcon(tipo) {
   const m = {
+    "Pendência do dia": "🗓️",
     "Esquecimento": "🕐",
     "Erro de Registro": "📱",
     "Atestado Médico": "🏥",
@@ -1489,13 +1504,10 @@ function ModalCriarPendencia({
   funcPreSelecionado = null
 }) {
   const [funcId, setFuncId] = useState(funcPreSelecionado ? String(funcPreSelecionado.id) : "");
-  const [tipo, setTipo] = useState(TIPOS_OCORRENCIA[0]);
   const [data, setData] = useState(hoje());
   const [obs, setObs] = useState("");
   const [err, setErr] = useState("");
   const funcAtivos = funcionarios.filter(f => f.ativo).sort((a, b) => a.nome.localeCompare(b.nome));
-  const isErroReg = tipo === TIPO_EXIGE_EASYMOB;
-  const isDireto = TIPOS_DIRETO.includes(tipo);
   function submeter() {
     if (!funcId) {
       setErr("Selecione um colaborador.");
@@ -1507,14 +1519,13 @@ function ModalCriarPendencia({
     }
     onCriar({
       funcionario_id: Number(funcId),
-      tipo,
       data,
       obs
     });
     onClose();
   }
   return /*#__PURE__*/React.createElement(Modal, {
-    title: "➕ Nova pendência",
+    title: "🗓️ Pendência do dia",
     onClose: onClose,
     maxWidth: 560
   }, /*#__PURE__*/React.createElement("div", {
@@ -1577,60 +1588,14 @@ function ModalCriarPendencia({
   }, "Selecione um colaborador…"), funcAtivos.map(f => /*#__PURE__*/React.createElement("option", {
     key: f.id,
     value: f.id
-  }, f.nome, " — ", f.setor)))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
+  }, f.nome, " — ", f.setor)))), /*#__PURE__*/React.createElement("div", {
     style: {
-      fontSize: 13,
-      fontWeight: 600,
-      color: "#374151",
-      display: "block",
-      marginBottom: 8
-    }
-  }, "Tipo de ocorrência ", /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: "#ef4444"
-    }
-  }, "*")), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: "grid",
-      gridTemplateColumns: "repeat(auto-fill,minmax(150px,1fr))",
-      gap: 8
-    }
-  }, TIPOS_OCORRENCIA.map(t => /*#__PURE__*/React.createElement("button", {
-    key: t,
-    onClick: () => setTipo(t),
-    style: {
-      padding: "10px 12px",
-      borderRadius: 10,
-      border: `1.5px solid ${tipo === t ? "#6366f1" : "#e2e8f0"}`,
-      background: tipo === t ? "#f1f0ff" : "#fff",
-      color: tipo === t ? "#4f46e5" : "#374151",
-      fontSize: 13,
-      fontWeight: tipo === t ? 700 : 500,
-      cursor: "pointer",
-      textAlign: "left",
-      display: "flex",
-      alignItems: "center",
-      gap: 8,
-      transition: "all .15s"
-    }
-  }, /*#__PURE__*/React.createElement("span", null, tipoIcon(t)), t, t === TIPO_EXIGE_EASYMOB && /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontSize: 10,
-      background: "#fef3c7",
-      color: "#92400e",
-      padding: "1px 6px",
-      borderRadius: 20,
-      marginLeft: "auto",
-      fontWeight: 700
-    }
-  }, "EasyMob"))))), /*#__PURE__*/React.createElement("div", {
-    style: {
-      background: isErroReg ? "#fef9c3" : isDireto ? "#f0fdf4" : "#eff6ff",
-      border: `1px solid ${isErroReg ? "#fde68a" : isDireto ? "#bbf7d0" : "#bfdbfe"}`,
+      background: "#eff6ff",
+      border: "1px solid #bfdbfe",
       borderRadius: 12,
       padding: "12px 16px",
       fontSize: 13,
-      color: isErroReg ? "#92400e" : isDireto ? "#166534" : "#1d4ed8",
+      color: "#1d4ed8",
       display: "flex",
       gap: 10,
       alignItems: "flex-start"
@@ -1640,7 +1605,7 @@ function ModalCriarPendencia({
       fontSize: 16,
       flexShrink: 0
     }
-  }, isErroReg ? "📱" : isDireto ? "✅ direto" : "✅"), /*#__PURE__*/React.createElement("div", null, isErroReg ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("strong", null, "Erro de Registro:"), " O colaborador deverá enviar o ", /*#__PURE__*/React.createElement("strong", null, "print do EasyMob"), " para comprovar o horário.") : isDireto ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("strong", null, tipo, ":"), " Será lançado diretamente nas pendências. O colaborador só precisará marcar como corrigido.") : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("strong", null, tipo, ":"), " O colaborador marcará como corrigido. Você verifica no sistema Vibe."))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
+  }, "🗓️"), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("strong", null, "Pendência do dia:"), " o colaborador será notificado e, no card da pendência, irá especificar se foi ", /*#__PURE__*/React.createElement("strong", null, "esquecimento"), " ou ", /*#__PURE__*/React.createElement("strong", null, "erro de registro"), " (com envio do print do EasyMob, quando aplicável).")), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
     style: {
       fontSize: 13,
       fontWeight: 600,
@@ -1681,7 +1646,7 @@ function ModalCriarPendencia({
   }, "(opcional)")), /*#__PURE__*/React.createElement("textarea", {
     value: obs,
     onChange: e => setObs(e.target.value),
-    placeholder: isErroReg ? "Ex: Registro de saída não encontrado no Vibe." : "Ex: Ausência registrada no dia informado.",
+    placeholder: "Ex: Verificar registro de ponto do dia informado.",
     style: {
       width: "100%",
       minHeight: 80,
@@ -1760,7 +1725,6 @@ function Dashboard({
   const recentes = [...ocorrencias].filter(o => o.status === "Pendente" || o.status === "Corrigido").sort((a, b) => (b.atualizadoEm || b.data || "").localeCompare(a.atualizadoEm || a.data || "")).slice(0, 6);
   function criarPendencia({
     funcionario_id,
-    tipo,
     data,
     obs
   }) {
@@ -1769,7 +1733,7 @@ function Dashboard({
     const oc = {
       id: Date.now(),
       funcionario_id,
-      tipo,
+      tipo: TIPO_PENDENTE_ESPECIFICACAO,
       data,
       status: "Pendente",
       resposta: "",
@@ -1780,25 +1744,12 @@ function Dashboard({
       novo: false,
       novoParaFunc: true
     };
-    const campo = {
-      "Esquecimento": "esquecimentos",
-      "Atestado Médico": "atestados",
-      "Falta": "faltas",
-      "Banco de Horas": "banco_horas",
-      "Erro de Registro": "erros_registro",
-      "Abono": "abonos",
-      "Integração": "integracoes"
-    }[tipo];
-    if (campo) setFuncionarios(prev => prev.map(f => f.id === funcionario_id ? {
-      ...f,
-      [campo]: f[campo] + 1
-    } : f));
     setOcorrencias(prev => [...prev, oc]);
     if (func) addNotif({
       id: Date.now(),
       icon: "📋",
       title: "Nova pendência",
-      body: `Você recebeu uma nova pendência: ${tipo} (${fmtDate(data)})`,
+      body: `Você recebeu uma nova pendência do dia (${fmtDate(data)}). Especifique o motivo no card.`,
       ts: agora,
       paraFunc: func.id
     });
@@ -1844,7 +1795,7 @@ function Dashboard({
       cursor: "pointer",
       boxShadow: "0 4px 12px rgba(99,102,241,.3)"
     }
-  }, "➕ Nova pendência")), /*#__PURE__*/React.createElement("div", {
+  }, "➕ Pendência do dia")), /*#__PURE__*/React.createElement("div", {
     style: {
       display: "grid",
       gridTemplateColumns: "repeat(auto-fit,minmax(155px,1fr))",
@@ -2659,7 +2610,6 @@ function PerfilFuncionario({
   const total = func.esquecimentos + func.atestados + func.faltas + func.banco_horas + func.erros_registro + func.abonos + (func.integracoes || 0);
   function criarPendencia({
     funcionario_id,
-    tipo,
     data,
     obs
   }) {
@@ -2667,7 +2617,7 @@ function PerfilFuncionario({
     const oc = {
       id: Date.now(),
       funcionario_id,
-      tipo,
+      tipo: TIPO_PENDENTE_ESPECIFICACAO,
       data,
       status: "Pendente",
       resposta: "",
@@ -2678,29 +2628,16 @@ function PerfilFuncionario({
       novo: false,
       novoParaFunc: true
     };
-    const campo = {
-      "Esquecimento": "esquecimentos",
-      "Atestado Médico": "atestados",
-      "Falta": "faltas",
-      "Banco de Horas": "banco_horas",
-      "Erro de Registro": "erros_registro",
-      "Abono": "abonos",
-      "Integração": "integracoes"
-    }[tipo];
-    if (campo) setFuncionarios(prev => prev.map(f => f.id === funcionario_id ? {
-      ...f,
-      [campo]: f[campo] + 1
-    } : f));
     setOcorrencias(prev => [...prev, oc]);
     addNotif({
       id: Date.now(),
       icon: "📋",
       title: "Nova pendência",
-      body: `Você recebeu uma nova pendência: ${tipo} (${fmtDate(data)})`,
+      body: `Você recebeu uma nova pendência do dia (${fmtDate(data)}). Especifique o motivo no card.`,
       ts: agora,
       paraFunc: func.id
     });
-    setSucesso(`Pendência "${tipo}" criada e enviada.`);
+    setSucesso(`Pendência do dia criada e enviada.`);
     setTimeout(() => setSucesso(""), 3500);
   }
   return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("button", {
@@ -2807,7 +2744,7 @@ function PerfilFuncionario({
       alignItems: "center",
       gap: 6
     }
-  }, "➕ Nova pendência")), /*#__PURE__*/React.createElement("div", {
+  }, "➕ Pendência do dia")), /*#__PURE__*/React.createElement("div", {
     style: {
       display: "grid",
       gridTemplateColumns: "repeat(auto-fit,minmax(90px,1fr))",
@@ -3307,7 +3244,7 @@ function PainelAprovacao({
         color: "#94a3b8",
         fontStyle: "italic"
       }
-    }, "Aguardando ação do colaborador."), ehErroReg && /*#__PURE__*/React.createElement("div", {
+    }, o.tipo === TIPO_PENDENTE_ESPECIFICACAO ? "Aguardando o colaborador especificar o motivo." : "Aguardando ação do colaborador."), ehErroReg && /*#__PURE__*/React.createElement("div", {
       style: {
         marginTop: 8,
         display: "flex",
@@ -4475,6 +4412,26 @@ function PortalFuncionario({
     setSucesso(true);
     setTimeout(() => setSucesso(false), 3500);
   }
+  function especificarTipo(oc, tipoEscolhido) {
+    const agora = agoraISO();
+    setOcorrencias(prev => prev.map(o => o.id === oc.id ? {
+      ...o,
+      tipo: tipoEscolhido,
+      atualizadoEm: agora
+    } : o));
+    const campo = CAMPO_POR_TIPO[tipoEscolhido];
+    if (campo) setFuncionarios(prev => prev.map(f => f.id === funcLogado.id ? {
+      ...f,
+      [campo]: f[campo] + 1
+    } : f));
+    addNotif({
+      id: Date.now(),
+      icon: "📋",
+      title: "Pendência especificada",
+      body: `${funcLogado.nome.split(" ").slice(0, 2).join(" ")} especificou a pendência de ${fmtDate(oc.data)} como ${tipoEscolhido}.`,
+      ts: agora
+    });
+  }
   function uploadEasyMob(e, ocId) {
     const file = e.target.files[0];
     if (!file) return;
@@ -4649,11 +4606,12 @@ function PortalFuncionario({
     }
   }, [...minhasOcs].sort((a, b) => b.data.localeCompare(a.data)).map((o, i) => {
     const podeAgir = o.status === "Pendente";
+    const precisaEspecificar = o.tipo === TIPO_PENDENTE_ESPECIFICACAO && podeAgir;
     const ehErroReg = o.tipo === TIPO_EXIGE_EASYMOB;
     const isDireto = TIPOS_DIRETO.includes(o.tipo);
     const easymob = easymobMap[`${funcLogado.id}_${o.id}`];
     const podeEnviar = ehErroReg && !easymob && podeAgir;
-    const podeMarcar = podeAgir && (!ehErroReg || !!easymob);
+    const podeMarcar = podeAgir && !precisaEspecificar && (!ehErroReg || !!easymob);
     return /*#__PURE__*/React.createElement("div", {
       key: o.id,
       style: {
@@ -4715,7 +4673,58 @@ function PortalFuncionario({
         padding: "8px 12px",
         color: "#1d4ed8"
       }
-    }, /*#__PURE__*/React.createElement("strong", null, "Gestor:"), " ", o.observacaoAdmin), podeAgir && /*#__PURE__*/React.createElement("div", {
+    }, /*#__PURE__*/React.createElement("strong", null, "Gestor:"), " ", o.observacaoAdmin), precisaEspecificar && /*#__PURE__*/React.createElement("div", {
+      style: {
+        marginTop: 10,
+        display: "flex",
+        flexDirection: "column",
+        gap: 8
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 12,
+        background: "#eff6ff",
+        border: "1px solid #bfdbfe",
+        borderRadius: 8,
+        padding: "8px 12px",
+        color: "#1d4ed8",
+        fontWeight: 600
+      }
+    }, "📋 Especifique o motivo desta pendência:"), /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: "grid",
+        gridTemplateColumns: "repeat(auto-fill,minmax(150px,1fr))",
+        gap: 8
+      }
+    }, TIPOS_ESPECIFICAVEIS.map(t => /*#__PURE__*/React.createElement("button", {
+      key: t,
+      onClick: () => especificarTipo(o, t),
+      style: {
+        padding: "10px 12px",
+        borderRadius: 10,
+        border: "1.5px solid #e2e8f0",
+        background: "#fff",
+        color: "#374151",
+        fontSize: 13,
+        fontWeight: 500,
+        cursor: "pointer",
+        textAlign: "left",
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        transition: "all .15s"
+      }
+    }, /*#__PURE__*/React.createElement("span", null, tipoIcon(t)), t, t === TIPO_EXIGE_EASYMOB && /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 10,
+        background: "#fef3c7",
+        color: "#92400e",
+        padding: "1px 6px",
+        borderRadius: 20,
+        marginLeft: "auto",
+        fontWeight: 700
+      }
+    }, "EasyMob"))))), podeAgir && !precisaEspecificar && /*#__PURE__*/React.createElement("div", {
       style: {
         marginTop: 8,
         fontSize: 12,
