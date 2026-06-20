@@ -100,6 +100,20 @@
       background: #f8fafc;
       -webkit-font-smoothing: antialiased;
     }
+    /* Campos de formulário herdam a cor de texto do tema em vez da cor
+       padrão do navegador (preta), que ficava ilegível em fundo escuro. */
+    input, select, textarea {
+      color: var(--cinza-900);
+      font-family: inherit;
+    }
+    input::placeholder, textarea::placeholder {
+      color: var(--cinza-400);
+      opacity: 1;
+    }
+    select option {
+      color: var(--cinza-900);
+      background: var(--cor-branco);
+    }
     #root { min-height: 100vh; }
     #loading {
       position: fixed; inset: 0; background: #f8fafc;
