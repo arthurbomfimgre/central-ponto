@@ -5,30 +5,30 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <meta name="description" content="Central de Ponto — Gestão de ponto e ocorrências"/>
   <title>Central de Ponto</title>
- 
+
   <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
   <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
- 
+
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
- 
+
 <div id="loading">
   <div class="logo">&#9201;</div>
   <p>Carregando Central de Ponto&#8230;</p>
 </div>
- 
+
 <div id="error-box">
   <h2>&#9888;&#65039; Erro ao inicializar</h2>
   <p>O app nao conseguiu carregar. Verifique sua conexao com a internet (os CDNs do React precisam ser acessiveis) e tente recarregar a pagina.</p>
   <pre id="error-detail"></pre>
   <button onclick="location.reload()" style="margin-top:8px;padding:10px 24px;border-radius:10px;border:none;background:var(--indigo-500);color:var(--cor-branco);font-size:14px;font-weight:700;cursor:pointer;">Recarregar</button>
 </div>
- 
+
 <div id="root"></div>
- 
+
 <script>
 // Detecta se os CDNs carregaram
 window.__cdnCheck = function() {
@@ -42,7 +42,7 @@ window.__cdnCheck = function() {
   return true;
 };
 </script>
- 
+
 <script>
 // ── App (pre-compilado — JSX -> JS puro) ─────────────────────────────────────
 const {
@@ -53,19 +53,19 @@ const {
   useCallback
 } = React;
 // XLSX disponível globalmente via CDN (window.XLSX)
- 
+
 // ─── SUPABASE — banco de dados compartilhado entre dispositivos ───────────────
 const SUPA_URL  = "https://vteziaryedaycjorirod.supabase.co";
 const SUPA_KEY  = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ0ZXppYXJ5ZWRheWNqb3Jpcm9kIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2MzYwNjQsImV4cCI6MjA5NzIxMjA2NH0.swYa6kwbsWUeWI58M6G5sEJ_G7KL6SsV01EOe1CWb3c";
 const supa      = window.supabase.createClient(SUPA_URL, SUPA_KEY);
- 
+
 // Mapeamento: chave -> tabela Supabase
 const SK_OCS    = "cp_ocorrencias_v4";
 const SK_FUNCS  = "cp_funcionarios_v4";
 const SK_EASYMOB= "cp_easymob_v4";
 const SK_NOTIFS = "cp_notifs_v4";
 const SK_RECADOS= "cp_recados_v4";
- 
+
 const KEY_TABLE = {
   [SK_OCS]:     "ocorrencias",
   [SK_FUNCS]:   "funcionarios",
@@ -73,10 +73,10 @@ const KEY_TABLE = {
   [SK_RECADOS]: "recados",
   [SK_EASYMOB]: "easymob",
 };
- 
+
 // Cache local para evitar flickering
 const _cache = {};
- 
+
 // Fallback localStorage
 function lerLS(key, fb) {
   try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fb; } catch (_e) { return fb; }
@@ -84,7 +84,7 @@ function lerLS(key, fb) {
 function salvarLS(key, val) {
   try { localStorage.setItem(key, JSON.stringify(val)); } catch (_e) {}
 }
- 
+
 // Ler do Supabase (retorna array de objetos ou valor easymob)
 async function lerSupa(key, fb) {
   try {
@@ -108,7 +108,7 @@ async function lerSupa(key, fb) {
     return _cache[key] ?? lerLS(key, fb);
   }
 }
- 
+
 // Salvar no Supabase (substitui todos os registros da tabela)
 async function salvarSupa(key, val) {
   try {
@@ -116,7 +116,7 @@ async function salvarSupa(key, val) {
     salvarLS(key, val); // cache local imediato
     const table = KEY_TABLE[key];
     if (!table) return;
- 
+
     if (key === SK_EASYMOB) {
       // easymob é um objeto chave->valor
       if (typeof val !== "object" || !val) return;
@@ -125,7 +125,7 @@ async function salvarSupa(key, val) {
       }
       return;
     }
- 
+
     // Para listas: upsert cada item pelo id
     if (!Array.isArray(val)) return;
     if (val.length === 0) {
@@ -134,7 +134,7 @@ async function salvarSupa(key, val) {
     }
     const rows = val.map(item => ({ id: item.id, data: item }));
     await supa.from(table).upsert(rows, { onConflict: "id" });
- 
+
     // Remove ids que não existem mais
     const ids = val.map(i => i.id);
     await supa.from(table).delete().not("id", "in", "(" + ids.join(",") + ")");
@@ -142,12 +142,12 @@ async function salvarSupa(key, val) {
     // falha silenciosa — já salvou no localStorage como fallback
   }
 }
- 
+
 // Hook principal — carrega do Supabase, mantém sincronia via polling
 function useSharedState(key, initial) {
   const [state, setRaw] = useState(() => _cache[key] ?? lerLS(key, initial));
   const loaded = useRef(false);
- 
+
   // Carga inicial do Supabase
   useEffect(() => {
     lerSupa(key, initial).then(val => {
@@ -157,7 +157,7 @@ function useSharedState(key, initial) {
       }
     });
   }, [key]);
- 
+
   // Polling a cada 3s para sincronizar entre dispositivos
   useEffect(() => {
     const id = setInterval(async () => {
@@ -171,7 +171,7 @@ function useSharedState(key, initial) {
     }, 3000);
     return () => clearInterval(id);
   }, [key]);
- 
+
   const setState = useCallback(valOrFn => {
     setRaw(prev => {
       const next = typeof valOrFn === "function" ? valOrFn(prev) : valOrFn;
@@ -179,26 +179,26 @@ function useSharedState(key, initial) {
       return next;
     });
   }, [key]);
- 
+
   return [state, setState];
 }
- 
+
 // Hook de tema — preferência local por dispositivo (não sincroniza entre usuários)
 function useTheme() {
   const [theme, setTheme] = useState(() => lerLS("cp_tema", "light"));
- 
+
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
     salvarLS("cp_tema", theme);
   }, [theme]);
- 
+
   const toggleTheme = useCallback(() => {
     setTheme(prev => prev === "dark" ? "light" : "dark");
   }, []);
- 
+
   return [theme, toggleTheme];
 }
- 
+
 // ─── DADOS BASE — SJC/JUNHO PONTO atualizado ─────────────────────────────────
 const FUNCIONARIOS_BASE = [{
   id: 1,
@@ -565,7 +565,7 @@ const FUNCIONARIOS_BASE = [{
   abonos: 0,
   integracoes: 0
 }];
- 
+
 // ─── OCORRÊNCIAS PRÉ-CARREGADAS (SJC/JUNHO — todos Verificados) ───────────────
 const OCS_SJCJUNHO = [{
   id: 100001,
@@ -929,7 +929,7 @@ const USUARIOS_BASE = [{
   senha: f.matricula.toLowerCase(),
   funcionario_id: f.id
 }))];
- 
+
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
 function getSem(esq) {
   return esq <= 1 ? "verde" : esq === 2 ? "amarelo" : "vermelho";
@@ -1020,7 +1020,7 @@ function tipoIcon(tipo) {
   };
   return m[tipo] || "📋";
 }
- 
+
 // ─── COMPONENTES BASE ─────────────────────────────────────────────────────────
 function Badge({
   status
@@ -1290,7 +1290,7 @@ function Toast({
     }
   }, "✕"))));
 }
- 
+
 // ─── TELA DE LOGIN ────────────────────────────────────────────────────────────
 function TelaLogin({
   onLogin
@@ -1500,7 +1500,7 @@ function TelaLogin({
     }
   }, "Ex: func_2 / ic-001 · func_7 / pc-001")))));
 }
- 
+
 // ─── MODAL CRIAR PENDÊNCIA ────────────────────────────────────────────────────
 function ModalCriarPendencia({
   funcionarios,
@@ -1709,7 +1709,7 @@ function ModalCriarPendencia({
     }
   }, /*#__PURE__*/React.createElement("span", null, "➕"), " Criar e enviar ao colaborador"))));
 }
- 
+
 // ─── DASHBOARD ADMIN ──────────────────────────────────────────────────────────
 function Dashboard({
   ocorrencias,
@@ -2044,7 +2044,7 @@ function Dashboard({
     onClose: () => setModalCriar(false)
   }));
 }
- 
+
 // ─── LISTA DE FUNCIONÁRIOS ────────────────────────────────────────────────────
 function ListaFuncionarios({
   setView,
@@ -2593,7 +2593,7 @@ function ListaFuncionarios({
     }
   }, "Sim, excluir permanentemente")))));
 }
- 
+
 // ─── PERFIL DO FUNCIONÁRIO ────────────────────────────────────────────────────
 function PerfilFuncionario({
   func,
@@ -2985,12 +2985,13 @@ function PerfilFuncionario({
     }
   }, "Fechar")))));
 }
- 
+
 // ─── PAINEL DE APROVAÇÃO ──────────────────────────────────────────────────────
 function PainelAprovacao({
   ocorrencias,
   setOcorrencias,
   funcionarios,
+  setFuncionarios,
   addNotif,
   isAdmin
 }) {
@@ -3054,7 +3055,17 @@ function PainelAprovacao({
     setObs("");
   }
   function excluir(id) {
+    const oc = ocorrencias.find(o => o.id === id);
     setOcorrencias(prev => prev.filter(o => o.id !== id));
+    if (oc) {
+      const campo = CAMPO_POR_TIPO[oc.tipo];
+      if (campo) {
+        setFuncionarios(prev => prev.map(f => f.id === oc.funcionario_id ? {
+          ...f,
+          [campo]: Math.max(0, (f[campo] || 0) - 1)
+        } : f));
+      }
+    }
     setModal(null);
     setObs("");
   }
@@ -3449,7 +3460,7 @@ function PainelAprovacao({
     }
   }, modal.acao === "verificar" ? "✓ Confirmar verificação" : modal.acao === "excluir" ? "🗑 Excluir definitivamente" : "✕ Confirmar rejeição")))));
 }
- 
+
 // ─── RELATÓRIOS (admin) ───────────────────────────────────────────────────────
 function Relatorios({
   ocorrencias,
@@ -3458,7 +3469,7 @@ function Relatorios({
   const [mesFiltro, setMesFiltro] = useState("2026-06");
   const [setorFiltro, setSetorFiltro] = useState("Todos");
   const [view, setView] = useState("resumo"); // resumo | detalhe
- 
+
   const ocs = ocorrencias.filter(o => {
     const matchMes = !mesFiltro || o.data.startsWith(mesFiltro);
     const func = funcionarios.find(f => f.id === o.funcionario_id);
@@ -3933,7 +3944,7 @@ function Relatorios({
     }
   }, "Nenhuma ocorrência no período selecionado.")));
 }
- 
+
 // ─── MURAL DE RECADOS ─────────────────────────────────────────────────────────
 function MuralRecados({
   usuario,
@@ -4375,7 +4386,7 @@ function RecadoCard({
     }, counts[e]));
   })))));
 }
- 
+
 // ─── PORTAL DO FUNCIONÁRIO ────────────────────────────────────────────────────
 function PortalFuncionario({
   ocorrencias,
@@ -4393,7 +4404,7 @@ function PortalFuncionario({
   const [sucesso, setSucesso] = useState(false);
   const [easymobMap, setEasymobMap] = useSharedState(`${SK_EASYMOB}_map`, {});
   const easyRef = useRef(null);
- 
+
   // Notificações para este funcionário — com auto-dismiss para verificadas
   const minhasNotifs = notifs.filter(n => n.paraFunc === funcLogado.id);
   const notifsVisiveis = minhasNotifs.filter(n => !n.dismissed).slice(0, 5);
@@ -4403,7 +4414,7 @@ function PortalFuncionario({
       dismissed: true
     } : n));
   }
- 
+
   // Auto-dismiss para "Correção verificada"
   useEffect(() => {
     const paraDispensar = minhasNotifs.filter(n => n.autoDismiss && !n.dismissed);
@@ -4865,7 +4876,7 @@ function PortalFuncionario({
     }, "Aguardando verificação"));
   }))));
 }
- 
+
 // ─── APP PRINCIPAL ────────────────────────────────────────────────────────────
 function App() {
   const [theme, toggleTheme] = useTheme();
@@ -4978,6 +4989,7 @@ function App() {
         ocorrencias: ocorrencias,
         setOcorrencias: setOcorrencias,
         funcionarios: funcionarios,
+        setFuncionarios: setFuncionarios,
         addNotif: addNotif,
         isAdmin: isAdmin
       });
@@ -5242,33 +5254,33 @@ function App() {
     onDismiss: id => setToasts(p => p.filter(t => t.id !== id))
   }));
 }
- 
- 
+
+
 // ── Boot ─────────────────────────────────────────────────────────────────────
 (function () {
   var loading = document.getElementById('loading');
   var errBox  = document.getElementById('error-box');
   var errDetail = document.getElementById('error-detail');
- 
+
   function hideLoading() {
     if (loading) {
       loading.classList.add('hide');
       setTimeout(function() { if (loading) loading.style.display = 'none'; }, 450);
     }
   }
- 
+
   function showError(msg) {
     hideLoading();
     if (errDetail) errDetail.textContent = String(msg);
     if (errBox) errBox.classList.add('show');
   }
- 
+
   // Verifica CDNs
   if (typeof React === 'undefined' || typeof ReactDOM === 'undefined' || typeof ReactDOM.createRoot === 'undefined') {
     showError('CDN nao carregado: React=' + (typeof React) + ' ReactDOM=' + (typeof ReactDOM) + ' Supabase=' + (typeof window.supabase));
     return;
   }
- 
+
   try {
     var root = document.getElementById('root');
     ReactDOM.createRoot(root).render(React.createElement(App));
@@ -5283,8 +5295,6 @@ function App() {
   }
 })();
 </script>
- 
+
 </body>
 </html>
- 
-
