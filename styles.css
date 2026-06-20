@@ -113,3 +113,75 @@
     @keyframes slideIn { from { transform: translateX(110%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
     button, a { -webkit-tap-highlight-color: transparent; }
     html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+
+/* ─── TEMA ESCURO ──────────────────────────────────────────────────────────
+   Redefine apenas as cores neutras (fundos, texto, bordas) usadas em toda a
+   interface. As cores de status (verde, vermelho, âmbar, indigo, etc.)
+   permanecem as mesmas para manter o significado de cada cor reconhecível. */
+[data-theme="dark"] {
+  --cor-branco: #1e293b;
+  --cinza-50: #0f172a;
+  --cinza-100: #1e293b;
+  --cinza-200: #334155;
+  --cinza-300: #475569;
+  --cinza-400: #94a3b8;
+  --cinza-500: #cbd5e1;
+  --cinza-600: #e2e8f0;
+  --cinza-700: #f1f5f9;
+  --cinza-900: #f8fafc;
+
+  --sombra-leve: rgba(0,0,0,.35);
+  --sombra-suave: rgba(0,0,0,.45);
+  --sombra-media: rgba(0,0,0,.55);
+  --sombra-forte: rgba(0,0,0,.6);
+  --overlay-modal: rgba(0,0,0,.7);
+}
+
+[data-theme="dark"] body {
+  background: var(--cinza-50);
+}
+
+[data-theme="dark"] #loading {
+  background: var(--cinza-50);
+}
+
+[data-theme="dark"] #loading p {
+  color: var(--cinza-400);
+}
+
+[data-theme="dark"] #error-box {
+  background: var(--cor-branco);
+}
+
+[data-theme="dark"] #error-box h2 {
+  color: var(--vermelho-600);
+}
+
+[data-theme="dark"] #error-box p {
+  color: var(--cinza-500);
+}
+
+[data-theme="dark"] #error-box pre {
+  background: var(--cinza-100);
+  color: var(--cinza-700);
+}
+
+[data-theme="dark"] ::-webkit-scrollbar-track {
+  background: var(--cinza-100);
+}
+
+[data-theme="dark"] ::-webkit-scrollbar-thumb {
+  background: var(--cinza-300);
+}
+
+[data-theme="dark"] ::-webkit-scrollbar-thumb:hover {
+  background: var(--cinza-400);
+}
+
+html {
+  transition: background-color .2s ease;
+}
+
+body, #root {
+  transition: background-color .2s ease, color .2s ease;
+}
