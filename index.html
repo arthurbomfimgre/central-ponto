@@ -183,6 +183,22 @@ function useSharedState(key, initial) {
   return [state, setState];
 }
 
+// Hook de tema — preferência local por dispositivo (não sincroniza entre usuários)
+function useTheme() {
+  const [theme, setTheme] = useState(() => lerLS("cp_tema", "light"));
+
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", theme);
+    salvarLS("cp_tema", theme);
+  }, [theme]);
+
+  const toggleTheme = useCallback(() => {
+    setTheme(prev => prev === "dark" ? "light" : "dark");
+  }, []);
+
+  return [theme, toggleTheme];
+}
+
 // ─── DADOS BASE — SJC/JUNHO PONTO atualizado ─────────────────────────────────
 const FUNCIONARIOS_BASE = [{
   id: 1,
@@ -1043,6 +1059,33 @@ function Avatar({
       flexShrink: 0
     }
   }, iniciais(nome));
+}
+function BotaoTema({
+  theme,
+  onToggle,
+  compact = false
+}) {
+  return /*#__PURE__*/React.createElement("button", {
+    onClick: onToggle,
+    title: theme === "dark" ? "Mudar para tema claro" : "Mudar para tema escuro",
+    style: {
+      width: compact ? 32 : "100%",
+      height: compact ? 32 : "auto",
+      padding: compact ? 0 : "8px 12px",
+      borderRadius: compact ? "50%" : 10,
+      border: "1px solid var(--cinza-200)",
+      background: "var(--cinza-50)",
+      fontSize: compact ? 15 : 12,
+      fontWeight: 600,
+      cursor: "pointer",
+      color: "var(--cinza-600)",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: compact ? "center" : "flex-start",
+      gap: 8,
+      transition: "background .15s"
+    }
+  }, theme === "dark" ? "☀️" : "🌙", !compact && (theme === "dark" ? "Tema claro" : "Tema escuro"));
 }
 function Semaforo({
   esq
@@ -4793,6 +4836,7 @@ function PortalFuncionario({
 
 // ─── APP PRINCIPAL ────────────────────────────────────────────────────────────
 function App() {
+  const [theme, toggleTheme] = useTheme();
   const [usuario, setUsuario] = useState(null);
   const [view, setView] = useState("dashboard");
   const [funcSelecionado, setFuncSelecionado] = useState(null);
@@ -5040,7 +5084,12 @@ function App() {
       fontSize: 11,
       color: "var(--cinza-400)"
     }
-  }, "Administrador"))), /*#__PURE__*/React.createElement("button", {
+  }, "Administrador"))), /*#__PURE__*/React.createElement(BotaoTema, {
+    theme: theme,
+    onToggle: toggleTheme
+  }), /*#__PURE__*/React.createElement("div", {
+    style: { height: 6 }
+  }), /*#__PURE__*/React.createElement("button", {
     onClick: () => setUsuario(null),
     style: {
       width: "100%",
@@ -5133,7 +5182,11 @@ function App() {
       padding: "3px 10px",
       borderRadius: 20
     }
-  }, "🔔 ", minhasPendentes, " pendência", minhasPendentes > 1 ? "s" : ""), /*#__PURE__*/React.createElement(Avatar, {
+  }, "🔔 ", minhasPendentes, " pendência", minhasPendentes > 1 ? "s" : ""), /*#__PURE__*/React.createElement(BotaoTema, {
+    theme: theme,
+    onToggle: toggleTheme,
+    compact: true
+  }), /*#__PURE__*/React.createElement(Avatar, {
     nome: usuario.nome,
     id: usuario.funcionario_id,
     size: 30
