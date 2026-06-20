@@ -16,7 +16,10 @@
 <body>
 
 <div id="loading">
-  <div class="logo">&#9201;</div>
+  <div class="logo-marca" style="height:40px">
+    <img class="logo-claro" src="assets/logo-porto-vale-claro.png" alt="Porto Vale Consórcio">
+    <img class="logo-escuro" src="assets/logo-porto-vale-escuro.png" alt="Porto Vale Consórcio">
+  </div>
   <p>Carregando Central de Ponto&#8230;</p>
 </div>
 
@@ -1038,6 +1041,23 @@ function Badge({
     }
   }, status);
 }
+// ─── LOGO DA MARCA — troca sozinha entre variação clara/escura via CSS ───────
+function Logo({
+  height = 32
+}) {
+  return /*#__PURE__*/React.createElement("div", {
+    className: "logo-marca",
+    style: { height }
+  }, /*#__PURE__*/React.createElement("img", {
+    className: "logo-claro",
+    src: "assets/logo-porto-vale-claro.png",
+    alt: "Porto Vale Consórcio"
+  }), /*#__PURE__*/React.createElement("img", {
+    className: "logo-escuro",
+    src: "assets/logo-porto-vale-escuro.png",
+    alt: "Porto Vale Consórcio"
+  }));
+}
 function Avatar({
   nome,
   id,
@@ -1339,31 +1359,13 @@ function TelaLogin({
       textAlign: "center",
       marginBottom: 36
     }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      width: 64,
-      height: 64,
-      borderRadius: 20,
-      background: "linear-gradient(135deg,var(--indigo-500),var(--roxo-500))",
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "center",
-      fontSize: 28,
-      margin: "0 auto 16px",
-      boxShadow: "0 8px 24px var(--sombra-indigo-forte)"
-    }
-  }, "⏱"), /*#__PURE__*/React.createElement("h1", {
-    style: {
-      fontSize: 22,
-      fontWeight: 800,
-      color: "var(--cinza-900)",
-      margin: 0
-    }
-  }, "Central de Ponto"), /*#__PURE__*/React.createElement("p", {
+  }, /*#__PURE__*/React.createElement(Logo, {
+    height: 48
+  }), /*#__PURE__*/React.createElement("p", {
     style: {
       color: "var(--cinza-500)",
       fontSize: 14,
-      marginTop: 6
+      marginTop: 14
     }
   }, "Gestão de ponto e pendências")), /*#__PURE__*/React.createElement("div", {
     style: {
@@ -5050,24 +5052,9 @@ function App() {
       marginBottom: 28,
       paddingLeft: 8
     }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      width: 32,
-      height: 32,
-      borderRadius: 10,
-      background: "linear-gradient(135deg,var(--indigo-500),var(--roxo-500))",
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "center",
-      fontSize: 16
-    }
-  }, "⏱"), /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontWeight: 800,
-      fontSize: 15,
-      color: "var(--cinza-900)"
-    }
-  }, "Central de Ponto")), NAV_ADMIN.map(n => /*#__PURE__*/React.createElement("button", {
+  }, /*#__PURE__*/React.createElement(Logo, {
+    height: 26
+  })), NAV_ADMIN.map(n => /*#__PURE__*/React.createElement("button", {
     key: n.id,
     onClick: () => setView(n.id),
     style: {
@@ -5174,24 +5161,9 @@ function App() {
       alignItems: "center",
       gap: 10
     }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      width: 28,
-      height: 28,
-      borderRadius: 8,
-      background: "linear-gradient(135deg,var(--indigo-500),var(--roxo-500))",
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "center",
-      fontSize: 14
-    }
-  }, "⏱"), /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontWeight: 700,
-      fontSize: 14,
-      color: "var(--cinza-900)"
-    }
-  }, "Central de Ponto")), /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement(Logo, {
+    height: 22
+  })), /*#__PURE__*/React.createElement("div", {
     style: {
       display: "flex",
       alignItems: "center",
