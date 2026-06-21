@@ -4016,8 +4016,8 @@ function Relatorios({
     };
   });
   const funcStats = funcStatsBase.filter(f => f.totalOcs > 0).sort((a, b) => b.totalOcs - a.totalOcs);
-  const topMais = [...funcStatsBase].filter(f => f.totalOcs > 0).sort((a, b) => b.totalOcs - a.totalOcs).slice(0, 5);
-  const topMenos = [...funcStatsBase].sort((a, b) => a.totalOcs - b.totalOcs).slice(0, 5);
+  const topMais = [...funcStatsBase].filter(f => f.totalOcs > 0).sort((a, b) => b.totalOcs - a.totalOcs);
+  const topMenos = [...funcStatsBase].sort((a, b) => a.totalOcs - b.totalOcs);
   function exportarXLSX() {
     const rows = ocs.map(o => {
       const func = funcionarios.find(f => f.id === o.funcionario_id);
@@ -4319,6 +4319,13 @@ function Relatorios({
         letterSpacing: ".04em"
       }
     }, "🔺 Mais ocorrências"),
+    /*#__PURE__*/React.createElement("div", {
+      style: {
+        maxHeight: 320,
+        overflowY: "auto",
+        paddingRight: 4
+      }
+    },
     topMais.length === 0 ? /*#__PURE__*/React.createElement("p", {
       style: { fontSize: 12, color: "var(--cinza-400)" }
     }, "Nenhuma ocorrência no período.") : topMais.map((f, i) => /*#__PURE__*/React.createElement("div", {
@@ -4367,7 +4374,7 @@ function Relatorios({
         flexShrink: 0
       }
     }, f.totalOcs))
-  )),
+  ))),
   // ── Coluna: menos ocorrências (inclui estrelinhas zeradas) ────────
   /*#__PURE__*/React.createElement("div", null,
     /*#__PURE__*/React.createElement("div", {
@@ -4383,6 +4390,13 @@ function Relatorios({
         letterSpacing: ".04em"
       }
     }, "🔻 Menos ocorrências"),
+    /*#__PURE__*/React.createElement("div", {
+      style: {
+        maxHeight: 320,
+        overflowY: "auto",
+        paddingRight: 4
+      }
+    },
     topMenos.length === 0 ? /*#__PURE__*/React.createElement("p", {
       style: { fontSize: 12, color: "var(--cinza-400)" }
     }, "Sem dados no período.") : topMenos.map((f, i) => {
@@ -4440,7 +4454,7 @@ function Relatorios({
         }
       }, f.totalOcs));
     })
-  )))) : /*#__PURE__*/React.createElement("div", {
+  ))))) : /*#__PURE__*/React.createElement("div", {
     style: {
       background: "var(--cor-branco)",
       border: "1px solid var(--cinza-100)",
