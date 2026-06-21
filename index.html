@@ -3424,8 +3424,20 @@ function PainelAprovacao({
   const [modal, setModal] = useState(null);
   const [obs, setObs] = useState("");
   const [filtro, setFiltro] = useState("Corrigido");
+  const [filtroSetor, setFiltroSetor] = useState("Todos");
+  const [filtroCargo, setFiltroCargo] = useState("Todos");
   const [easymobMap] = useSharedState(`${SK_EASYMOB}_map`, {});
-  const lista = ocorrencias.filter(o => filtro === "Todos" || o.status === filtro).sort((a, b) => (b.atualizadoEm || b.data || "").localeCompare(a.atualizadoEm || a.data || ""));
+  const cargosDisponiveis = useMemo(() => [...new Set(funcionarios.map(f => f.cargo))].sort((a, b) => a.localeCompare(b, "pt-BR", {
+    sensitivity: "base"
+  })), [funcionarios]);
+  const lista = ocorrencias.filter(o => {
+    if (filtro !== "Todos" && o.status !== filtro) return false;
+    const func = funcionarios.find(f => f.id === o.funcionario_id);
+    if (!func) return false;
+    if (filtroSetor !== "Todos" && func.setor !== filtroSetor) return false;
+    if (filtroCargo !== "Todos" && func.cargo !== filtroCargo) return false;
+    return true;
+  }).sort((a, b) => (b.atualizadoEm || b.data || "").localeCompare(a.atualizadoEm || a.data || ""));
   useEffect(() => {
     const novos = ocorrencias.filter(o => o.novo).map(o => o.id);
     if (novos.length) setTimeout(() => setOcorrencias(prev => prev.map(o => novos.includes(o.id) ? {
@@ -3485,11 +3497,18 @@ function PainelAprovacao({
     setModal(null);
     setObs("");
   }
+  const ocorrenciasFiltroSC = ocorrencias.filter(o => {
+    const func = funcionarios.find(f => f.id === o.funcionario_id);
+    if (!func) return false;
+    if (filtroSetor !== "Todos" && func.setor !== filtroSetor) return false;
+    if (filtroCargo !== "Todos" && func.cargo !== filtroCargo) return false;
+    return true;
+  });
   const contadores = {
-    Todos: ocorrencias.length,
-    ...Object.fromEntries(STATUS_LIST.map(s => [s, ocorrencias.filter(o => o.status === s).length]))
+    Todos: ocorrenciasFiltroSC.length,
+    ...Object.fromEntries(STATUS_LIST.map(s => [s, ocorrenciasFiltroSC.filter(o => o.status === s).length]))
   };
-  const novosCorrigidos = ocorrencias.filter(o => o.status === "Corrigido" && o.novo).length;
+  const novosCorrigidos = ocorrenciasFiltroSC.filter(o => o.status === "Corrigido" && o.novo).length;
   return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     style: {
       marginBottom: 24
@@ -3548,6 +3567,83 @@ function PainelAprovacao({
       fontWeight: 700
     }
   }, novosCorrigidos, " novo", novosCorrigidos > 1 ? "s" : "")))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      gap: 12,
+      marginBottom: 20,
+      flexWrap: "wrap",
+      alignItems: "flex-end"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      flexDirection: "column",
+      gap: 4
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 11,
+      fontWeight: 700,
+      color: "var(--cinza-400)",
+      textTransform: "uppercase",
+      letterSpacing: ".05em"
+    }
+  }, "Setor"), /*#__PURE__*/React.createElement("select", {
+    value: filtroSetor,
+    onChange: e => setFiltroSetor(e.target.value),
+    style: {
+      padding: "9px 14px",
+      borderRadius: 10,
+      border: "1px solid var(--cinza-200)",
+      fontSize: 13,
+      background: "var(--cor-branco)",
+      cursor: "pointer"
+    }
+  }, SETORES.map(s => /*#__PURE__*/React.createElement("option", {
+    key: s
+  }, s)))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      flexDirection: "column",
+      gap: 4
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 11,
+      fontWeight: 700,
+      color: "var(--cinza-400)",
+      textTransform: "uppercase",
+      letterSpacing: ".05em"
+    }
+  }, "Cargo"), /*#__PURE__*/React.createElement("select", {
+    value: filtroCargo,
+    onChange: e => setFiltroCargo(e.target.value),
+    style: {
+      padding: "9px 14px",
+      borderRadius: 10,
+      border: "1px solid var(--cinza-200)",
+      fontSize: 13,
+      background: "var(--cor-branco)",
+      cursor: "pointer"
+    }
+  }, ["Todos", ...cargosDisponiveis].map(c => /*#__PURE__*/React.createElement("option", {
+    key: c
+  }, c)))), (filtroSetor !== "Todos" || filtroCargo !== "Todos") && /*#__PURE__*/React.createElement("button", {
+    onClick: () => {
+      setFiltroSetor("Todos");
+      setFiltroCargo("Todos");
+    },
+    style: {
+      padding: "9px 14px",
+      borderRadius: 10,
+      border: "1px solid var(--cinza-200)",
+      background: "var(--cinza-50)",
+      fontSize: 12,
+      fontWeight: 600,
+      color: "var(--cinza-500)",
+      cursor: "pointer"
+    }
+  }, "✕ Limpar filtros")), /*#__PURE__*/React.createElement("div", {
     style: {
       display: "flex",
       flexDirection: "column",
