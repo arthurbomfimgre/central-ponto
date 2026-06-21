@@ -220,6 +220,15 @@
   --excedido-500: #a78bfa;
   --excedido-600: #c4b5fd;
   --excedido-700: #ddd6fe;
+
+  /* Amarelo — usado nos cards de destaque "novo" (pendências). Precisa de
+     fundo escurecido e texto claro no tema escuro, senão o texto herdado
+     (ex: var(--cinza-900) virando quase-branco) fica ilegível sobre o
+     amarelo claro original. */
+  --amarelo-50:  #2e2608;
+  --amarelo-100: #3d320a;
+  --amarelo-700: #fde047;
+  --amarelo-800: #fef08a;
 }
 
 [data-theme="dark"] body {
