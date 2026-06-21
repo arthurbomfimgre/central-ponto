@@ -958,7 +958,7 @@ const USUARIOS_BASE = [{
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
 function getSem(esq) {
-  return esq <= 1 ? "verde" : esq === 2 ? "amarelo" : "vermelho";
+  return esq <= 1 ? "verde" : esq === 2 ? "amarelo" : esq === 3 ? "vermelho" : "roxo";
 }
 function getAlert(esq) {
   return esq <= 1 ? {
@@ -969,10 +969,14 @@ function getAlert(esq) {
     cor: "var(--amber-600)",
     bg: "var(--amber-100)",
     label: "Atenção"
-  } : {
+  } : esq === 3 ? {
     cor: "var(--vermelho-600)",
     bg: "var(--vermelho-100)",
     label: "Limite"
+  } : {
+    cor: "var(--excedido-600)",
+    bg: "var(--excedido-100)",
+    label: "Excedido"
   };
 }
 function iniciais(n) {
@@ -1140,13 +1144,13 @@ function Semaforo({
       gap: 4,
       alignItems: "center"
     }
-  }, ["verde", "amarelo", "vermelho"].map(c => /*#__PURE__*/React.createElement("div", {
+  }, ["verde", "amarelo", "vermelho", "roxo"].map(c => /*#__PURE__*/React.createElement("div", {
     key: c,
     style: {
       width: 10,
       height: 10,
       borderRadius: "50%",
-      background: s === c ? c === "verde" ? "var(--verde-600)" : c === "amarelo" ? "var(--amber-500)" : "var(--vermelho-600)" : "var(--cinza-200)"
+      background: s === c ? c === "verde" ? "var(--verde-600)" : c === "amarelo" ? "var(--amber-500)" : c === "vermelho" ? "var(--vermelho-600)" : "var(--excedido-600)" : "var(--cinza-200)"
     }
   })));
 }
@@ -1748,7 +1752,6 @@ function Dashboard({
   const [modalCriar, setModalCriar] = useState(false);
   const ativos = funcionarios.filter(f => f.ativo).length;
   const pendentes = ocorrencias.filter(o => o.status === "Pendente").length;
-  const corrigidos = ocorrencias.filter(o => o.status === "Corrigido").length;
   const verif = ocorrencias.filter(o => o.status === "Verificado").length;
   const contagens = useMemo(() => {
     const map = {};
@@ -1758,7 +1761,8 @@ function Dashboard({
     return map;
   }, [ocorrencias, funcionarios]);
   const alerta = funcionarios.filter(f => contagens[f.id].esquecimentos === 2).length;
-  const limite = funcionarios.filter(f => contagens[f.id].esquecimentos >= 3).length;
+  const limite = funcionarios.filter(f => contagens[f.id].esquecimentos === 3).length;
+  const excedido = funcionarios.filter(f => contagens[f.id].esquecimentos >= 4).length;
   const recentes = [...ocorrencias].filter(o => o.status === "Pendente" || o.status === "Corrigido").sort((a, b) => (b.atualizadoEm || b.data || "").localeCompare(a.atualizadoEm || a.data || "")).slice(0, 6);
   function criarPendencia({
     funcionario_id,
@@ -1851,12 +1855,6 @@ function Dashboard({
     accent: pendentes > 0 ? "var(--vermelho-600)" : undefined,
     icon: "⏳"
   }), /*#__PURE__*/React.createElement(KpiCard, {
-    label: "Para verificar",
-    value: corrigidos,
-    sub: "Confirme no Vibe",
-    accent: corrigidos > 0 ? "var(--amber-600)" : undefined,
-    icon: "🔍"
-  }), /*#__PURE__*/React.createElement(KpiCard, {
     label: "Verificados",
     value: verif,
     sub: "Concluídos",
@@ -1870,9 +1868,15 @@ function Dashboard({
   }), /*#__PURE__*/React.createElement(KpiCard, {
     label: "Limite",
     value: limite,
-    sub: "3+ esquecimentos",
+    sub: "3 esquecimentos",
     accent: "var(--vermelho-600)",
     icon: "🔴"
+  }), /*#__PURE__*/React.createElement(KpiCard, {
+    label: "Excedido",
+    value: excedido,
+    sub: "4+ esquecimentos",
+    accent: "var(--excedido-600)",
+    icon: "🟣"
   })), /*#__PURE__*/React.createElement("div", {
     style: {
       display: "grid",
@@ -2109,7 +2113,7 @@ function ListaFuncionarios({
     const ok1 = f.nome.toLowerCase().includes(busca.toLowerCase()) || f.matricula.toLowerCase().includes(busca.toLowerCase());
     const ok2 = setor === "Todos" || f.setor === setor;
     const esq = contagens[f.id].esquecimentos;
-    const ok3 = filtroAlerta === "Todos" || filtroAlerta === "Normal" && esq <= 1 || filtroAlerta === "Atenção" && esq === 2 || filtroAlerta === "Limite" && esq >= 3;
+    const ok3 = filtroAlerta === "Todos" || filtroAlerta === "Normal" && esq <= 1 || filtroAlerta === "Atenção" && esq === 2 || filtroAlerta === "Limite" && esq === 3 || filtroAlerta === "Excedido" && esq >= 4;
     return ok1 && ok2 && ok3;
   }), [busca, setor, filtroAlerta, funcionarios, contagens]);
   function adicionar() {
@@ -2285,7 +2289,7 @@ function ListaFuncionarios({
       background: "var(--cor-branco)",
       cursor: "pointer"
     }
-  }, ["Todos", "Normal", "Atenção", "Limite"].map(s => /*#__PURE__*/React.createElement("option", {
+  }, ["Todos", "Normal", "Atenção", "Limite", "Excedido"].map(s => /*#__PURE__*/React.createElement("option", {
     key: s
   }, s))))), /*#__PURE__*/React.createElement("div", {
     style: {
@@ -4737,15 +4741,15 @@ function PortalFuncionario({
     }
   }, l)))), contagemFunc.esquecimentos >= 2 && /*#__PURE__*/React.createElement("div", {
     style: {
-      background: contagemFunc.esquecimentos >= 3 ? "var(--vermelho-100)" : "var(--amber-100)",
-      border: `1px solid ${contagemFunc.esquecimentos >= 3 ? "var(--vermelho-300)" : "var(--amber-200)"}`,
+      background: contagemFunc.esquecimentos >= 4 ? "var(--excedido-100)" : contagemFunc.esquecimentos === 3 ? "var(--vermelho-100)" : "var(--amber-100)",
+      border: `1px solid ${contagemFunc.esquecimentos >= 4 ? "var(--excedido-300)" : contagemFunc.esquecimentos === 3 ? "var(--vermelho-300)" : "var(--amber-200)"}`,
       borderRadius: 14,
       padding: "16px 20px",
       marginBottom: 20,
       fontSize: 13,
-      color: contagemFunc.esquecimentos >= 3 ? "var(--vermelho-600)" : "var(--amber-800)"
+      color: contagemFunc.esquecimentos >= 4 ? "var(--excedido-700)" : contagemFunc.esquecimentos === 3 ? "var(--vermelho-600)" : "var(--amber-800)"
     }
-  }, contagemFunc.esquecimentos >= 3 ? "🔴 Você atingiu o limite de 3 esquecimentos. Procure seu gestor." : `🟡 Você tem ${contagemFunc.esquecimentos} esquecimento(s) este mês. O limite é 3.`), /*#__PURE__*/React.createElement("div", {
+  }, contagemFunc.esquecimentos >= 4 ? `🟣 Você excedeu o limite de esquecimentos (${contagemFunc.esquecimentos} este mês). Procure seu gestor com urgência.` : contagemFunc.esquecimentos === 3 ? "🔴 Você atingiu o limite de 3 esquecimentos. Procure seu gestor." : `🟡 Você tem ${contagemFunc.esquecimentos} esquecimento(s) este mês. O limite é 3.`), /*#__PURE__*/React.createElement("div", {
     style: {
       background: "var(--cor-branco)",
       border: "1px solid var(--cinza-100)",
