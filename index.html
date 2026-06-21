@@ -1015,6 +1015,34 @@ function fmtDateHora(iso) {
     return "";
   }
 }
+// Gera a lista de meses disponíveis para seleção em relatórios, começando
+// em abril/2026 (início do registro de ponto eletrônico) até o mês atual.
+// Cada item: { valor: "2026-04", label: "Abril 2026" }
+function mesesDisponiveis() {
+  const INICIO_ANO = 2026;
+  const INICIO_MES = 4; // abril
+  const agora = new Date();
+  const anoAtual = agora.getFullYear();
+  const mesAtual = agora.getMonth() + 1; // 1-12
+
+  const nomesMeses = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
+  const lista = [];
+  let ano = INICIO_ANO;
+  let mes = INICIO_MES;
+  while (ano < anoAtual || ano === anoAtual && mes <= mesAtual) {
+    lista.push({
+      valor: `${ano}-${String(mes).padStart(2, "0")}`,
+      label: `${nomesMeses[mes - 1]} ${ano}`
+    });
+    mes++;
+    if (mes > 12) {
+      mes = 1;
+      ano++;
+    }
+  }
+  // Mais recente primeiro (melhor pra dropdown de relatórios)
+  return lista.reverse();
+}
 function statusColor(s) {
   if (s === "Verificado") return {
     bg: "var(--verde-100)",
@@ -3994,7 +4022,7 @@ function Relatorios({
   ocorrencias,
   funcionarios
 }) {
-  const [mesFiltro, setMesFiltro] = useState("2026-06");
+  const [mesFiltro, setMesFiltro] = useState(() => mesesDisponiveis()[0]?.valor || "2026-04");
   const [setorFiltro, setSetorFiltro] = useState("Todos");
   const [view, setView] = useState("resumo"); // resumo | detalhe
 
@@ -4126,8 +4154,7 @@ function Relatorios({
       textTransform: "uppercase",
       letterSpacing: ".05em"
     }
-  }, "Mês"), /*#__PURE__*/React.createElement("input", {
-    type: "month",
+  }, "Mês"), /*#__PURE__*/React.createElement("select", {
     value: mesFiltro,
     onChange: e => setMesFiltro(e.target.value),
     style: {
@@ -4139,7 +4166,10 @@ function Relatorios({
       background: "var(--cor-branco)",
       colorScheme: "light dark"
     }
-  })), /*#__PURE__*/React.createElement("div", {
+  }, mesesDisponiveis().map(m => /*#__PURE__*/React.createElement("option", {
+    key: m.valor,
+    value: m.valor
+  }, m.label)))), /*#__PURE__*/React.createElement("div", {
     style: {
       display: "flex",
       flexDirection: "column",
