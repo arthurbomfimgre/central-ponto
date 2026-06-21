@@ -4017,7 +4017,7 @@ function Relatorios({
   });
   const funcStats = funcStatsBase.filter(f => f.totalOcs > 0).sort((a, b) => b.totalOcs - a.totalOcs);
   const topMais = [...funcStatsBase].filter(f => f.totalOcs > 0).sort((a, b) => b.totalOcs - a.totalOcs);
-  const topMenos = [...funcStatsBase].sort((a, b) => a.totalOcs - b.totalOcs);
+  const topMenos = [...funcStatsBase].filter(f => f.totalOcs === 0).sort((a, b) => a.nome.localeCompare(b.nome));
   function exportarXLSX() {
     const rows = ocs.map(o => {
       const func = funcionarios.find(f => f.id === o.funcionario_id);
