@@ -917,6 +917,29 @@ const CAMPO_POR_TIPO = {
   "Abono": "abonos",
   "Integração": "integracoes"
 };
+// Calcula os contadores de um funcionário SEMPRE ao vivo a partir da lista real
+// de ocorrências (em vez de depender de campos fixos salvos no funcionário).
+// Isso evita qualquer dessincronia ao criar/excluir/especificar ocorrências.
+// Ocorrências Rejeitadas não entram na contagem.
+function contarOcorrencias(ocorrencias, funcionarioId) {
+  const contagem = {
+    esquecimentos: 0,
+    atestados: 0,
+    faltas: 0,
+    banco_horas: 0,
+    erros_registro: 0,
+    abonos: 0,
+    integracoes: 0
+  };
+  ocorrencias.forEach(o => {
+    if (o.funcionario_id !== funcionarioId) return;
+    if (o.status === "Rejeitado") return;
+    const campo = CAMPO_POR_TIPO[o.tipo];
+    if (campo) contagem[campo] += 1;
+  });
+  const total = contagem.esquecimentos + contagem.atestados + contagem.faltas + contagem.banco_horas + contagem.erros_registro + contagem.abonos + contagem.integracoes;
+  return { ...contagem, total };
+}
 const USUARIOS_BASE = [{
   id: "admin",
   nome: "ABRAAO MOREIRA",
@@ -1727,8 +1750,15 @@ function Dashboard({
   const pendentes = ocorrencias.filter(o => o.status === "Pendente").length;
   const corrigidos = ocorrencias.filter(o => o.status === "Corrigido").length;
   const verif = ocorrencias.filter(o => o.status === "Verificado").length;
-  const alerta = funcionarios.filter(f => f.esquecimentos === 2).length;
-  const limite = funcionarios.filter(f => f.esquecimentos >= 3).length;
+  const contagens = useMemo(() => {
+    const map = {};
+    funcionarios.forEach(f => {
+      map[f.id] = contarOcorrencias(ocorrencias, f.id);
+    });
+    return map;
+  }, [ocorrencias, funcionarios]);
+  const alerta = funcionarios.filter(f => contagens[f.id].esquecimentos === 2).length;
+  const limite = funcionarios.filter(f => contagens[f.id].esquecimentos >= 3).length;
   const recentes = [...ocorrencias].filter(o => o.status === "Pendente" || o.status === "Corrigido").sort((a, b) => (b.atualizadoEm || b.data || "").localeCompare(a.atualizadoEm || a.data || "")).slice(0, 6);
   function criarPendencia({
     funcionario_id,
@@ -1864,7 +1894,7 @@ function Dashboard({
       color: "var(--cinza-900)",
       margin: "0 0 16px"
     }
-  }, "Monitor de esquecimentos"), funcionarios.filter(f => f.ativo && f.esquecimentos > 0).length === 0 ? /*#__PURE__*/React.createElement("div", {
+  }, "Monitor de esquecimentos"), funcionarios.filter(f => f.ativo && contagens[f.id].esquecimentos > 0).length === 0 ? /*#__PURE__*/React.createElement("div", {
     style: {
       textAlign: "center",
       padding: "32px 0",
@@ -1877,8 +1907,8 @@ function Dashboard({
       flexDirection: "column",
       gap: 8
     }
-  }, funcionarios.filter(f => f.ativo).sort((a, b) => b.esquecimentos - a.esquecimentos).filter(f => f.esquecimentos > 0).slice(0, 8).map(f => {
-    const al = getAlert(f.esquecimentos);
+  }, funcionarios.filter(f => f.ativo).sort((a, b) => contagens[b.id].esquecimentos - contagens[a.id].esquecimentos).filter(f => contagens[f.id].esquecimentos > 0).slice(0, 8).map(f => {
+    const al = getAlert(contagens[f.id].esquecimentos);
     return /*#__PURE__*/React.createElement("div", {
       key: f.id,
       style: {
@@ -1919,7 +1949,7 @@ function Dashboard({
         color: "var(--cinza-400)"
       }
     }, f.setor)), /*#__PURE__*/React.createElement(Semaforo, {
-      esq: f.esquecimentos
+      esq: contagens[f.id].esquecimentos
     }), /*#__PURE__*/React.createElement("span", {
       style: {
         fontSize: 11,
@@ -1929,7 +1959,7 @@ function Dashboard({
         borderRadius: 20,
         fontWeight: 600
       }
-    }, f.esquecimentos));
+    }, contagens[f.id].esquecimentos));
   }))), /*#__PURE__*/React.createElement("div", {
     style: {
       background: "var(--cor-branco)",
@@ -2068,12 +2098,20 @@ function ListaFuncionarios({
   });
   const [err, setErr] = useState("");
   const [sucesso, setSucesso] = useState("");
+  const contagens = useMemo(() => {
+    const map = {};
+    funcionarios.forEach(f => {
+      map[f.id] = contarOcorrencias(ocorrencias, f.id);
+    });
+    return map;
+  }, [ocorrencias, funcionarios]);
   const lista = useMemo(() => funcionarios.filter(f => {
     const ok1 = f.nome.toLowerCase().includes(busca.toLowerCase()) || f.matricula.toLowerCase().includes(busca.toLowerCase());
     const ok2 = setor === "Todos" || f.setor === setor;
-    const ok3 = filtroAlerta === "Todos" || filtroAlerta === "Normal" && f.esquecimentos <= 1 || filtroAlerta === "Atenção" && f.esquecimentos === 2 || filtroAlerta === "Limite" && f.esquecimentos >= 3;
+    const esq = contagens[f.id].esquecimentos;
+    const ok3 = filtroAlerta === "Todos" || filtroAlerta === "Normal" && esq <= 1 || filtroAlerta === "Atenção" && esq === 2 || filtroAlerta === "Limite" && esq >= 3;
     return ok1 && ok2 && ok3;
-  }), [busca, setor, filtroAlerta, funcionarios]);
+  }), [busca, setor, filtroAlerta, funcionarios, contagens]);
   function adicionar() {
     if (!novo.nome.trim() || !novo.cargo.trim()) {
       setErr("Preencha nome e cargo.");
@@ -2281,7 +2319,7 @@ function ListaFuncionarios({
       whiteSpace: "nowrap"
     }
   }, h)))), /*#__PURE__*/React.createElement("tbody", null, lista.map((f, i) => {
-    const al = getAlert(f.esquecimentos);
+    const al = getAlert(contagens[f.id].esquecimentos);
     return /*#__PURE__*/React.createElement("tr", {
       key: f.id,
       style: {
@@ -2344,7 +2382,7 @@ function ListaFuncionarios({
         gap: 8
       }
     }, /*#__PURE__*/React.createElement(Semaforo, {
-      esq: f.esquecimentos
+      esq: contagens[f.id].esquecimentos
     }), /*#__PURE__*/React.createElement("span", {
       style: {
         fontSize: 12,
@@ -2354,7 +2392,7 @@ function ListaFuncionarios({
         borderRadius: 20,
         fontWeight: 700
       }
-    }, f.esquecimentos))), /*#__PURE__*/React.createElement("td", {
+    }, contagens[f.id].esquecimentos))), /*#__PURE__*/React.createElement("td", {
       style: {
         padding: "12px 16px"
       }
@@ -2615,17 +2653,11 @@ function PerfilFuncionario({
   const [confirmExcluirOc, setConfirmExcluirOc] = useState(null);
   const ocsFunc = ocorrencias.filter(o => o.funcionario_id === func.id);
   const ocsFilt = (filtroStatus === "Todos" ? ocsFunc : ocsFunc.filter(o => o.status === filtroStatus)).sort((a, b) => b.data.localeCompare(a.data));
-  const al = getAlert(func.esquecimentos);
-  const total = func.esquecimentos + func.atestados + func.faltas + func.banco_horas + func.erros_registro + func.abonos + (func.integracoes || 0);
+  const contagem = contarOcorrencias(ocorrencias, func.id);
+  const al = getAlert(contagem.esquecimentos);
+  const total = contagem.total;
   function excluirOcorrencia(oc) {
     setOcorrencias(prev => prev.filter(o => o.id !== oc.id));
-    const campo = CAMPO_POR_TIPO[oc.tipo];
-    if (campo) {
-      setFuncionarios(prev => prev.map(f => f.id === oc.funcionario_id ? {
-        ...f,
-        [campo]: Math.max(0, (f[campo] || 0) - 1)
-      } : f));
-    }
     setConfirmExcluirOc(null);
     setSucesso("Ocorrência excluída com sucesso.");
     setTimeout(() => setSucesso(""), 3000);
@@ -2732,7 +2764,7 @@ function PerfilFuncionario({
       borderRadius: 20,
       fontWeight: 700
     }
-  }, func.esquecimentos, " esq. · ", al.label)), /*#__PURE__*/React.createElement("div", {
+  }, contagem.esquecimentos, " esq. · ", al.label)), /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 13,
       color: "var(--cinza-500)",
@@ -2745,7 +2777,7 @@ function PerfilFuncionario({
       marginTop: 8
     }
   }, /*#__PURE__*/React.createElement(Semaforo, {
-    esq: func.esquecimentos
+    esq: contagem.esquecimentos
   }), /*#__PURE__*/React.createElement("span", {
     style: {
       fontSize: 12,
@@ -2775,7 +2807,7 @@ function PerfilFuncionario({
       paddingTop: 20,
       borderTop: "1px solid var(--cinza-100)"
     }
-  }, [["Total", total, "var(--cinza-900)"], ["Esq.", func.esquecimentos, al.cor], ["Atestados", func.atestados, "var(--azul-500)"], ["Faltas", func.faltas, "var(--vermelho-500)"], ["Banco H.", func.banco_horas, "var(--roxo-500)"], ["Erros Reg.", func.erros_registro, "var(--amber-500)"], ["Abonos", func.abonos, "var(--teal-500)"], ["Integr.", func.integracoes || 0, "var(--ciano-500)"]].map(([l, v, c]) => /*#__PURE__*/React.createElement("div", {
+  }, [["Total", total, "var(--cinza-900)"], ["Esq.", contagem.esquecimentos, al.cor], ["Atestados", contagem.atestados, "var(--azul-500)"], ["Faltas", contagem.faltas, "var(--vermelho-500)"], ["Banco H.", contagem.banco_horas, "var(--roxo-500)"], ["Erros Reg.", contagem.erros_registro, "var(--amber-500)"], ["Abonos", contagem.abonos, "var(--teal-500)"], ["Integr.", contagem.integracoes, "var(--ciano-500)"]].map(([l, v, c]) => /*#__PURE__*/React.createElement("div", {
     key: l,
     style: {
       textAlign: "center",
@@ -3160,17 +3192,7 @@ function PainelAprovacao({
     setObs("");
   }
   function excluir(id) {
-    const oc = ocorrencias.find(o => o.id === id);
     setOcorrencias(prev => prev.filter(o => o.id !== id));
-    if (oc) {
-      const campo = CAMPO_POR_TIPO[oc.tipo];
-      if (campo) {
-        setFuncionarios(prev => prev.map(f => f.id === oc.funcionario_id ? {
-          ...f,
-          [campo]: Math.max(0, (f[campo] || 0) - 1)
-        } : f));
-      }
-    }
     setModal(null);
     setObs("");
   }
@@ -3255,7 +3277,7 @@ function PainelAprovacao({
   }, "Nenhuma ocorrência neste filtro."), lista.map(o => {
     const func = funcionarios.find(f => f.id === o.funcionario_id);
     if (!func) return null;
-    const al = getAlert(func.esquecimentos);
+    const al = getAlert(contarOcorrencias(ocorrencias, func.id).esquecimentos);
     const podeVerif = o.status === "Corrigido";
     const ehErroReg = o.tipo === TIPO_EXIGE_EASYMOB;
     const easymob = easymobMap[`${func.id}_${o.id}`];
@@ -4507,6 +4529,7 @@ function PortalFuncionario({
 }) {
   const funcLogado = funcionarios.find(f => f.id === usuarioLogado.funcionario_id) || funcionarios[0];
   const minhasOcs = ocorrencias.filter(o => o.funcionario_id === funcLogado.id);
+  const contagemFunc = contarOcorrencias(ocorrencias, funcLogado.id);
   const [modal, setModal] = useState(null);
   const [sucesso, setSucesso] = useState(false);
   const [easymobMap, setEasymobMap] = useSharedState(`${SK_EASYMOB}_map`, {});
@@ -4574,11 +4597,6 @@ function PortalFuncionario({
       tipo: tipoEscolhido,
       atualizadoEm: agora
     } : o));
-    const campo = CAMPO_POR_TIPO[tipoEscolhido];
-    if (campo) setFuncionarios(prev => prev.map(f => f.id === funcLogado.id ? {
-      ...f,
-      [campo]: f[campo] + 1
-    } : f));
     addNotif({
       id: Date.now(),
       icon: "📋",
@@ -4599,7 +4617,7 @@ function PortalFuncionario({
     };
     r.readAsDataURL(file);
   }
-  const al = getAlert(funcLogado.esquecimentos);
+  const al = getAlert(contagemFunc.esquecimentos);
   const minhasPendentes = minhasOcs.filter(o => o.status === "Pendente").length;
   return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     style: {
@@ -4695,7 +4713,7 @@ function PortalFuncionario({
       gap: 12,
       marginBottom: 20
     }
-  }, [["Pendentes", minhasOcs.filter(o => o.status === "Pendente").length, "var(--amber-500)"], ["Corrigidos", minhasOcs.filter(o => o.status === "Corrigido").length, "var(--azul-500)"], ["Verificados", minhasOcs.filter(o => o.status === "Verificado").length, "var(--verde-600)"], ["Esquecimentos", funcLogado.esquecimentos, getAlert(funcLogado.esquecimentos).cor]].map(([l, v, c]) => /*#__PURE__*/React.createElement("div", {
+  }, [["Pendentes", minhasOcs.filter(o => o.status === "Pendente").length, "var(--amber-500)"], ["Corrigidos", minhasOcs.filter(o => o.status === "Corrigido").length, "var(--azul-500)"], ["Verificados", minhasOcs.filter(o => o.status === "Verificado").length, "var(--verde-600)"], ["Esquecimentos", contagemFunc.esquecimentos, getAlert(contagemFunc.esquecimentos).cor]].map(([l, v, c]) => /*#__PURE__*/React.createElement("div", {
     key: l,
     style: {
       background: "var(--cor-branco)",
@@ -4717,17 +4735,17 @@ function PortalFuncionario({
       color: "var(--cinza-400)",
       marginTop: 4
     }
-  }, l)))), funcLogado.esquecimentos >= 2 && /*#__PURE__*/React.createElement("div", {
+  }, l)))), contagemFunc.esquecimentos >= 2 && /*#__PURE__*/React.createElement("div", {
     style: {
-      background: funcLogado.esquecimentos >= 3 ? "var(--vermelho-100)" : "var(--amber-100)",
-      border: `1px solid ${funcLogado.esquecimentos >= 3 ? "var(--vermelho-300)" : "var(--amber-200)"}`,
+      background: contagemFunc.esquecimentos >= 3 ? "var(--vermelho-100)" : "var(--amber-100)",
+      border: `1px solid ${contagemFunc.esquecimentos >= 3 ? "var(--vermelho-300)" : "var(--amber-200)"}`,
       borderRadius: 14,
       padding: "16px 20px",
       marginBottom: 20,
       fontSize: 13,
-      color: funcLogado.esquecimentos >= 3 ? "var(--vermelho-600)" : "var(--amber-800)"
+      color: contagemFunc.esquecimentos >= 3 ? "var(--vermelho-600)" : "var(--amber-800)"
     }
-  }, funcLogado.esquecimentos >= 3 ? "🔴 Você atingiu o limite de 3 esquecimentos. Procure seu gestor." : `🟡 Você tem ${funcLogado.esquecimentos} esquecimento(s) este mês. O limite é 3.`), /*#__PURE__*/React.createElement("div", {
+  }, contagemFunc.esquecimentos >= 3 ? "🔴 Você atingiu o limite de 3 esquecimentos. Procure seu gestor." : `🟡 Você tem ${contagemFunc.esquecimentos} esquecimento(s) este mês. O limite é 3.`), /*#__PURE__*/React.createElement("div", {
     style: {
       background: "var(--cor-branco)",
       border: "1px solid var(--cinza-100)",
