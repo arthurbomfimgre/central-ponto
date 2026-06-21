@@ -108,10 +108,13 @@
       background: #f8fafc;
       -webkit-font-smoothing: antialiased;
     }
-    /* Campos de formulário herdam a cor de texto do tema em vez da cor
-       padrão do navegador (preta), que ficava ilegível em fundo escuro. */
+    /* Campos de formulário herdam cor de texto E fundo do tema em vez dos
+       padrões do navegador. Sem o background explícito, no tema escuro a cor
+       do texto (clara) ficava sobre o fundo branco padrão do <textarea>/
+       <input>, sem nenhum contraste. */
     input, select, textarea {
       color: var(--cinza-900);
+      background-color: var(--cor-branco);
       font-family: inherit;
     }
     input::placeholder, textarea::placeholder {
