@@ -1527,7 +1527,14 @@ function TelaLogin({
     style: {
       color: "var(--cinza-400)"
     }
-  }, "Ex: func_2 / ic-001 · func_7 / pc-001")))));
+  }, "Ex: func_2 / ic-001 · func_7 / pc-001")))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      textAlign: "center",
+      marginTop: 24,
+      fontSize: 11,
+      color: "var(--cinza-400)"
+    }
+  }, "Tecnologia GRE · Desenvolvido por Arthur Bomfim"));
 }
 
 // ─── MODAL CRIAR PENDÊNCIA ────────────────────────────────────────────────────
@@ -5828,7 +5835,17 @@ function App() {
       fontWeight: 500,
       textAlign: "left"
     }
-  }, "Sair"))), /*#__PURE__*/React.createElement("div", {
+  }, "Sair"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 14,
+      paddingTop: 12,
+      borderTop: "1px solid var(--cinza-100)",
+      fontSize: 10,
+      lineHeight: 1.5,
+      color: "var(--cinza-300)",
+      textAlign: "center"
+    }
+  }, "Tecnologia GRE", /*#__PURE__*/React.createElement("br", null), "Desenvolvido por Arthur Bomfim"))), /*#__PURE__*/React.createElement("div", {
     style: {
       flex: 1,
       minWidth: 0
@@ -5914,7 +5931,16 @@ function App() {
     style: {
       padding: isAdmin ? "32px 36px" : "24px"
     }
-  }, renderView())), /*#__PURE__*/React.createElement(Toast, {
+  }, renderView(), !isAdmin && /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 32,
+      paddingTop: 16,
+      borderTop: "1px solid var(--cinza-100)",
+      fontSize: 11,
+      color: "var(--cinza-300)",
+      textAlign: "center"
+    }
+  }, "Tecnologia GRE · Desenvolvido por Arthur Bomfim"))), /*#__PURE__*/React.createElement(Toast, {
     toasts: toasts,
     onDismiss: id => setToasts(p => p.filter(t => t.id !== id))
   }));
