@@ -1182,6 +1182,33 @@ function Semaforo({
     }
   })));
 }
+// Seletor de mês reutilizável — usado no cabeçalho das telas do admin
+// (Dashboard, Funcionários, Perfil, Verificações, Relatórios). Controla o
+// filtro de mês global centralizado no App.
+function SeletorMes({
+  mesFiltro,
+  setMesFiltro
+}) {
+  return /*#__PURE__*/React.createElement("select", {
+    value: mesFiltro,
+    onChange: e => setMesFiltro(e.target.value),
+    style: {
+      padding: "11px 14px",
+      borderRadius: 12,
+      border: "1px solid var(--cinza-200)",
+      fontSize: 13,
+      fontWeight: 600,
+      outline: "none",
+      background: "var(--cor-branco)",
+      color: "var(--cinza-900)",
+      cursor: "pointer",
+      colorScheme: "light dark"
+    }
+  }, mesesDisponiveis().map(m => /*#__PURE__*/React.createElement("option", {
+    key: m.valor,
+    value: m.valor
+  }, m.label)));
+}
 function KpiCard({
   label,
   value,
@@ -2022,23 +2049,27 @@ function Dashboard({
   funcionarios,
   setOcorrencias,
   setFuncionarios,
-  addNotif
+  addNotif,
+  mesFiltro,
+  setMesFiltro
 }) {
   const [modalCriar, setModalCriar] = useState(false);
+  // ocorrencias já chega filtrada pelo mês selecionado globalmente (via App)
+  const ocorrenciasMes = ocorrencias;
   const ativos = funcionarios.filter(f => f.ativo).length;
-  const pendentes = ocorrencias.filter(o => o.status === "Pendente").length;
-  const verif = ocorrencias.filter(o => o.status === "Verificado").length;
+  const pendentes = ocorrenciasMes.filter(o => o.status === "Pendente").length;
+  const verif = ocorrenciasMes.filter(o => o.status === "Verificado").length;
   const contagens = useMemo(() => {
     const map = {};
     funcionarios.forEach(f => {
-      map[f.id] = contarOcorrencias(ocorrencias, f.id);
+      map[f.id] = contarOcorrencias(ocorrenciasMes, f.id);
     });
     return map;
-  }, [ocorrencias, funcionarios]);
+  }, [ocorrenciasMes, funcionarios]);
   const alerta = funcionarios.filter(f => contagens[f.id].esquecimentos === 2).length;
   const limite = funcionarios.filter(f => contagens[f.id].esquecimentos === 3).length;
   const excedido = funcionarios.filter(f => contagens[f.id].esquecimentos >= 4).length;
-  const recentes = [...ocorrencias].filter(o => o.status === "Pendente" || o.status === "Corrigido").sort((a, b) => (b.atualizadoEm || b.data || "").localeCompare(a.atualizadoEm || a.data || "")).slice(0, 6);
+  const recentes = [...ocorrenciasMes].filter(o => o.status === "Pendente" || o.status === "Corrigido").sort((a, b) => (b.atualizadoEm || b.data || "").localeCompare(a.atualizadoEm || a.data || "")).slice(0, 6);
   function criarPendencia({
     funcionario_id,
     data,
@@ -2095,7 +2126,17 @@ function Dashboard({
   }, "Visão geral · ", new Date().toLocaleDateString("pt-BR", {
     month: "long",
     year: "numeric"
-  }))), /*#__PURE__*/React.createElement("button", {
+  }))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      alignItems: "center",
+      gap: 10,
+      flexWrap: "wrap"
+    }
+  }, /*#__PURE__*/React.createElement(SeletorMes, {
+    mesFiltro: mesFiltro,
+    setMesFiltro: setMesFiltro
+  }), /*#__PURE__*/React.createElement("button", {
     onClick: () => setModalCriar(true),
     style: {
       display: "flex",
@@ -2111,7 +2152,7 @@ function Dashboard({
       cursor: "pointer",
       boxShadow: "0 4px 12px var(--sombra-indigo-media)"
     }
-  }, "➕ Pendência do dia")), /*#__PURE__*/React.createElement("div", {
+  }, "➕ Pendência do dia"))), /*#__PURE__*/React.createElement("div", {
     style: {
       display: "grid",
       gridTemplateColumns: "repeat(auto-fit,minmax(155px,1fr))",
@@ -2374,7 +2415,9 @@ function ListaFuncionarios({
   funcionarios,
   setFuncionarios,
   ocorrencias,
-  setOcorrencias
+  setOcorrencias,
+  mesFiltro,
+  setMesFiltro
 }) {
   const [busca, setBusca] = useState("");
   const [setor, setSetor] = useState("Todos");
@@ -2478,7 +2521,17 @@ function ListaFuncionarios({
       marginTop: 4,
       fontSize: 14
     }
-  }, funcionarios.filter(f => f.ativo).length, " ativos · ", funcionarios.length, " total")), /*#__PURE__*/React.createElement("button", {
+  }, funcionarios.filter(f => f.ativo).length, " ativos · ", funcionarios.length, " total")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      alignItems: "center",
+      gap: 10,
+      flexWrap: "wrap"
+    }
+  }, /*#__PURE__*/React.createElement(SeletorMes, {
+    mesFiltro: mesFiltro,
+    setMesFiltro: setMesFiltro
+  }), /*#__PURE__*/React.createElement("button", {
     onClick: () => setModalAdd(true),
     style: {
       display: "flex",
@@ -2493,7 +2546,7 @@ function ListaFuncionarios({
       fontWeight: 700,
       cursor: "pointer"
     }
-  }, "+ Adicionar funcionário")), sucesso && /*#__PURE__*/React.createElement("div", {
+  }, "+ Adicionar funcionário"))), sucesso && /*#__PURE__*/React.createElement("div", {
     style: {
       background: "var(--verde-100)",
       border: "1px solid var(--verde-200)",
@@ -2967,7 +3020,9 @@ function PerfilFuncionario({
   setView,
   funcionarios,
   setFuncionarios,
-  addNotif
+  addNotif,
+  mesFiltro,
+  setMesFiltro
 }) {
   const [filtroStatus, setFiltroStatus] = useState("Todos");
   const [modalCriar, setModalCriar] = useState(false);
@@ -3018,7 +3073,16 @@ function PerfilFuncionario({
     setSucesso(`Pendência do dia criada e enviada.`);
     setTimeout(() => setSucesso(""), 3500);
   }
-  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("button", {
+  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "space-between",
+      marginBottom: 20,
+      flexWrap: "wrap",
+      gap: 12
+    }
+  }, /*#__PURE__*/React.createElement("button", {
     onClick: () => setView("funcionarios"),
     style: {
       background: "none",
@@ -3027,10 +3091,12 @@ function PerfilFuncionario({
       fontSize: 13,
       fontWeight: 600,
       cursor: "pointer",
-      padding: 0,
-      marginBottom: 20
+      padding: 0
     }
-  }, "← Voltar para funcionários"), sucesso && /*#__PURE__*/React.createElement("div", {
+  }, "← Voltar para funcionários"), /*#__PURE__*/React.createElement(SeletorMes, {
+    mesFiltro: mesFiltro,
+    setMesFiltro: setMesFiltro
+  })), sucesso && /*#__PURE__*/React.createElement("div", {
     style: {
       background: "var(--verde-100)",
       border: "1px solid var(--verde-200)",
@@ -3454,7 +3520,9 @@ function PainelAprovacao({
   funcionarios,
   setFuncionarios,
   addNotif,
-  isAdmin
+  isAdmin,
+  mesFiltro,
+  setMesFiltro
 }) {
   const [modal, setModal] = useState(null);
   const [obs, setObs] = useState("");
@@ -3546,9 +3614,14 @@ function PainelAprovacao({
   const novosCorrigidos = ocorrenciasFiltroSC.filter(o => o.status === "Corrigido" && o.novo).length;
   return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     style: {
-      marginBottom: 24
+      display: "flex",
+      alignItems: "flex-start",
+      justifyContent: "space-between",
+      marginBottom: 24,
+      flexWrap: "wrap",
+      gap: 12
     }
-  }, /*#__PURE__*/React.createElement("h1", {
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("h1", {
     style: {
       fontSize: 24,
       fontWeight: 700,
@@ -3561,7 +3634,10 @@ function PainelAprovacao({
       marginTop: 4,
       fontSize: 14
     }
-  }, "Verifique no sistema ", /*#__PURE__*/React.createElement("strong", null, "Vibe"), " se as correções dos colaboradores procedem.")), /*#__PURE__*/React.createElement("div", {
+  }, "Verifique no sistema ", /*#__PURE__*/React.createElement("strong", null, "Vibe"), " se as correções dos colaboradores procedem.")), /*#__PURE__*/React.createElement(SeletorMes, {
+    mesFiltro: mesFiltro,
+    setMesFiltro: setMesFiltro
+  })), /*#__PURE__*/React.createElement("div", {
     style: {
       display: "flex",
       gap: 8,
@@ -4020,17 +4096,18 @@ function PainelAprovacao({
 // ─── RELATÓRIOS (admin) ───────────────────────────────────────────────────────
 function Relatorios({
   ocorrencias,
-  funcionarios
+  funcionarios,
+  mesFiltro,
+  setMesFiltro
 }) {
-  const [mesFiltro, setMesFiltro] = useState(() => mesesDisponiveis()[0]?.valor || "2026-04");
   const [setorFiltro, setSetorFiltro] = useState("Todos");
   const [view, setView] = useState("resumo"); // resumo | detalhe
 
+  // ocorrencias já chega filtrada pelo mês selecionado globalmente (via App)
   const ocs = ocorrencias.filter(o => {
-    const matchMes = !mesFiltro || o.data.startsWith(mesFiltro);
     const func = funcionarios.find(f => f.id === o.funcionario_id);
     const matchSetor = setorFiltro === "Todos" || func && func.setor === setorFiltro;
-    return matchMes && matchSetor;
+    return matchSetor;
   });
   const totalPorTipo = TIPOS_OCORRENCIA.map(t => ({
     tipo: t,
@@ -4112,7 +4189,17 @@ function Relatorios({
       marginTop: 4,
       fontSize: 14
     }
-  }, "Análise de ocorrências e exportação de dados")), /*#__PURE__*/React.createElement("button", {
+  }, "Análise de ocorrências e exportação de dados")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      alignItems: "center",
+      gap: 10,
+      flexWrap: "wrap"
+    }
+  }, /*#__PURE__*/React.createElement(SeletorMes, {
+    mesFiltro: mesFiltro,
+    setMesFiltro: setMesFiltro
+  }), /*#__PURE__*/React.createElement("button", {
     onClick: exportarXLSX,
     style: {
       display: "flex",
@@ -4128,7 +4215,7 @@ function Relatorios({
       cursor: "pointer",
       boxShadow: "0 4px 12px var(--sombra-verde)"
     }
-  }, "📥 Exportar XLSX")), /*#__PURE__*/React.createElement("div", {
+  }, "📥 Exportar XLSX"))), /*#__PURE__*/React.createElement("div", {
     style: {
       background: "var(--cor-branco)",
       border: "1px solid var(--cinza-100)",
@@ -4141,35 +4228,6 @@ function Relatorios({
       alignItems: "flex-end"
     }
   }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: "flex",
-      flexDirection: "column",
-      gap: 4
-    }
-  }, /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontSize: 11,
-      fontWeight: 700,
-      color: "var(--cinza-400)",
-      textTransform: "uppercase",
-      letterSpacing: ".05em"
-    }
-  }, "Mês"), /*#__PURE__*/React.createElement("select", {
-    value: mesFiltro,
-    onChange: e => setMesFiltro(e.target.value),
-    style: {
-      padding: "9px 14px",
-      borderRadius: 10,
-      border: "1px solid var(--cinza-200)",
-      fontSize: 13,
-      outline: "none",
-      background: "var(--cor-branco)",
-      colorScheme: "light dark"
-    }
-  }, mesesDisponiveis().map(m => /*#__PURE__*/React.createElement("option", {
-    key: m.valor,
-    value: m.valor
-  }, m.label)))), /*#__PURE__*/React.createElement("div", {
     style: {
       display: "flex",
       flexDirection: "column",
@@ -5050,8 +5108,14 @@ function PortalFuncionario({
   setNotifs
 }) {
   const funcLogado = funcionarios.find(f => f.id === usuarioLogado.funcionario_id) || funcionarios[0];
-  const minhasOcs = ocorrencias.filter(o => o.funcionario_id === funcLogado.id);
-  const contagemFunc = contarOcorrencias(ocorrencias, funcLogado.id);
+  // O portal do funcionário sempre acompanha o mês ATUAL (calendário real), não
+  // um filtro manual. Pendências/correções ainda em aberto (Pendente ou
+  // Corrigido aguardando verificação) continuam visíveis mesmo após o mês
+  // virar — só somem quando finalizadas (Verificado/Rejeitado).
+  const mesAtualReal = hoje().slice(0, 7);
+  const ocorrenciasPortal = useMemo(() => ocorrencias.filter(o => o.funcionario_id === funcLogado.id && (o.data.startsWith(mesAtualReal) || o.status === "Pendente" || o.status === "Corrigido")), [ocorrencias, funcLogado.id, mesAtualReal]);
+  const minhasOcs = ocorrenciasPortal;
+  const contagemFunc = contarOcorrencias(ocorrenciasPortal, funcLogado.id);
   const [modal, setModal] = useState(null);
   const [sucesso, setSucesso] = useState(false);
   const [easymobMap, setEasymobMap] = useSharedState(`${SK_EASYMOB}_map`, {});
@@ -5619,6 +5683,8 @@ function App() {
   const [funcionarios, setFuncionarios] = useSharedState(SK_FUNCS, FUNCIONARIOS_BASE);
   const [ocorrencias, setOcorrencias] = useSharedState(SK_OCS, OCS_SJCJUNHO);
   const [notifs, setNotifs] = useSharedState(SK_NOTIFS, []);
+  const [mesFiltro, setMesFiltro] = useState(() => mesesDisponiveis()[0]?.valor || "2026-04");
+  const ocorrenciasFiltradas = useMemo(() => ocorrencias.filter(o => o.data.startsWith(mesFiltro)), [ocorrencias, mesFiltro]);
   const isAdmin = usuario?.role === "admin";
   function addNotif(n) {
     setNotifs(prev => [n, ...prev].slice(0, 50));
@@ -5692,42 +5758,52 @@ function App() {
   function renderView() {
     if (isAdmin) {
       if (view === "dashboard") return /*#__PURE__*/React.createElement(Dashboard, {
-        ocorrencias: ocorrencias,
+        ocorrencias: ocorrenciasFiltradas,
         setView: setView,
         setFuncSelecionado: setFuncSelecionado,
         funcionarios: funcionarios,
         setOcorrencias: setOcorrencias,
         setFuncionarios: setFuncionarios,
-        addNotif: addNotif
+        addNotif: addNotif,
+        mesFiltro: mesFiltro,
+        setMesFiltro: setMesFiltro
       });
       if (view === "funcionarios") return /*#__PURE__*/React.createElement(ListaFuncionarios, {
         setView: setView,
         setFuncSelecionado: setFuncSelecionado,
         funcionarios: funcionarios,
         setFuncionarios: setFuncionarios,
-        ocorrencias: ocorrencias,
-        setOcorrencias: setOcorrencias
+        ocorrencias: ocorrenciasFiltradas,
+        setOcorrencias: setOcorrencias,
+        mesFiltro: mesFiltro,
+        setMesFiltro: setMesFiltro
       });
       if (view === "perfil" && funcSelecionado) return /*#__PURE__*/React.createElement(PerfilFuncionario, {
         func: funcSelecionado,
-        ocorrencias: ocorrencias,
+        ocorrencias: ocorrenciasFiltradas,
         setOcorrencias: setOcorrencias,
         setView: setView,
         funcionarios: funcionarios,
         setFuncionarios: setFuncionarios,
-        addNotif: addNotif
+        addNotif: addNotif,
+        mesFiltro: mesFiltro,
+        setMesFiltro: setMesFiltro
       });
       if (view === "aprovacao") return /*#__PURE__*/React.createElement(PainelAprovacao, {
-        ocorrencias: ocorrencias,
+        ocorrencias: ocorrenciasFiltradas,
         setOcorrencias: setOcorrencias,
         funcionarios: funcionarios,
         setFuncionarios: setFuncionarios,
         addNotif: addNotif,
-        isAdmin: isAdmin
+        isAdmin: isAdmin,
+        mesFiltro: mesFiltro,
+        setMesFiltro: setMesFiltro
       });
       if (view === "relatorios") return /*#__PURE__*/React.createElement(Relatorios, {
-        ocorrencias: ocorrencias,
-        funcionarios: funcionarios
+        ocorrencias: ocorrenciasFiltradas,
+        funcionarios: funcionarios,
+        mesFiltro: mesFiltro,
+        setMesFiltro: setMesFiltro
       });
       if (view === "mural") return /*#__PURE__*/React.createElement(MuralRecados, {
         usuario: usuario,
