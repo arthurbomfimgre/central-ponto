@@ -1189,11 +1189,25 @@ function SeletorMes({
   mesFiltro,
   setMesFiltro
 }) {
-  return /*#__PURE__*/React.createElement("select", {
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      position: "relative",
+      display: "inline-flex",
+      alignItems: "center"
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      position: "absolute",
+      left: 13,
+      fontSize: 14,
+      lineHeight: 1,
+      pointerEvents: "none"
+    }
+  }, "📅"), /*#__PURE__*/React.createElement("select", {
     value: mesFiltro,
     onChange: e => setMesFiltro(e.target.value),
     style: {
-      padding: "11px 14px",
+      padding: "11px 14px 11px 36px",
       borderRadius: 12,
       border: "1px solid var(--cinza-200)",
       fontSize: 13,
@@ -1202,12 +1216,234 @@ function SeletorMes({
       background: "var(--cor-branco)",
       color: "var(--cinza-900)",
       cursor: "pointer",
-      colorScheme: "light dark"
+      colorScheme: "light dark",
+      appearance: "none",
+      WebkitAppearance: "none"
     }
   }, mesesDisponiveis().map(m => /*#__PURE__*/React.createElement("option", {
     key: m.valor,
     value: m.valor
-  }, m.label)));
+  }, m.label))), /*#__PURE__*/React.createElement("span", {
+    style: {
+      position: "absolute",
+      right: 12,
+      fontSize: 10,
+      color: "var(--cinza-400)",
+      pointerEvents: "none"
+    }
+  }, "▾"));
+}
+
+// ─── SELETOR DE DATA (calendário popup customizado) ───────────────────────────
+// Substitui o <input type="date"> nativo por um popup próprio, com a grade de
+// dias estilizada na cor da marca. value/onChange têm o mesmo contrato do
+// input nativo (string "YYYY-MM-DD"), então é um drop-in replacement.
+const DIAS_SEMANA = ["D", "S", "T", "Q", "Q", "S", "S"];
+const MESES_ABREV = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
+function gerarGradeMes(ano, mes) {
+  // mes: 0-11
+  const primeiroDia = new Date(ano, mes, 1).getDay();
+  const totalDias = new Date(ano, mes + 1, 0).getDate();
+  const celulas = [];
+  for (let i = 0; i < primeiroDia; i++) celulas.push(null);
+  for (let d = 1; d <= totalDias; d++) celulas.push(d);
+  return celulas;
+}
+function SeletorData({
+  value,
+  onChange,
+  placeholder = "Selecionar data"
+}) {
+  const [aberto, setAberto] = useState(false);
+  const [hoverDia, setHoverDia] = useState(null);
+  const wrapRef = useRef(null);
+  const dataValor = value ? new Date(value + "T00:00:00") : null;
+  const [cursorAno, setCursorAno] = useState(() => (dataValor || new Date()).getFullYear());
+  const [cursorMes, setCursorMes] = useState(() => (dataValor || new Date()).getMonth());
+  useEffect(() => {
+    if (!aberto) return;
+    function aoClicarFora(e) {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) setAberto(false);
+    }
+    document.addEventListener("mousedown", aoClicarFora);
+    return () => document.removeEventListener("mousedown", aoClicarFora);
+  }, [aberto]);
+  function abrirNoValorAtual() {
+    const base = dataValor || new Date();
+    setCursorAno(base.getFullYear());
+    setCursorMes(base.getMonth());
+    setAberto(true);
+  }
+  function mudarMes(delta) {
+    let m = cursorMes + delta;
+    let a = cursorAno;
+    if (m < 0) {
+      m = 11;
+      a -= 1;
+    } else if (m > 11) {
+      m = 0;
+      a += 1;
+    }
+    setCursorMes(m);
+    setCursorAno(a);
+  }
+  function selecionarDia(dia) {
+    if (!dia) return;
+    const mm = String(cursorMes + 1).padStart(2, "0");
+    const dd = String(dia).padStart(2, "0");
+    onChange(`${cursorAno}-${mm}-${dd}`);
+    setAberto(false);
+  }
+  const hojeStr = hoje();
+  const celulas = gerarGradeMes(cursorAno, cursorMes);
+  return /*#__PURE__*/React.createElement("div", {
+    ref: wrapRef,
+    style: {
+      position: "relative"
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    onClick: () => aberto ? setAberto(false) : abrirNoValorAtual(),
+    style: {
+      width: "100%",
+      display: "flex",
+      alignItems: "center",
+      gap: 10,
+      padding: "10px 14px",
+      borderRadius: 10,
+      border: `1px solid ${aberto ? "var(--marca-400)" : "var(--cinza-200)"}`,
+      fontSize: 13,
+      outline: "none",
+      boxSizing: "border-box",
+      background: "var(--cor-branco)",
+      color: value ? "var(--cinza-900)" : "var(--cinza-400)",
+      cursor: "pointer",
+      boxShadow: aberto ? "0 0 0 3px var(--marca-transparente)" : "none",
+      transition: "border-color .15s, box-shadow .15s"
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 15,
+      lineHeight: 1
+    }
+  }, "📅"), /*#__PURE__*/React.createElement("span", {
+    style: {
+      flex: 1,
+      textAlign: "left"
+    }
+  }, value ? fmtDate(value) : placeholder)), aberto && /*#__PURE__*/React.createElement("div", {
+    style: {
+      position: "absolute",
+      top: "calc(100% + 8px)",
+      left: 0,
+      zIndex: 50,
+      background: "var(--cor-branco)",
+      border: "1px solid var(--cinza-100)",
+      borderRadius: 16,
+      boxShadow: "0 8px 28px var(--sombra-media)",
+      padding: 16,
+      width: 280
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "space-between",
+      marginBottom: 14
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    onClick: () => mudarMes(-1),
+    style: {
+      border: "none",
+      background: "var(--cinza-50)",
+      color: "var(--marca-500)",
+      width: 30,
+      height: 30,
+      borderRadius: 8,
+      fontSize: 14,
+      fontWeight: 700,
+      cursor: "pointer",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center"
+    }
+  }, "‹"), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 13,
+      fontWeight: 700,
+      color: "var(--cinza-900)",
+      textTransform: "capitalize"
+    }
+  }, `${MESES_ABREV[cursorMes]} ${cursorAno}`), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    onClick: () => mudarMes(1),
+    style: {
+      border: "none",
+      background: "var(--cinza-50)",
+      color: "var(--marca-500)",
+      width: 30,
+      height: 30,
+      borderRadius: 8,
+      fontSize: 14,
+      fontWeight: 700,
+      cursor: "pointer",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center"
+    }
+  }, "›")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "grid",
+      gridTemplateColumns: "repeat(7,1fr)",
+      gap: 2,
+      marginBottom: 4
+    }
+  }, DIAS_SEMANA.map((d, i) => /*#__PURE__*/React.createElement("div", {
+    key: i,
+    style: {
+      textAlign: "center",
+      fontSize: 11,
+      fontWeight: 700,
+      color: "var(--cinza-400)",
+      padding: "4px 0"
+    }
+  }, d))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "grid",
+      gridTemplateColumns: "repeat(7,1fr)",
+      gap: 2
+    }
+  }, celulas.map((dia, i) => {
+    if (!dia) return /*#__PURE__*/React.createElement("div", {
+      key: i
+    });
+    const mm = String(cursorMes + 1).padStart(2, "0");
+    const dd = String(dia).padStart(2, "0");
+    const dataStr = `${cursorAno}-${mm}-${dd}`;
+    const selecionado = dataStr === value;
+    const ehHoje = dataStr === hojeStr;
+    return /*#__PURE__*/React.createElement("button", {
+      key: i,
+      type: "button",
+      onClick: () => selecionarDia(dia),
+      onMouseEnter: () => setHoverDia(i),
+      onMouseLeave: () => setHoverDia(null),
+      style: {
+        aspectRatio: "1",
+        border: ehHoje && !selecionado ? "1px solid var(--marca-400)" : "none",
+        borderRadius: 8,
+        background: selecionado ? "var(--marca-gradiente)" : hoverDia === i ? "var(--marca-50)" : "transparent",
+        color: selecionado ? "var(--cor-branco)" : "var(--cinza-700)",
+        fontSize: 12,
+        fontWeight: selecionado || ehHoje ? 700 : 500,
+        cursor: "pointer",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center"
+      }
+    }, dia);
+  }))));
 }
 function KpiCard({
   label,
@@ -1482,7 +1718,7 @@ function TelaLogin({
     value: usuario,
     onChange: e => setUsuario(e.target.value),
     onKeyDown: e => e.key === "Enter" && handle(),
-    placeholder: "Ex: admin  ou  func_2",
+    placeholder: "Usuário",
     style: inp
   })), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
     style: {
@@ -1543,53 +1779,12 @@ function TelaLogin({
     }
   }, loading ? "Verificando…" : "Entrar")), /*#__PURE__*/React.createElement("div", {
     style: {
-      marginTop: 24,
-      padding: 16,
-      background: "var(--cinza-50)",
-      borderRadius: 12,
-      fontSize: 12,
-      color: "var(--cinza-500)",
-      lineHeight: 1.6
-    }
-  }, /*#__PURE__*/React.createElement("strong", {
-    style: {
-      color: "var(--cinza-700)",
-      display: "block",
-      marginBottom: 4
-    }
-  }, "Credenciais de teste:"), "Admin: ", /*#__PURE__*/React.createElement("code", {
-    style: {
-      background: "var(--marca-100)",
-      color: "var(--indigo-500)",
-      padding: "1px 5px",
-      borderRadius: 4
-    }
-  }, "admin"), " / ", /*#__PURE__*/React.createElement("code", {
-    style: {
-      background: "var(--marca-100)",
-      color: "var(--indigo-500)",
-      padding: "1px 5px",
-      borderRadius: 4
-    }
-  }, "admin123"), /*#__PURE__*/React.createElement("br", null), "Colaborador: ", /*#__PURE__*/React.createElement("code", {
-    style: {
-      background: "var(--marca-100)",
-      color: "var(--indigo-500)",
-      padding: "1px 5px",
-      borderRadius: 4
-    }
-  }, "func_N"), " (2–26) / matrícula minúscula", /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: "var(--cinza-400)"
-    }
-  }, "Ex: func_2 / ic-001 · func_7 / pc-001"))), /*#__PURE__*/React.createElement("div", {
-    style: {
       textAlign: "center",
       marginTop: 24,
       fontSize: 11,
       color: "var(--cinza-400)"
     }
-  }, "Tecnologia GRE · Desenvolvido por Arthur Bomfim")));
+  }, "Tecnologia GRE · Desenvolvido por Arthur Bomfim"))));
 }
 
 // ─── MODAL CRIAR PENDÊNCIA ────────────────────────────────────────────────────
@@ -1713,22 +1908,9 @@ function ModalCriarPendencia({
     style: {
       color: "var(--vermelho-500)"
     }
-  }, "*")), /*#__PURE__*/React.createElement("input", {
-    type: "date",
+  }, "*")), /*#__PURE__*/React.createElement(SeletorData, {
     value: data,
-    onChange: e => setData(e.target.value),
-    style: {
-      width: "100%",
-      padding: "10px 14px",
-      borderRadius: 10,
-      border: "1px solid var(--cinza-200)",
-      fontSize: 13,
-      outline: "none",
-      boxSizing: "border-box",
-      background: "var(--cor-branco)",
-      color: "var(--cinza-900)",
-      colorScheme: "light dark"
-    }
+    onChange: setData
   })), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
     style: {
       fontSize: 13,
@@ -1950,22 +2132,9 @@ function ModalAvisarGestor({
     style: {
       color: "var(--vermelho-500)"
     }
-  }, "*")), /*#__PURE__*/React.createElement("input", {
-    type: "date",
+  }, "*")), /*#__PURE__*/React.createElement(SeletorData, {
     value: data,
-    onChange: e => setData(e.target.value),
-    style: {
-      width: "100%",
-      padding: "10px 14px",
-      borderRadius: 10,
-      border: "1px solid var(--cinza-200)",
-      fontSize: 13,
-      outline: "none",
-      boxSizing: "border-box",
-      background: "var(--cor-branco)",
-      color: "var(--cinza-900)",
-      colorScheme: "light dark"
-    }
+    onChange: setData
   })), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
     style: {
       fontSize: 13,
