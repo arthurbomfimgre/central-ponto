@@ -2353,6 +2353,9 @@ function ListaFuncionarios({
   });
   const [err, setErr] = useState("");
   const [sucesso, setSucesso] = useState("");
+  const cargosDisponiveis = useMemo(() => [...new Set(funcionarios.map(f => f.cargo))].sort((a, b) => a.localeCompare(b, "pt-BR", {
+    sensitivity: "base"
+  })), [funcionarios]);
   const contagens = useMemo(() => {
     const map = {};
     funcionarios.forEach(f => {
@@ -2366,7 +2369,9 @@ function ListaFuncionarios({
     const esq = contagens[f.id].esquecimentos;
     const ok3 = filtroAlerta === "Todos" || filtroAlerta === "Normal" && esq <= 1 || filtroAlerta === "Atenção" && esq === 2 || filtroAlerta === "Limite" && esq === 3 || filtroAlerta === "Excedido" && esq >= 4;
     return ok1 && ok2 && ok3;
-  }), [busca, setor, filtroAlerta, funcionarios, contagens]);
+  }).sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR", {
+    sensitivity: "base"
+  })), [busca, setor, filtroAlerta, funcionarios, contagens]);
   function adicionar() {
     if (!novo.nome.trim() || !novo.cargo.trim()) {
       setErr("Preencha nome e cargo.");
@@ -2717,7 +2722,7 @@ function ListaFuncionarios({
       flexDirection: "column",
       gap: 16
     }
-  }, [["Nome completo", "nome", "Ex: JOAO SILVA"], ["Cargo", "cargo", "Ex: ANALISTA COMERCIAL"]].map(([lbl, field, ph]) => /*#__PURE__*/React.createElement("div", {
+  }, [["Nome completo", "nome", "Ex: JOAO SILVA"]].map(([lbl, field, ph]) => /*#__PURE__*/React.createElement("div", {
     key: field
   }, /*#__PURE__*/React.createElement("label", {
     style: {
@@ -2745,6 +2750,35 @@ function ListaFuncionarios({
       background: "var(--cor-branco)"
     }
   }))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
+    style: {
+      fontSize: 13,
+      fontWeight: 600,
+      color: "var(--cinza-700)",
+      display: "block",
+      marginBottom: 6
+    }
+  }, "Cargo"), /*#__PURE__*/React.createElement("select", {
+    value: novo.cargo,
+    onChange: e => setNovo(p => ({
+      ...p,
+      cargo: e.target.value
+    })),
+    style: {
+      width: "100%",
+      padding: "10px 14px",
+      borderRadius: 10,
+      border: "1px solid var(--cinza-200)",
+      fontSize: 13,
+      background: "var(--cor-branco)",
+      boxSizing: "border-box",
+      cursor: "pointer"
+    }
+  }, /*#__PURE__*/React.createElement("option", {
+    value: ""
+  }, "Selecione um cargo…"), cargosDisponiveis.map(c => /*#__PURE__*/React.createElement("option", {
+    key: c,
+    value: c
+  }, c)))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
     style: {
       fontSize: 13,
       fontWeight: 600,
