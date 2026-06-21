@@ -1631,6 +1631,7 @@ function Toast({
 
 // ─── TELA DE LOGIN ────────────────────────────────────────────────────────────
 function TelaLogin({
+  funcionarios,
   onLogin
 }) {
   const [usuario, setUsuario] = useState("");
@@ -1642,7 +1643,20 @@ function TelaLogin({
     setErro("");
     setLoading(true);
     setTimeout(() => {
-      const user = USUARIOS_BASE.find(u => u.id === usuario && u.senha === senha);
+      // Admin é fixo. Colaboradores são recalculados a partir da lista atual
+      // de funcionarios (que já inclui qualquer um adicionado depois pela
+      // tela "Funcionários" — diferente de USUARIOS_BASE, que é fixa e só
+      // reflete os dados iniciais (seed) do sistema.
+      const admin = USUARIOS_BASE.find(u => u.role === "admin");
+      const usuariosAtuais = [admin, ...funcionarios.map(f => ({
+        id: `func_${f.id}`,
+        nome: f.nome,
+        cargo: f.cargo,
+        role: "funcionario",
+        senha: f.matricula.toLowerCase(),
+        funcionario_id: f.id
+      }))];
+      const user = usuariosAtuais.find(u => u.id === usuario && u.senha === senha);
       if (user) onLogin(user);else setErro("Usuário ou senha incorretos.");
       setLoading(false);
     }, 500);
@@ -5888,6 +5902,7 @@ function App() {
     return f && o.funcionario_id === f.id && o.status === "Pendente";
   }).length;
   if (!usuario) return /*#__PURE__*/React.createElement(TelaLogin, {
+    funcionarios: funcionarios,
     onLogin: u => {
       setUsuario(u);
       setView(u.role === "admin" ? "dashboard" : "portal");
