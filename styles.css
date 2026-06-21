@@ -28,6 +28,14 @@
   --amber-700: #b45309;
   --amber-800: #92400e;
   --amber-900: #78350f;
+
+  /* ─── EXCEDIDO — categoria de esquecimentos acima do limite (roxo, distinta do vermelho de "Limite") ─── */
+  --excedido-50:  #f5f3ff;
+  --excedido-100: #ede9fe;
+  --excedido-300: #c4b5fd;
+  --excedido-500: #7c3aed;
+  --excedido-600: #6d28d9;
+  --excedido-700: #5b21b6;
   --amber-transparente: rgba(251,191,36,.2);
   --azul-100: #dbeafe;
   --azul-200: #bfdbfe;
@@ -205,6 +213,13 @@
   --amber-700: #fde68a;
   --amber-800: #fef3c7;
   --amber-900: #fffbeb;
+
+  --excedido-50:  #2a1856;
+  --excedido-100: #371d6e;
+  --excedido-300: #6d4fc4;
+  --excedido-500: #a78bfa;
+  --excedido-600: #c4b5fd;
+  --excedido-700: #ddd6fe;
 }
 
 [data-theme="dark"] body {
