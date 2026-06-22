@@ -940,21 +940,8 @@ function contarOcorrencias(ocorrencias, funcionarioId) {
   const total = contagem.esquecimentos + contagem.atestados + contagem.faltas + contagem.banco_horas + contagem.erros_registro + contagem.abonos + contagem.integracoes;
   return { ...contagem, total };
 }
-const USUARIOS_BASE = [{
-  id: "admin",
-  nome: "ABRAAO MOREIRA",
-  cargo: "GERENTE ADMINISTRATIVO COMERCIAL",
-  role: "admin",
-  senha: "PG86ASq74%n99e",
-  funcionario_id: 1
-}, ...FUNCIONARIOS_BASE.map(f => ({
-  id: `func_${f.id}`,
-  nome: f.nome,
-  cargo: f.cargo,
-  role: "funcionario",
-  senha: f.matricula.toLowerCase(),
-  funcionario_id: f.id
-}))];
+// Autenticação: ver Supabase Auth (supa.auth), usado em TelaLogin.
+// Não existe mais lista de senhas no código — ver handle() em TelaLogin.
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
 function getSem(esq) {
@@ -1642,24 +1629,55 @@ function TelaLogin({
   function handle() {
     setErro("");
     setLoading(true);
-    setTimeout(() => {
-      // Admin é fixo. Colaboradores são recalculados a partir da lista atual
-      // de funcionarios (que já inclui qualquer um adicionado depois pela
-      // tela "Funcionários" — diferente de USUARIOS_BASE, que é fixa e só
-      // reflete os dados iniciais (seed) do sistema.
-      const admin = USUARIOS_BASE.find(u => u.role === "admin");
-      const usuariosAtuais = [admin, ...funcionarios.map(f => ({
-        id: `func_${f.id}`,
-        nome: f.nome,
-        cargo: f.cargo,
-        role: "funcionario",
-        senha: f.matricula.toLowerCase(),
-        funcionario_id: f.id
-      }))];
-      const user = usuariosAtuais.find(u => u.id === usuario && u.senha === senha);
-      if (user) onLogin(user);else setErro("Usuário ou senha incorretos.");
+    // Login real via Supabase Auth: a senha é verificada no servidor do
+    // Supabase, nunca no navegador. O "ID de usuário" digitado (matrícula
+    // ou "admin") é convertido no email interno usado para autenticar
+    // (ex: "bg-001" -> "bg-001@portovale.local"), mas a pessoa continua
+    // digitando só a matrícula/usuário, como sempre.
+    const emailInterno = `${usuario.trim().toLowerCase()}@portovale.local`;
+    supa.auth.signInWithPassword({
+      email: emailInterno,
+      password: senha
+    }).then(({
+      data,
+      error
+    }) => {
       setLoading(false);
-    }, 500);
+      if (error || !data?.user) {
+        setErro("Usuário ou senha incorretos.");
+        return;
+      }
+      const authUser = data.user;
+      let perfil;
+      if (usuario.trim().toLowerCase() === "admin") {
+        perfil = {
+          id: "admin",
+          nome: "ABRAAO MOREIRA",
+          role: "admin",
+          funcionario_id: 1,
+          authUid: authUser.id
+        };
+      } else {
+        const func = funcionarios.find(f => f.matricula.toLowerCase() === usuario.trim().toLowerCase());
+        if (!func) {
+          setErro("Usuário não encontrado no cadastro de funcionários.");
+          supa.auth.signOut();
+          return;
+        }
+        perfil = {
+          id: `func_${func.id}`,
+          nome: func.nome,
+          cargo: func.cargo,
+          role: "funcionario",
+          funcionario_id: func.id,
+          authUid: authUser.id
+        };
+      }
+      onLogin(perfil);
+    }).catch(() => {
+      setLoading(false);
+      setErro("Não foi possível conectar. Tente novamente.");
+    });
   }
   const inp = {
     width: "100%",
