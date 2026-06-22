@@ -363,7 +363,7 @@ const FUNCIONARIOS_BASE = [{
   matricula: "IC-008",
   setor: "INTELIGÊNCIA COMERCIAL",
   cargo: "ANALISTA COMERCIAL",
-  ativo: true,
+  ativo: false,
   esquecimentos: 2,
   atestados: 0,
   faltas: 0,
@@ -565,6 +565,20 @@ const FUNCIONARIOS_BASE = [{
   faltas: 0,
   banco_horas: 0,
   erros_registro: 2,
+  abonos: 0,
+  integracoes: 0
+}, {
+  id: 27,
+  nome: "ANNA CAROLINA",
+  matricula: "IC-017",
+  setor: "INTELIGÊNCIA COMERCIAL",
+  cargo: "JOVEM APRENDIZ",
+  ativo: true,
+  esquecimentos: 0,
+  atestados: 0,
+  faltas: 0,
+  banco_horas: 0,
+  erros_registro: 0,
   abonos: 0,
   integracoes: 0
 }];
@@ -940,21 +954,19 @@ function contarOcorrencias(ocorrencias, funcionarioId) {
   const total = contagem.esquecimentos + contagem.atestados + contagem.faltas + contagem.banco_horas + contagem.erros_registro + contagem.abonos + contagem.integracoes;
   return { ...contagem, total };
 }
-const USUARIOS_BASE = [{
-  id: "admin",
-  nome: "ABRAAO MOREIRA",
-  cargo: "GERENTE ADMINISTRATIVO COMERCIAL",
-  role: "admin",
-  senha: "PG86ASq74%n99e",
-  funcionario_id: 1
-}, ...FUNCIONARIOS_BASE.map(f => ({
-  id: `func_${f.id}`,
-  nome: f.nome,
-  cargo: f.cargo,
-  role: "funcionario",
-  senha: f.matricula.toLowerCase(),
-  funcionario_id: f.id
-}))];
+// Gera o e-mail de login a partir do nome do funcionário, no padrão
+// primeironome.sobrenome@portovale.com.br (tudo minúsculo, sem acento).
+// O e-mail é usado só para autenticar no Supabase Auth — a senha real nunca
+// fica no código-fonte, só no Supabase.
+function gerarEmail(nomeCompleto) {
+  const partes = nomeCompleto.trim().split(/\s+/);
+  const primeiro = partes[0];
+  const ultimo = partes[partes.length - 1];
+  const normalizar = s => s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  return `${normalizar(primeiro)}.${normalizar(ultimo)}@portovale.com.br`;
+}
+// ABRAAO MOREIRA (funcionario_id 1) é o único admin do sistema.
+const ADMIN_FUNCIONARIO_ID = 1;
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
 function getSem(esq) {
@@ -1639,27 +1651,44 @@ function TelaLogin({
   const [erro, setErro] = useState("");
   const [loading, setLoading] = useState(false);
   const [show, setShow] = useState(false);
-  function handle() {
+  async function handle() {
     setErro("");
     setLoading(true);
-    setTimeout(() => {
-      // Admin é fixo. Colaboradores são recalculados a partir da lista atual
-      // de funcionarios (que já inclui qualquer um adicionado depois pela
-      // tela "Funcionários" — diferente de USUARIOS_BASE, que é fixa e só
-      // reflete os dados iniciais (seed) do sistema.
-      const admin = USUARIOS_BASE.find(u => u.role === "admin");
-      const usuariosAtuais = [admin, ...funcionarios.map(f => ({
-        id: `func_${f.id}`,
-        nome: f.nome,
-        cargo: f.cargo,
-        role: "funcionario",
-        senha: f.matricula.toLowerCase(),
-        funcionario_id: f.id
-      }))];
-      const user = usuariosAtuais.find(u => u.id === usuario && u.senha === senha);
-      if (user) onLogin(user);else setErro("Usuário ou senha incorretos.");
+    // E-mail de login: aceita o e-mail completo OU só "primeiro.sobrenome",
+    // completando o domínio automaticamente — mais tolerante ao que a
+    // pessoa digitar, sem nunca guardar senha no código-fonte. A senha real
+    // é validada inteiramente pelo Supabase Auth.
+    const email = usuario.includes("@") ? usuario.trim().toLowerCase() : `${usuario.trim().toLowerCase()}@portovale.com.br`;
+    const {
+      data,
+      error
+    } = await supa.auth.signInWithPassword({
+      email,
+      password: senha
+    });
+    if (error) {
+      setErro("Usuário ou senha incorretos.");
       setLoading(false);
-    }, 500);
+      return;
+    }
+    // Casa o e-mail autenticado com o funcionário correspondente, para obter
+    // funcionario_id, nome, cargo e papel (admin ou colaborador comum).
+    const func = funcionarios.find(f => gerarEmail(f.nome) === email);
+    if (!func) {
+      setErro("Login válido, porém nenhum funcionário corresponde a este e-mail. Avise o administrador.");
+      await supa.auth.signOut();
+      setLoading(false);
+      return;
+    }
+    const user = {
+      id: func.id === ADMIN_FUNCIONARIO_ID ? "admin" : `func_${func.id}`,
+      nome: func.nome,
+      cargo: func.cargo,
+      role: func.id === ADMIN_FUNCIONARIO_ID ? "admin" : "funcionario",
+      funcionario_id: func.id
+    };
+    onLogin(user);
+    setLoading(false);
   }
   const inp = {
     width: "100%",
@@ -1728,11 +1757,11 @@ function TelaLogin({
       display: "block",
       marginBottom: 6
     }
-  }, "ID de usuário"), /*#__PURE__*/React.createElement("input", {
+  }, "E-mail"), /*#__PURE__*/React.createElement("input", {
     value: usuario,
     onChange: e => setUsuario(e.target.value),
     onKeyDown: e => e.key === "Enter" && handle(),
-    placeholder: "Usuário",
+    placeholder: "nome.sobrenome@portovale.com.br",
     style: inp
   })), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
     style: {
@@ -5864,12 +5893,42 @@ function PortalFuncionario({
 function App() {
   const [theme, toggleTheme] = useTheme();
   const [usuario, setUsuario] = useState(null);
+  const [verificandoSessao, setVerificandoSessao] = useState(true);
+  function sair() {
+    supa.auth.signOut();
+    setUsuario(null);
+  }
   const [view, setView] = useState("dashboard");
   const [funcSelecionado, setFuncSelecionado] = useState(null);
   const [toasts, setToasts] = useState([]);
   const [funcionarios, setFuncionarios] = useSharedState(SK_FUNCS, FUNCIONARIOS_BASE);
   const [ocorrencias, setOcorrencias] = useSharedState(SK_OCS, OCS_SJCJUNHO);
   const [notifs, setNotifs] = useSharedState(SK_NOTIFS, []);
+  // Restaura a sessão ao recarregar a página (F5), evitando pedir login de
+  // novo enquanto a sessão do Supabase Auth ainda for válida.
+  useEffect(() => {
+    let ativo = true;
+    supa.auth.getSession().then(({
+      data
+    }) => {
+      if (!ativo) return;
+      const email = data?.session?.user?.email;
+      if (email) {
+        const func = funcionarios.find(f => gerarEmail(f.nome) === email);
+        if (func) setUsuario({
+          id: func.id === ADMIN_FUNCIONARIO_ID ? "admin" : `func_${func.id}`,
+          nome: func.nome,
+          cargo: func.cargo,
+          role: func.id === ADMIN_FUNCIONARIO_ID ? "admin" : "funcionario",
+          funcionario_id: func.id
+        });
+      }
+      setVerificandoSessao(false);
+    });
+    return () => {
+      ativo = false;
+    };
+  }, []);
   const [mesFiltro, setMesFiltro] = useState(() => mesesDisponiveis()[0]?.valor || "2026-04");
   const ocorrenciasFiltradas = useMemo(() => ocorrencias.filter(o => o.data.startsWith(mesFiltro)), [ocorrencias, mesFiltro]);
   const isAdmin = usuario?.role === "admin";
@@ -5905,6 +5964,18 @@ function App() {
     const f = funcionarios.find(f => f.id === usuario?.funcionario_id);
     return f && o.funcionario_id === f.id && o.status === "Pendente";
   }).length;
+  if (verificandoSessao) return /*#__PURE__*/React.createElement("div", {
+    style: {
+      minHeight: "100vh",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      background: "var(--fundo-pagina)",
+      color: "var(--cinza-400)",
+      fontSize: 13,
+      fontWeight: 500
+    }
+  }, "Verificando sessão…");
   if (!usuario) return /*#__PURE__*/React.createElement(TelaLogin, {
     funcionarios: funcionarios,
     onLogin: u => {
@@ -6116,7 +6187,7 @@ function App() {
   }), /*#__PURE__*/React.createElement("div", {
     style: { height: 6 }
   }), /*#__PURE__*/React.createElement("button", {
-    onClick: () => setUsuario(null),
+    onClick: sair,
     style: {
       width: "100%",
       padding: "8px 12px",
@@ -6212,7 +6283,7 @@ function App() {
     id: usuario.funcionario_id,
     size: 30
   }), /*#__PURE__*/React.createElement("button", {
-    onClick: () => setUsuario(null),
+    onClick: sair,
     style: {
       background: "none",
       border: "none",
