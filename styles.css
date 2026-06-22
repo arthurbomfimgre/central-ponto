@@ -80,9 +80,9 @@
   --sombra-forte: rgba(0,0,0,.25);
   --sombra-indigo-forte: var(--sombra-marca-forte);
   --sombra-indigo-media: var(--sombra-marca-media);
-  --sombra-leve: rgba(0,0,0,.04);
-  --sombra-media: rgba(0,0,0,.2);
-  --sombra-suave: rgba(0,0,0,.08);
+  --sombra-leve: rgba(15,23,42,.08);
+  --sombra-media: rgba(15,23,42,.22);
+  --sombra-suave: rgba(15,23,42,.12);
   --sombra-verde: rgba(13,110,118,.25);
   --teal-50: #f0fdfa;
   --teal-500: #14b8a6;
@@ -99,13 +99,18 @@
   --vermelho-500: #ef4444;
   --vermelho-600: #dc2626;
   --vermelho-800: #991b1b;
+
+  /* Fundo da página — um pouco mais acinzentado que --cinza-50, para criar
+     separação visual real entre o fundo e os cards brancos por cima (sem
+     isso, os dois ficavam quase indistinguíveis e a tela parecia "lavada"). */
+  --fundo-pagina: #eef1f6;
 }
 
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     html, body { height: 100%; }
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-      background: #f8fafc;
+      background: var(--fundo-pagina);
       -webkit-font-smoothing: antialiased;
     }
     /* Campos de formulário herdam cor de texto E fundo do tema em vez dos
@@ -127,7 +132,7 @@
     }
     #root { min-height: 100vh; }
     #loading {
-      position: fixed; inset: 0; background: #f8fafc;
+      position: fixed; inset: 0; background: var(--fundo-pagina);
       display: flex; flex-direction: column; align-items: center; justify-content: center;
       gap: 16px; z-index: 9999; transition: opacity .4s;
     }
@@ -165,6 +170,7 @@
   --cinza-600: #e2e8f0;
   --cinza-700: #f1f5f9;
   --cinza-900: #f8fafc;
+  --fundo-pagina: var(--cinza-50);
 
   --sombra-leve: rgba(0,0,0,.35);
   --sombra-suave: rgba(0,0,0,.45);
