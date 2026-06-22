@@ -2306,10 +2306,14 @@ function Dashboard({
       marginTop: 4,
       fontSize: 14
     }
-  }, "Visão geral · ", new Date().toLocaleDateString("pt-BR", {
-    month: "long",
-    year: "numeric"
-  }))), /*#__PURE__*/React.createElement("div", {
+  }, "Visão geral · ", function () {
+    const [ano, mes] = (mesFiltro || "").split("-").map(Number);
+    const data = ano && mes ? new Date(ano, mes - 1, 1) : new Date();
+    return data.toLocaleDateString("pt-BR", {
+      month: "long",
+      year: "numeric"
+    });
+  }())), /*#__PURE__*/React.createElement("div", {
     style: {
       display: "flex",
       alignItems: "center",
