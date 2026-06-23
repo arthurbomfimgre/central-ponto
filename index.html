@@ -1006,8 +1006,10 @@ function gerarEmail(nomeCompleto) {
   const normalizar = s => s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
   return `${normalizar(primeiro)}.${normalizar(ultimo)}@portovale.com.br`;
 }
-// ABRAAO MOREIRA (funcionario_id 1) é o único admin do sistema.
-const ADMIN_FUNCIONARIO_ID = 1;
+// Administradores do sistema: Abraão Moreira (1), Arthur Bomfim (4), Bruna Pinheiro (5).
+// Admins também aparecem como funcionários e podem ter pendências criadas para si.
+const ADMIN_FUNCIONARIO_ID = 1; // mantido para compatibilidade
+const ADMIN_IDS = [1, 4, 5];
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
 function getSem(esq) {
@@ -1722,10 +1724,10 @@ function TelaLogin({
       return;
     }
     const user = {
-      id: func.id === ADMIN_FUNCIONARIO_ID ? "admin" : `func_${func.id}`,
+      id: ADMIN_IDS.includes(func.id) ? "admin" : `func_${func.id}`,
       nome: func.nome,
       cargo: func.cargo,
-      role: func.id === ADMIN_FUNCIONARIO_ID ? "admin" : "funcionario",
+      role: ADMIN_IDS.includes(func.id) ? "admin" : "funcionario",
       funcionario_id: func.id
     };
     onLogin(user);
@@ -6356,10 +6358,10 @@ function App() {
       if (email) {
         const func = funcionarios.find(f => gerarEmail(f.nome) === email);
         if (func) setUsuario({
-          id: func.id === ADMIN_FUNCIONARIO_ID ? "admin" : `func_${func.id}`,
+          id: ADMIN_IDS.includes(func.id) ? "admin" : `func_${func.id}`,
           nome: func.nome,
           cargo: func.cargo,
-          role: func.id === ADMIN_FUNCIONARIO_ID ? "admin" : "funcionario",
+          role: ADMIN_IDS.includes(func.id) ? "admin" : "funcionario",
           funcionario_id: func.id
         });
       }
