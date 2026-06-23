@@ -6446,6 +6446,10 @@ function App() {
     id: "mural",
     label: "Processos",
     icon: "📋"
+  }, {
+    id: "portal",
+    label: "Meu Portal",
+    icon: "🏠"
   }];
   const menuAtivo = {
     background: "linear-gradient(135deg,var(--indigo-500),var(--roxo-500))",
@@ -6507,6 +6511,16 @@ function App() {
         setMesFiltro: setMesFiltro
       });
       if (view === "mural") return /*#__PURE__*/React.createElement(ProcessosPonto, { usuario: usuario, setView: setView });
+      if (view === "portal") return /*#__PURE__*/React.createElement(PortalFuncionario, {
+        ocorrencias: ocorrencias,
+        setOcorrencias: setOcorrencias,
+        usuarioLogado: usuario,
+        funcionarios: funcionarios,
+        setFuncionarios: setFuncionarios,
+        addNotif: addNotif,
+        notifs: notifs,
+        setNotifs: setNotifs
+      });
     }
     if (view === "mural") return /*#__PURE__*/React.createElement(ProcessosPonto, { usuario: usuario, setView: setView });
     return /*#__PURE__*/React.createElement(PortalFuncionario, {
