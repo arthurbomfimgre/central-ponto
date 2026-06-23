@@ -4912,27 +4912,30 @@ function Relatorios({
 }
 
 // ─── MURAL DE RECADOS ─────────────────────────────────────────────────────────
-function ProcessosPonto() {
+function ProcessosPonto({ usuario, setView }) {
   const [aberto, setAberto] = useState(null);
+  const nomeFirst = usuario ? usuario.nome.split(" ")[0].charAt(0).toUpperCase() + usuario.nome.split(" ")[0].slice(1).toLowerCase() : "Colaborador";
+
+  const hora = new Date().getHours();
+  const saudacao = hora < 12 ? "Bom dia" : hora < 18 ? "Boa tarde" : "Boa noite";
 
   const secoes = [
     {
       id: "central",
       icon: "🖥️",
       titulo: "Central de Ponto",
-      badge: null,
       conteudo: [
         {
           subtitulo: "O que é?",
-          texto: "A Central de Ponto é a aplicação web onde o colaborador gerencia tudo relacionado ao seu ponto eletrônico. Por ela, é possível visualizar pendências em aberto, antecipar correções de ausências já previstas (como consultas médicas agendadas) e acompanhar o histórico de ocorrências do mês."
+          texto: "A Central de Ponto é esta aplicação web — o lugar onde você gerencia tudo relacionado ao seu ponto eletrônico. Por ela é possível visualizar pendências em aberto, antecipar correções de ausências já previstas (como consultas médicas agendadas) e acompanhar o histórico de ocorrências do mês."
         },
         {
           subtitulo: "Portal do Funcionário",
-          texto: "Dentro da Central, o Portal do Funcionário é a tela principal de cada colaborador. Nele aparecem todas as ocorrências pendentes, o status de cada correção enviada (Pendente, Corrigido, Verificado ou Rejeitado) e as notificações do gestor. É por aqui que o funcionário marca uma ocorrência como corrigida após realizar o ajuste no Vibe."
+          texto: "O Portal é a sua tela principal. Nele aparecem todas as ocorrências pendentes, o status de cada correção enviada (Pendente, Corrigido, Verificado ou Rejeitado) e notificações do gestor. É por aqui que você marca uma ocorrência como corrigida após realizar o ajuste no Vibe."
         },
         {
-          subtitulo: "Acesso",
-          texto: "O acesso é feito individualmente, com login próprio. Cada colaborador enxerga apenas as suas próprias ocorrências — sem visibilidade sobre os dados dos colegas."
+          subtitulo: "Acesso individual",
+          texto: "Seu acesso é pessoal e intransferível. Você enxerga apenas as suas próprias ocorrências, sem visibilidade sobre os dados dos colegas."
         }
       ]
     },
@@ -4940,19 +4943,18 @@ function ProcessosPonto() {
       id: "logistica",
       icon: "📲",
       titulo: "Logística do Ponto Eletrônico",
-      badge: null,
       conteudo: [
         {
           subtitulo: "Aviso diário no WhatsApp",
-          texto: "Todos os dias uma mensagem é enviada no grupo de WhatsApp do time com as pendências individualizadas de cada funcionário. Isso garante que ninguém passe dias sem saber que tem uma ocorrência em aberto."
+          texto: "Todos os dias uma mensagem é enviada no grupo de WhatsApp do time com as pendências individualizadas de cada funcionário. Assim você fica sabendo rapidamente se há algo para resolver."
         },
         {
-          subtitulo: "Fluxo de correção",
-          texto: "O processo sempre segue esta ordem: (1) o colaborador realiza a correção no sistema Vibe; (2) em seguida, acessa o Portal da Central de Ponto e marca a ocorrência como corrigida. Nunca o contrário — é essencial que o ajuste já esteja feito antes de sinalizar aqui."
+          subtitulo: "Fluxo de correção — ordem obrigatória",
+          texto: "Sempre siga esta sequência: (1) realize a correção no sistema Vibe; (2) depois acesse o Portal aqui e marque a ocorrência como corrigida. Nunca o contrário — o ajuste precisa já estar feito antes de sinalizar aqui."
         },
         {
           subtitulo: "Aprovação do gestor",
-          texto: "Após o colaborador marcar como corrigido, a ocorrência fica disponível na fila do gestor para ser aprovada ou rejeitada. Enquanto não houver uma decisão, o status permanece como 'Corrigido — aguardando verificação'."
+          texto: "Após você marcar como corrigido, a ocorrência entra na fila do gestor para aprovação ou rejeição. Enquanto não houver decisão, o status fica como 'Corrigido — aguardando verificação'."
         }
       ]
     },
@@ -4960,20 +4962,20 @@ function ProcessosPonto() {
       id: "esquecimento",
       icon: "⚠️",
       titulo: "Esquecimento de Registro",
-      badge: "Limite: 3",
+      badge: "Limite: 3 por mês",
       badgeColor: "vermelho",
       conteudo: [
         {
           subtitulo: "O que é?",
-          texto: "Ocorre quando o funcionário deixa de registrar algum dos quatro pontos obrigatórios do dia: Entrada, Ida ao Almoço, Volta do Almoço ou Saída. Cada marcação esquecida conta como um esquecimento."
+          texto: "Ocorre quando você deixa de registrar algum dos quatro pontos obrigatórios do dia: Entrada, Ida ao Almoço, Volta do Almoço ou Saída. Cada marcação esquecida conta como um esquecimento."
         },
         {
-          subtitulo: "Limite por funcionário",
-          texto: "Pela regra do Departamento Pessoal (DP), cada colaborador tem no máximo 3 esquecimentos permitidos no mês. A partir do 4º esquecimento, desconto em folha pode ser aplicado. Fique de olho no seu contador na Central de Ponto."
+          subtitulo: "Regra do DP",
+          texto: "Pela regra do Departamento Pessoal, o máximo permitido é 3 esquecimentos por mês. A partir do 4º, desconto em folha pode ser aplicado. Acompanhe seu contador no Portal."
         },
         {
           subtitulo: "Como resolver?",
-          texto: "Basta acessar a Central de Ponto, localizar o esquecimento na lista de pendências e marcar como corrigido após realizar o ajuste no Vibe. O gestor será notificado automaticamente para verificação."
+          texto: "Localize o esquecimento na sua lista de pendências no Portal, ajuste no Vibe e marque como corrigido. O gestor será notificado automaticamente."
         }
       ]
     },
@@ -4981,140 +4983,247 @@ function ProcessosPonto() {
       id: "erro",
       icon: "📋",
       titulo: "Erro de Registro",
-      badge: "Exige print",
+      badge: "Exige print do EasyMob",
       badgeColor: "amarelo",
       conteudo: [
         {
           subtitulo: "O que é?",
-          texto: "É quando o sistema registrou o ponto de forma incorreta — horário errado, duplicidade ou ponto que apareceu com valor diferente do batido. Diferente do esquecimento, aqui o registro existe mas está com problema."
+          texto: "É quando o sistema registrou o ponto de forma incorreta — horário errado, duplicidade ou valor diferente do batido. Diferente do esquecimento, aqui o registro existe mas está com problema."
         },
         {
           subtitulo: "Documentação obrigatória",
-          texto: "Erros de registro só são aceitos mediante comprovação. É necessário enviar um print da tela 'Consultar Marcações' do aplicativo EasyMob diretamente pela justificativa no Portal do Funcionário. Sem o print, a ocorrência não será aprovada."
+          texto: "Erros de registro só são aceitos com comprovação. Você precisa enviar um print da tela 'Consultar Marcações' do aplicativo EasyMob diretamente na justificativa do Portal. Sem o print, a ocorrência não será aprovada."
         },
         {
           subtitulo: "Atenção ao delay do sistema",
-          texto: "Antes de subir o print, atualize o seu ponto no Vibe. O sistema possui um delay e o registro pode ainda não ter sido contabilizado — o que significa que o erro pode se resolver sozinho após a atualização. Só abra a correção se o problema persistir após isso."
+          texto: "Antes de subir qualquer correção, atualize seu ponto no EasyMob. O sistema tem um delay e o registro pode simplesmente não ter sido contabilizado ainda. Só abra a correção se o problema persistir após a atualização."
         }
       ]
     }
   ];
 
-  return /*#__PURE__*/React.createElement("div", null,
-    /*#__PURE__*/React.createElement("div", { style: { marginBottom: 28 } },
-      /*#__PURE__*/React.createElement("h1", {
-        style: { fontSize: 24, fontWeight: 700, color: "var(--cinza-900)", margin: 0 }
-      }, "Processos do Ponto"),
-      /*#__PURE__*/React.createElement("p", {
-        style: { color: "var(--cinza-500)", marginTop: 4, fontSize: 14 }
-      }, "Como funciona o ponto eletrônico do time — regras, fluxos e orientações")
-    ),
+  return /*#__PURE__*/React.createElement("div", { style: { maxWidth: 720, margin: "0 auto" } },
+
+    /* ── Hero de boas-vindas ── */
     /*#__PURE__*/React.createElement("div", {
       style: {
         background: "var(--marca-gradiente)",
-        borderRadius: 16,
-        padding: "20px 24px",
-        marginBottom: 20,
-        display: "flex",
-        alignItems: "center",
-        gap: 14
+        borderRadius: 20,
+        padding: "36px 32px 32px",
+        marginBottom: 24,
+        position: "relative",
+        overflow: "hidden"
       }
     },
-      /*#__PURE__*/React.createElement("span", { style: { fontSize: 28 } }, "ℹ️"),
-      /*#__PURE__*/React.createElement("div", null,
+      /*#__PURE__*/React.createElement("div", {
+        style: {
+          position: "absolute", top: -30, right: -30,
+          width: 160, height: 160,
+          borderRadius: "50%",
+          background: "rgba(255,255,255,.06)"
+        }
+      }),
+      /*#__PURE__*/React.createElement("div", {
+        style: {
+          position: "absolute", bottom: -20, right: 60,
+          width: 90, height: 90,
+          borderRadius: "50%",
+          background: "rgba(255,255,255,.05)"
+        }
+      }),
+      /*#__PURE__*/React.createElement("div", { style: { position: "relative" } },
         /*#__PURE__*/React.createElement("div", {
-          style: { fontWeight: 700, fontSize: 14, color: "#fff", marginBottom: 2 }
-        }, "Leia antes de corrigir"),
-        /*#__PURE__*/React.createElement("div", {
-          style: { fontSize: 13, color: "rgba(255,255,255,.82)", lineHeight: 1.5 }
-        }, "Sempre ajuste primeiro no Vibe, depois marque como corrigido aqui no Portal. Nunca na ordem inversa.")
+          style: { fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,.7)", marginBottom: 6, letterSpacing: ".04em" }
+        }, saudacao + "! 👋"),
+        /*#__PURE__*/React.createElement("h1", {
+          style: { fontSize: 26, fontWeight: 800, color: "#fff", margin: "0 0 10px", lineHeight: 1.2 }
+        }, "Bem-vindo, ", nomeFirst, "!"),
+        /*#__PURE__*/React.createElement("p", {
+          style: { fontSize: 14, color: "rgba(255,255,255,.8)", lineHeight: 1.65, margin: "0 0 24px", maxWidth: 480 }
+        },
+          "Esta é a Central de Ponto do time Porto Vale. Aqui você acompanha suas pendências, sobe correções e mantém seu histórico em dia. Antes de qualquer coisa, vale dar uma olhada nos tópicos abaixo para entender direitinho como o processo funciona."
+        ),
+        /*#__PURE__*/React.createElement("button", {
+          onClick: () => setView("portal"),
+          style: {
+            padding: "11px 22px",
+            borderRadius: 12,
+            border: "none",
+            background: "#fff",
+            color: "var(--marca-600)",
+            fontSize: 13,
+            fontWeight: 700,
+            cursor: "pointer",
+            boxShadow: "0 2px 8px rgba(0,0,0,.15)"
+          }
+        }, "Ver minhas pendências →")
       )
     ),
-    secoes.map(s =>
+
+    /* ── Chamada para os tópicos ── */
+    /*#__PURE__*/React.createElement("div", {
+      style: {
+        background: "var(--cor-branco)",
+        border: "1px solid var(--cinza-100)",
+        borderRadius: 14,
+        padding: "18px 20px",
+        marginBottom: 16,
+        display: "flex",
+        alignItems: "center",
+        gap: 14,
+        boxShadow: "0 1px 3px var(--sombra-leve)"
+      }
+    },
       /*#__PURE__*/React.createElement("div", {
-        key: s.id,
         style: {
-          background: "var(--cor-branco)",
-          border: "1px solid var(--cinza-100)",
-          borderRadius: 14,
-          marginBottom: 10,
-          overflow: "hidden",
-          boxShadow: "0 1px 3px var(--sombra-leve)"
+          width: 40, height: 40, borderRadius: 10, flexShrink: 0,
+          background: "var(--marca-transparente)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          fontSize: 18
         }
-      },
-        /*#__PURE__*/React.createElement("button", {
-          onClick: () => setAberto(aberto === s.id ? null : s.id),
-          style: {
-            width: "100%",
-            display: "flex",
-            alignItems: "center",
-            gap: 12,
-            padding: "18px 20px",
-            background: "none",
-            border: "none",
-            cursor: "pointer",
-            textAlign: "left"
-          }
-        },
-          /*#__PURE__*/React.createElement("span", { style: { fontSize: 20, flexShrink: 0 } }, s.icon),
-          /*#__PURE__*/React.createElement("span", {
-            style: { flex: 1, fontWeight: 700, fontSize: 15, color: "var(--cinza-900)" }
-          }, s.titulo),
-          s.badge && /*#__PURE__*/React.createElement("span", {
-            style: {
-              fontSize: 11,
-              fontWeight: 700,
-              padding: "3px 10px",
-              borderRadius: 20,
-              background: s.badgeColor === "vermelho" ? "var(--vermelho-100)" : "var(--amarelo-100)",
-              color: s.badgeColor === "vermelho" ? "var(--vermelho-600)" : "var(--amarelo-700)"
-            }
-          }, s.badge),
-          /*#__PURE__*/React.createElement("span", {
-            style: {
-              fontSize: 13,
-              color: "var(--cinza-400)",
-              transition: "transform .2s",
-              transform: aberto === s.id ? "rotate(180deg)" : "rotate(0deg)",
-              display: "inline-block"
-            }
-          }, "▼")
+      }, "📖"),
+      /*#__PURE__*/React.createElement("div", null,
+        /*#__PURE__*/React.createElement("div", { style: { fontWeight: 700, fontSize: 14, color: "var(--cinza-900)", marginBottom: 2 } },
+          "Ficou com alguma dúvida sobre o processo?"
         ),
-        aberto === s.id && /*#__PURE__*/React.createElement("div", {
+        /*#__PURE__*/React.createElement("div", { style: { fontSize: 13, color: "var(--cinza-500)", lineHeight: 1.5 } },
+          "Expanda os tópicos abaixo — eles cobrem tudo que você precisa saber sobre o ponto eletrônico."
+        )
+      )
+    ),
+
+    /* ── Acordeão de tópicos ── */
+    /*#__PURE__*/React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8, marginBottom: 24 } },
+      secoes.map(s =>
+        /*#__PURE__*/React.createElement("div", {
+          key: s.id,
           style: {
-            borderTop: "1px solid var(--cinza-100)",
-            padding: "4px 0 8px"
+            background: "var(--cor-branco)",
+            border: "1px solid var(--cinza-100)",
+            borderRadius: 14,
+            overflow: "hidden",
+            boxShadow: "0 1px 3px var(--sombra-leve)"
           }
         },
-          s.conteudo.map((c, i) =>
+          /*#__PURE__*/React.createElement("button", {
+            onClick: () => setAberto(aberto === s.id ? null : s.id),
+            style: {
+              width: "100%",
+              display: "flex",
+              alignItems: "center",
+              gap: 12,
+              padding: "16px 20px",
+              background: aberto === s.id ? "var(--cinza-50)" : "none",
+              border: "none",
+              cursor: "pointer",
+              textAlign: "left",
+              transition: "background .15s"
+            }
+          },
             /*#__PURE__*/React.createElement("div", {
-              key: i,
               style: {
-                padding: "16px 20px 12px 52px",
-                borderBottom: i < s.conteudo.length - 1 ? "1px solid var(--cinza-50)" : "none"
+                width: 36, height: 36, borderRadius: 10, flexShrink: 0,
+                background: aberto === s.id ? "var(--marca-transparente)" : "var(--cinza-100)",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                fontSize: 17, transition: "background .15s"
               }
-            },
+            }, s.icon),
+            /*#__PURE__*/React.createElement("span", {
+              style: { flex: 1, fontWeight: 700, fontSize: 14, color: "var(--cinza-900)" }
+            }, s.titulo),
+            s.badge && /*#__PURE__*/React.createElement("span", {
+              style: {
+                fontSize: 10, fontWeight: 700, padding: "3px 9px", borderRadius: 20,
+                background: s.badgeColor === "vermelho" ? "var(--vermelho-100)" : "var(--amarelo-100)",
+                color: s.badgeColor === "vermelho" ? "var(--vermelho-600)" : "var(--amarelo-700)"
+              }
+            }, s.badge),
+            /*#__PURE__*/React.createElement("span", {
+              style: {
+                fontSize: 11, color: "var(--cinza-300)",
+                display: "inline-block",
+                transition: "transform .2s",
+                transform: aberto === s.id ? "rotate(180deg)" : "rotate(0deg)"
+              }
+            }, "▼")
+          ),
+          aberto === s.id && /*#__PURE__*/React.createElement("div", {
+            style: { borderTop: "1px solid var(--cinza-100)" }
+          },
+            s.conteudo.map((c, i) =>
               /*#__PURE__*/React.createElement("div", {
+                key: i,
                 style: {
-                  fontSize: 12,
-                  fontWeight: 700,
-                  color: "var(--marca-ciano)",
-                  textTransform: "uppercase",
-                  letterSpacing: ".05em",
-                  marginBottom: 6
+                  padding: "14px 20px 14px 68px",
+                  borderBottom: i < s.conteudo.length - 1 ? "1px solid var(--cinza-50)" : "none"
                 }
-              }, c.subtitulo),
-              /*#__PURE__*/React.createElement("p", {
-                style: {
-                  fontSize: 14,
-                  color: "var(--cinza-700)",
-                  lineHeight: 1.65,
-                  margin: 0
-                }
-              }, c.texto)
+              },
+                /*#__PURE__*/React.createElement("div", {
+                  style: {
+                    fontSize: 11, fontWeight: 700, color: "var(--marca-ciano)",
+                    textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 5
+                  }
+                }, c.subtitulo),
+                /*#__PURE__*/React.createElement("p", {
+                  style: { fontSize: 13.5, color: "var(--cinza-700)", lineHeight: 1.65, margin: 0 }
+                }, c.texto)
+              )
             )
           )
         )
+      )
+    ),
+
+    /* ── Rodapé de contato ── */
+    /*#__PURE__*/React.createElement("div", {
+      style: {
+        border: "1px solid var(--cinza-100)",
+        borderRadius: 14,
+        padding: "18px 20px",
+        display: "flex",
+        alignItems: "center",
+        gap: 14,
+        background: "var(--cor-branco)",
+        boxShadow: "0 1px 3px var(--sombra-leve)"
+      }
+    },
+      /*#__PURE__*/React.createElement("div", {
+        style: {
+          width: 40, height: 40, borderRadius: 10, flexShrink: 0,
+          background: "var(--verde-100)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          fontSize: 18
+        }
+      }, "💬"),
+      /*#__PURE__*/React.createElement("div", { style: { flex: 1 } },
+        /*#__PURE__*/React.createElement("div", { style: { fontWeight: 700, fontSize: 13, color: "var(--cinza-900)", marginBottom: 2 } },
+          "Dúvida que não está nos tópicos?"
+        ),
+        /*#__PURE__*/React.createElement("div", { style: { fontSize: 13, color: "var(--cinza-500)", lineHeight: 1.5 } },
+          "Fale diretamente com Arthur Bomfim pelo WhatsApp."
+        )
+      ),
+      /*#__PURE__*/React.createElement("a", {
+        href: "https://wa.me/5511910860730",
+        target: "_blank",
+        rel: "noopener noreferrer",
+        style: {
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 7,
+          padding: "9px 16px",
+          borderRadius: 10,
+          background: "#25d366",
+          color: "#fff",
+          fontSize: 13,
+          fontWeight: 700,
+          textDecoration: "none",
+          flexShrink: 0,
+          boxShadow: "0 2px 6px rgba(37,211,102,.35)"
+        }
+      },
+        /*#__PURE__*/React.createElement("span", { style: { fontSize: 15 } }, "📱"),
+        "WhatsApp"
       )
     )
   );
@@ -6301,7 +6410,7 @@ function App() {
     funcionarios: funcionarios,
     onLogin: u => {
       setUsuario(u);
-      setView(u.role === "admin" ? "dashboard" : "portal");
+      setView(u.role === "admin" ? "dashboard" : "mural");
     }
   });
   const NAV_ADMIN = [{
@@ -6385,9 +6494,9 @@ function App() {
         mesFiltro: mesFiltro,
         setMesFiltro: setMesFiltro
       });
-      if (view === "mural") return /*#__PURE__*/React.createElement(ProcessosPonto, null);
+      if (view === "mural") return /*#__PURE__*/React.createElement(ProcessosPonto, { usuario: usuario, setView: setView });
     }
-    if (view === "mural") return /*#__PURE__*/React.createElement(ProcessosPonto, null);
+    if (view === "mural") return /*#__PURE__*/React.createElement(ProcessosPonto, { usuario: usuario, setView: setView });
     return /*#__PURE__*/React.createElement(PortalFuncionario, {
       ocorrencias: ocorrencias,
       setOcorrencias: setOcorrencias,
