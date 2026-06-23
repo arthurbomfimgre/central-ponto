@@ -4031,7 +4031,7 @@ function PainelAprovacao({
     const func = funcionarios.find(f => f.id === o.funcionario_id);
     if (!func) return null;
     const al = getAlert(contarOcorrencias(ocorrencias, func.id).esquecimentos);
-    const podeVerif = o.status === "Corrigido";
+    const podeVerif = o.status === "Corrigido" || (o.status === "Pendente" && o.criadoPor === "funcionario");
     const ehErroReg = o.tipo === TIPO_EXIGE_EASYMOB;
     const easymob = easymobMap[`${func.id}_${o.id}`];
     return /*#__PURE__*/React.createElement("div", {
@@ -4127,7 +4127,17 @@ function PainelAprovacao({
         padding: "6px 10px",
         color: "var(--cinza-600)"
       }
-    }, /*#__PURE__*/React.createElement("strong", null, "Obs.:"), " ", o.observacaoAdmin), o.resposta && /*#__PURE__*/React.createElement("div", {
+    }, /*#__PURE__*/React.createElement("strong", null, "Obs.:"), " ", o.observacaoAdmin), o.observacaoFuncionario && /*#__PURE__*/React.createElement("div", {
+      style: {
+        marginTop: 6,
+        fontSize: 12,
+        background: "var(--roxo-100)",
+        borderRadius: 8,
+        padding: "6px 10px",
+        color: "var(--roxo-600)",
+        borderLeft: "3px solid var(--roxo-500)"
+      }
+    }, /*#__PURE__*/React.createElement("strong", null, "👤 Aviso do colaborador:"), " ", o.observacaoFuncionario), o.resposta && /*#__PURE__*/React.createElement("div", {
       style: {
         marginTop: 8,
         background: "var(--cinza-50)",
