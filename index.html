@@ -62,6 +62,9 @@ const SUPA_URL  = "https://vteziaryedaycjorirod.supabase.co";
 const SUPA_KEY  = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ0ZXppYXJ5ZWRheWNqb3Jpcm9kIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2MzYwNjQsImV4cCI6MjA5NzIxMjA2NH0.swYa6kwbsWUeWI58M6G5sEJ_G7KL6SsV01EOe1CWb3c";
 const supa      = window.supabase.createClient(SUPA_URL, SUPA_KEY);
 
+// URL da Edge Function que cria o usuário Auth automaticamente ao cadastrar funcionário
+const EDGE_CRIAR_USUARIO = `${SUPA_URL}/functions/v1/criar-usuario-funcionario`;
+
 // Mapeamento: chave -> tabela Supabase
 const SK_OCS    = "cp_ocorrencias_v4";
 const SK_FUNCS  = "cp_funcionarios_v4";
@@ -2742,21 +2745,51 @@ function ListaFuncionarios({
       abonos: 0,
       integracoes: 0
     };
+
+    // ── 1. Salva o funcionário na tabela do banco ──────────────────────────
     const resultado = await setFuncionarios(prev => [...prev, novoFunc]);
-    setSalvando(false);
     if (resultado && resultado.ok === false) {
-      setErr(`Salvo localmente, mas falhou no Supabase: ${resultado.erro}`);
+      setSalvando(false);
+      setErr(`Falha ao salvar no banco: ${resultado.erro}`);
       return;
     }
-    setSucesso(`${novoFunc.nome} cadastrado e salvo no banco com sucesso!`);
-    setTimeout(() => setSucesso(""), 3500);
+
+    // ── 2. Chama a Edge Function para criar o usuário Auth ─────────────────
+    let emailCriado = "";
+    let senhaCriada = "";
+    let avisoAuth = "";
+    try {
+      const res = await fetch(EDGE_CRIAR_USUARIO, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "apikey": SUPA_KEY,
+          "Authorization": `Bearer ${SUPA_KEY}`,
+        },
+        body: JSON.stringify({ nome: novoFunc.nome, funcionario_id: novoFunc.id }),
+      });
+      const json = await res.json();
+      if (json.ok) {
+        emailCriado = json.email;
+        senhaCriada = json.senha_inicial;
+      } else {
+        avisoAuth = `⚠️ Funcionário salvo, mas o login não foi criado: ${json.erro}`;
+      }
+    } catch (e) {
+      avisoAuth = "⚠️ Funcionário salvo, mas não foi possível criar o login (Edge Function indisponível).";
+    }
+
+    setSalvando(false);
     setModalAdd(false);
-    setNovo({
-      nome: "",
-      cargo: "",
-      setor: SETORES_LIST[0]
-    });
+    setNovo({ nome: "", cargo: "", setor: SETORES_LIST[0] });
     setErr("");
+
+    if (avisoAuth) {
+      setSucesso(avisoAuth);
+    } else {
+      setSucesso(`✅ ${novoFunc.nome} cadastrado! Login: ${emailCriado} · Senha: ${senhaCriada}`);
+    }
+    setTimeout(() => setSucesso(""), 9000);
   }
   function confirmarExcluir() {
     if (!confirmExcluir) return;
