@@ -2690,6 +2690,7 @@ function ListaFuncionarios({
   });
   const [err, setErr] = useState("");
   const [sucesso, setSucesso] = useState("");
+  const [salvando, setSalvando] = useState(false);
   const cargosDisponiveis = useMemo(() => [...new Set(funcionarios.map(f => f.cargo))].sort((a, b) => a.localeCompare(b, "pt-BR", {
     sensitivity: "base"
   })), [funcionarios]);
@@ -2709,11 +2710,13 @@ function ListaFuncionarios({
   }).sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR", {
     sensitivity: "base"
   })), [busca, setor, filtroAlerta, funcionarios, contagens]);
-  function adicionar() {
+  async function adicionar() {
     if (!novo.nome.trim() || !novo.cargo.trim()) {
       setErr("Preencha nome e cargo.");
       return;
     }
+    setSalvando(true);
+    setErr("");
     const nextId = Math.max(...funcionarios.map(f => f.id)) + 1;
     const pfxMap = {
       "INTELIGÊNCIA COMERCIAL": "IC",
@@ -2724,7 +2727,7 @@ function ListaFuncionarios({
     const pfx = pfxMap[novo.setor] || "FUN";
     const count = funcionarios.filter(f => f.setor === novo.setor).length + 1;
     const mat = `${pfx}-${String(count).padStart(3, "0")}`;
-    setFuncionarios(prev => [...prev, {
+    const novoFunc = {
       id: nextId,
       nome: novo.nome.toUpperCase(),
       matricula: mat,
@@ -2738,9 +2741,15 @@ function ListaFuncionarios({
       erros_registro: 0,
       abonos: 0,
       integracoes: 0
-    }]);
-    setSucesso(`${novo.nome.toUpperCase()} adicionado com sucesso!`);
-    setTimeout(() => setSucesso(""), 3000);
+    };
+    const resultado = await setFuncionarios(prev => [...prev, novoFunc]);
+    setSalvando(false);
+    if (resultado && resultado.ok === false) {
+      setErr(`Salvo localmente, mas falhou no Supabase: ${resultado.erro}`);
+      return;
+    }
+    setSucesso(`${novoFunc.nome} cadastrado e salvo no banco com sucesso!`);
+    setTimeout(() => setSucesso(""), 3500);
     setModalAdd(false);
     setNovo({
       nome: "",
@@ -3181,17 +3190,22 @@ function ListaFuncionarios({
     }
   }, "Cancelar"), /*#__PURE__*/React.createElement("button", {
     onClick: adicionar,
+    disabled: salvando,
     style: {
       padding: "10px 20px",
       borderRadius: 10,
       border: "none",
-      background: "linear-gradient(135deg,var(--indigo-500),var(--roxo-500))",
+      background: salvando ? "var(--cinza-300)" : "linear-gradient(135deg,var(--indigo-500),var(--roxo-500))",
       color: "var(--cor-branco)",
       fontSize: 13,
-      cursor: "pointer",
-      fontWeight: 700
+      cursor: salvando ? "not-allowed" : "pointer",
+      fontWeight: 700,
+      opacity: salvando ? 0.8 : 1,
+      display: "flex",
+      alignItems: "center",
+      gap: 6
     }
-  }, "Adicionar")))), confirmExcluir && /*#__PURE__*/React.createElement(Modal, {
+  }, salvando ? "⏳ Salvando..." : "✅ Adicionar")))), confirmExcluir && /*#__PURE__*/React.createElement(Modal, {
     title: "⚠️ Excluir funcionário",
     onClose: () => setConfirmExcluir(null),
     maxWidth: 460
