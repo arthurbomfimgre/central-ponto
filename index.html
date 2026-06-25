@@ -3336,6 +3336,50 @@ function PerfilFuncionario({
   const [easymobMap, setEasymobMap] = useSharedState(`${SK_EASYMOB}_map`, {});
   const [sucesso, setSucesso] = useState("");
   const [confirmExcluirOc, setConfirmExcluirOc] = useState(null);
+  const [modalEditar, setModalEditar] = useState(false);
+  const [editando, setEditando] = useState(null);
+  const [salvandoEdicao, setSalvandoEdicao] = useState(false);
+  const [errEdicao, setErrEdicao] = useState("");
+  const cargosDisponiveis = useMemo(() => [...new Set(funcionarios.map(f => f.cargo))].sort((a, b) => a.localeCompare(b, "pt-BR", { sensitivity: "base" })), [funcionarios]);
+
+  function abrirEditar() {
+    setEditando({
+      nome: func.nome,
+      cargo: func.cargo,
+      setor: func.setor,
+      matricula: func.matricula,
+      ativo: func.ativo,
+      esquecimentos: func.esquecimentos ?? 0,
+      atestados: func.atestados ?? 0,
+      faltas: func.faltas ?? 0,
+      banco_horas: func.banco_horas ?? 0,
+      erros_registro: func.erros_registro ?? 0,
+      abonos: func.abonos ?? 0,
+      integracoes: func.integracoes ?? 0,
+    });
+    setErrEdicao("");
+    setModalEditar(true);
+  }
+
+  async function salvarEdicao() {
+    if (!editando.nome.trim() || !editando.cargo.trim() || !editando.matricula.trim()) {
+      setErrEdicao("Nome, cargo e matrícula são obrigatórios.");
+      return;
+    }
+    setSalvandoEdicao(true);
+    setErrEdicao("");
+    const resultado = await setFuncionarios(prev =>
+      prev.map(f => f.id === func.id ? { ...f, ...editando, nome: editando.nome.toUpperCase(), cargo: editando.cargo.toUpperCase() } : f)
+    );
+    setSalvandoEdicao(false);
+    if (resultado && resultado.ok === false) {
+      setErrEdicao(`Falha ao salvar: ${resultado.erro}`);
+      return;
+    }
+    setModalEditar(false);
+    setSucesso("Perfil atualizado com sucesso!");
+    setTimeout(() => setSucesso(""), 3500);
+  }
   const ocsFunc = ocorrencias.filter(o => o.funcionario_id === func.id);
   const ocsFilt = (filtroStatus === "Todos" ? ocsFunc : ocsFunc.filter(o => o.status === filtroStatus)).sort((a, b) => b.data.localeCompare(a.data));
   const contagem = contarOcorrencias(ocorrencias, func.id);
@@ -3494,7 +3538,22 @@ function PerfilFuncionario({
       alignItems: "center",
       gap: 6
     }
-  }, "➕ Pendência do dia")), /*#__PURE__*/React.createElement("div", {
+  }, "➕ Pendência do dia"), /*#__PURE__*/React.createElement("button", {
+    onClick: abrirEditar,
+    style: {
+      padding: "10px 18px",
+      borderRadius: 10,
+      border: "none",
+      background: "var(--cinza-100)",
+      color: "var(--cinza-700)",
+      fontSize: 12,
+      fontWeight: 700,
+      cursor: "pointer",
+      display: "flex",
+      alignItems: "center",
+      gap: 6
+    }
+  }, "✏️ Editar perfil")), /*#__PURE__*/React.createElement("div", {
     style: {
       display: "grid",
       gridTemplateColumns: "repeat(auto-fit,minmax(90px,1fr))",
@@ -3816,7 +3875,122 @@ function PerfilFuncionario({
       cursor: "pointer",
       fontWeight: 700
     }
-  }, "Sim, excluir permanentemente")))));
+  }, "Sim, excluir permanentemente")))), modalEditar && editando && /*#__PURE__*/React.createElement(Modal, {
+    title: "✏️ Editar perfil — " + func.nome,
+    onClose: () => { setModalEditar(false); setErrEdicao(""); },
+    maxWidth: 560
+  }, /*#__PURE__*/React.createElement("div", {
+    style: { display: "flex", flexDirection: "column", gap: 16 }
+  },
+
+  /*# Campo: Nome #*/
+  /*#__PURE__*/React.createElement("div", null,
+    /*#__PURE__*/React.createElement("label", { style: { fontSize: 13, fontWeight: 600, color: "var(--cinza-700)", display: "block", marginBottom: 6 } }, "Nome completo"),
+    /*#__PURE__*/React.createElement("input", {
+      value: editando.nome,
+      onChange: e => setEditando(p => ({ ...p, nome: e.target.value })),
+      style: { width: "100%", padding: "10px 14px", borderRadius: 10, border: "1px solid var(--cinza-200)", fontSize: 13, outline: "none", background: "var(--cor-branco)", boxSizing: "border-box" }
+    })
+  ),
+
+  /*# Campo: Matrícula #*/
+  /*#__PURE__*/React.createElement("div", null,
+    /*#__PURE__*/React.createElement("label", { style: { fontSize: 13, fontWeight: 600, color: "var(--cinza-700)", display: "block", marginBottom: 6 } }, "Matrícula"),
+    /*#__PURE__*/React.createElement("input", {
+      value: editando.matricula,
+      onChange: e => setEditando(p => ({ ...p, matricula: e.target.value })),
+      style: { width: "100%", padding: "10px 14px", borderRadius: 10, border: "1px solid var(--cinza-200)", fontSize: 13, fontFamily: "monospace", outline: "none", background: "var(--cor-branco)", boxSizing: "border-box" }
+    })
+  ),
+
+  /*# Cargo + Setor lado a lado #*/
+  /*#__PURE__*/React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 } },
+    /*#__PURE__*/React.createElement("div", null,
+      /*#__PURE__*/React.createElement("label", { style: { fontSize: 13, fontWeight: 600, color: "var(--cinza-700)", display: "block", marginBottom: 6 } }, "Cargo"),
+      /*#__PURE__*/React.createElement("select", {
+        value: editando.cargo,
+        onChange: e => setEditando(p => ({ ...p, cargo: e.target.value })),
+        style: { width: "100%", padding: "10px 14px", borderRadius: 10, border: "1px solid var(--cinza-200)", fontSize: 13, background: "var(--cor-branco)", cursor: "pointer", boxSizing: "border-box" }
+      },
+        /*#__PURE__*/React.createElement("option", { value: "" }, "Selecione…"),
+        cargosDisponiveis.map(c => /*#__PURE__*/React.createElement("option", { key: c, value: c }, c))
+      )
+    ),
+    /*#__PURE__*/React.createElement("div", null,
+      /*#__PURE__*/React.createElement("label", { style: { fontSize: 13, fontWeight: 600, color: "var(--cinza-700)", display: "block", marginBottom: 6 } }, "Setor"),
+      /*#__PURE__*/React.createElement("select", {
+        value: editando.setor,
+        onChange: e => setEditando(p => ({ ...p, setor: e.target.value })),
+        style: { width: "100%", padding: "10px 14px", borderRadius: 10, border: "1px solid var(--cinza-200)", fontSize: 13, background: "var(--cor-branco)", cursor: "pointer", boxSizing: "border-box" }
+      },
+        SETORES_LIST.map(s => /*#__PURE__*/React.createElement("option", { key: s }, s))
+      )
+    )
+  ),
+
+  /*# Status ativo/inativo #*/
+  /*#__PURE__*/React.createElement("div", null,
+    /*#__PURE__*/React.createElement("label", { style: { fontSize: 13, fontWeight: 600, color: "var(--cinza-700)", display: "block", marginBottom: 6 } }, "Status"),
+    /*#__PURE__*/React.createElement("select", {
+      value: editando.ativo ? "ativo" : "inativo",
+      onChange: e => setEditando(p => ({ ...p, ativo: e.target.value === "ativo" })),
+      style: { width: "100%", padding: "10px 14px", borderRadius: 10, border: "1px solid var(--cinza-200)", fontSize: 13, background: "var(--cor-branco)", cursor: "pointer", boxSizing: "border-box" }
+    },
+      /*#__PURE__*/React.createElement("option", { value: "ativo" }, "● Ativo"),
+      /*#__PURE__*/React.createElement("option", { value: "inativo" }, "○ Inativo")
+    )
+  ),
+
+  /*# Contadores #*/
+  /*#__PURE__*/React.createElement("div", { style: { borderTop: "1px solid var(--cinza-100)", paddingTop: 14 } },
+    /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, fontWeight: 700, color: "var(--cinza-400)", textTransform: "uppercase", letterSpacing: ".05em", marginBottom: 12 } }, "Contadores"),
+    /*#__PURE__*/React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10 } },
+      [
+        ["Esquecimentos", "esquecimentos"],
+        ["Atestados", "atestados"],
+        ["Faltas", "faltas"],
+        ["Banco de Horas", "banco_horas"],
+        ["Erros Registro", "erros_registro"],
+        ["Abonos", "abonos"],
+        ["Integrações", "integracoes"],
+      ].map(([label, campo]) =>
+        /*#__PURE__*/React.createElement("div", { key: campo },
+          /*#__PURE__*/React.createElement("label", { style: { fontSize: 11, fontWeight: 600, color: "var(--cinza-500)", display: "block", marginBottom: 4 } }, label),
+          /*#__PURE__*/React.createElement("input", {
+            type: "number",
+            min: "0",
+            value: editando[campo],
+            onChange: e => setEditando(p => ({ ...p, [campo]: Math.max(0, parseInt(e.target.value) || 0) })),
+            style: { width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid var(--cinza-200)", fontSize: 13, textAlign: "center", outline: "none", background: "var(--cor-branco)", boxSizing: "border-box" }
+          })
+        )
+      )
+    )
+  ),
+
+  /*# Erro #*/
+  errEdicao && /*#__PURE__*/React.createElement("div", {
+    style: { background: "var(--vermelho-100)", borderRadius: 10, padding: "10px 14px", fontSize: 13, color: "var(--vermelho-600)" }
+  }, errEdicao),
+
+  /*# Botões #*/
+  /*#__PURE__*/React.createElement("div", { style: { display: "flex", gap: 10, justifyContent: "flex-end" } },
+    /*#__PURE__*/React.createElement("button", {
+      onClick: () => { setModalEditar(false); setErrEdicao(""); },
+      style: { padding: "10px 20px", borderRadius: 10, border: "1px solid var(--cinza-200)", background: "var(--cor-branco)", fontSize: 13, cursor: "pointer", fontWeight: 600, color: "var(--cinza-500)" }
+    }, "Cancelar"),
+    /*#__PURE__*/React.createElement("button", {
+      onClick: salvarEdicao,
+      disabled: salvandoEdicao,
+      style: {
+        padding: "10px 20px", borderRadius: 10, border: "none",
+        background: salvandoEdicao ? "var(--cinza-300)" : "linear-gradient(135deg,var(--indigo-500),var(--roxo-500))",
+        color: "var(--cor-branco)", fontSize: 13, fontWeight: 700,
+        cursor: salvandoEdicao ? "not-allowed" : "pointer",
+        display: "flex", alignItems: "center", gap: 6
+      }
+    }, salvandoEdicao ? "⏳ Salvando..." : "💾 Salvar alterações")
+  ))));
 }
 
 // ─── PAINEL DE APROVAÇÃO ──────────────────────────────────────────────────────
