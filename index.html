@@ -1697,6 +1697,24 @@ function TelaLogin({
   const [erro, setErro] = useState("");
   const [loading, setLoading] = useState(false);
   const [show, setShow] = useState(false);
+  // Recuperação de senha: tela de login alterna para um pequeno formulário
+  // de "esqueci minha senha" (só e-mail), que dispara o link via Supabase
+  // Auth (entregue por Resend). Nenhuma senha é manipulada aqui.
+  const [modoEsqueci, setModoEsqueci] = useState(false);
+  const [emailRecuperar, setEmailRecuperar] = useState("");
+  const [statusRecuperar, setStatusRecuperar] = useState(null); // null | "enviando" | "enviado" | erro string
+  async function enviarRecuperacao() {
+    setStatusRecuperar("enviando");
+    const email = emailRecuperar.includes("@") ? emailRecuperar.trim().toLowerCase() : `${emailRecuperar.trim().toLowerCase()}@portovale.com.br`;
+    const { error } = await supa.auth.resetPasswordForEmail(email, {
+      redirectTo: window.location.origin + window.location.pathname
+    });
+    if (error) {
+      setStatusRecuperar(error.message || "Não foi possível enviar o e-mail. Tente novamente.");
+      return;
+    }
+    setStatusRecuperar("enviado");
+  }
   async function handle() {
     setErro("");
     setLoading(true);
@@ -1789,7 +1807,75 @@ function TelaLogin({
       color: "var(--cinza-900)",
       margin: "0 0 24px"
     }
-  }, "Entrar na sua conta"), /*#__PURE__*/React.createElement("div", {
+  }, modoEsqueci ? "Recuperar senha" : "Entrar na sua conta"), modoEsqueci ? /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      flexDirection: "column",
+      gap: 16
+    }
+  }, statusRecuperar === "enviado" ? /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: "var(--verde-100)",
+      border: "1px solid var(--verde-200)",
+      borderRadius: 12,
+      padding: "14px 16px",
+      fontSize: 13,
+      color: "var(--verde-800)",
+      lineHeight: 1.6
+    }
+  }, "✅ Se este e-mail estiver cadastrado, enviamos um link de redefinição de senha. Verifique também a caixa de spam.") : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
+    style: {
+      fontSize: 13,
+      fontWeight: 600,
+      color: "var(--cinza-700)",
+      display: "block",
+      marginBottom: 6
+    }
+  }, "E-mail"), /*#__PURE__*/React.createElement("input", {
+    value: emailRecuperar,
+    onChange: e => setEmailRecuperar(e.target.value),
+    onKeyDown: e => e.key === "Enter" && statusRecuperar !== "enviando" && enviarRecuperacao(),
+    placeholder: "nome.sobrenome@portovale.com.br",
+    style: inp
+  })), statusRecuperar && statusRecuperar !== "enviando" && /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: "var(--vermelho-100)",
+      border: "1px solid var(--vermelho-300)",
+      borderRadius: 10,
+      padding: "10px 14px",
+      fontSize: 13,
+      color: "var(--vermelho-600)"
+    }
+  }, statusRecuperar), /*#__PURE__*/React.createElement("button", {
+    onClick: enviarRecuperacao,
+    disabled: statusRecuperar === "enviando" || !emailRecuperar,
+    style: {
+      padding: "13px",
+      borderRadius: 12,
+      border: "none",
+      background: statusRecuperar === "enviando" || !emailRecuperar ? "var(--cinza-200)" : "linear-gradient(135deg,var(--indigo-500),var(--roxo-500))",
+      color: statusRecuperar === "enviando" || !emailRecuperar ? "var(--cinza-400)" : "var(--cor-branco)",
+      fontSize: 14,
+      fontWeight: 700,
+      cursor: statusRecuperar === "enviando" || !emailRecuperar ? "not-allowed" : "pointer"
+    }
+  }, statusRecuperar === "enviando" ? "Enviando…" : "Enviar link de redefinição")), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    onClick: () => {
+      setModoEsqueci(false);
+      setStatusRecuperar(null);
+    },
+    style: {
+      background: "none",
+      border: "none",
+      cursor: "pointer",
+      fontSize: 12,
+      color: "var(--cinza-500)",
+      fontWeight: 600,
+      textAlign: "center",
+      padding: "4px 0 0"
+    }
+  }, "← Voltar para o login")) : /*#__PURE__*/React.createElement("div", {
     style: {
       display: "flex",
       flexDirection: "column",
@@ -1866,7 +1952,24 @@ function TelaLogin({
       fontWeight: 700,
       cursor: loading || !usuario || !senha ? "not-allowed" : "pointer"
     }
-  }, loading ? "Verificando…" : "Entrar")), /*#__PURE__*/React.createElement("div", {
+  }, loading ? "Verificando…" : "Entrar"), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    onClick: () => {
+      setModoEsqueci(true);
+      setEmailRecuperar(usuario);
+      setStatusRecuperar(null);
+    },
+    style: {
+      background: "none",
+      border: "none",
+      cursor: "pointer",
+      fontSize: 12,
+      color: "var(--marca-500)",
+      fontWeight: 600,
+      textAlign: "center",
+      padding: "2px 0 0"
+    }
+  }, "Esqueci minha senha")), /*#__PURE__*/React.createElement("div", {
     style: {
       textAlign: "center",
       marginTop: 24,
@@ -1874,6 +1977,142 @@ function TelaLogin({
       color: "var(--cinza-400)"
     }
   }, "Tecnologia GRE · Desenvolvido por Arthur Bomfim"))));
+}
+
+// ─── TELA NOVA SENHA (via link de recuperação por e-mail) ────────────────────
+// Renderizada quando o Supabase Auth dispara PASSWORD_RECOVERY (usuário
+// clicou no link enviado por e-mail). A sessão temporária criada pelo
+// Supabase já autentica updateUser — não é preciso pedir a senha antiga.
+function TelaNovaSenha({ onConcluido }) {
+  const [senha, setSenha] = useState("");
+  const [confirmar, setConfirmar] = useState("");
+  const [erro, setErro] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [sucesso, setSucesso] = useState(false);
+  async function salvar() {
+    setErro("");
+    if (senha.length < 6) {
+      setErro("A senha precisa ter pelo menos 6 caracteres.");
+      return;
+    }
+    if (senha !== confirmar) {
+      setErro("As senhas não coincidem.");
+      return;
+    }
+    setLoading(true);
+    const { error } = await supa.auth.updateUser({ password: senha });
+    setLoading(false);
+    if (error) {
+      setErro(error.message || "Não foi possível atualizar a senha. Tente novamente.");
+      return;
+    }
+    setSucesso(true);
+  }
+  const inp = {
+    width: "100%",
+    padding: "11px 14px",
+    borderRadius: 12,
+    border: `1px solid ${erro ? "var(--vermelho-300)" : "var(--cinza-200)"}`,
+    fontSize: 14,
+    outline: "none",
+    boxSizing: "border-box",
+    background: "var(--cinza-50)"
+  };
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      minHeight: "100vh",
+      background: "linear-gradient(135deg,var(--cinza-50) 0%,var(--marca-100) 100%)",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      padding: 24,
+      fontFamily: "-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: { width: "100%", maxWidth: 420 }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: { textAlign: "center", marginBottom: 36 }
+  }, /*#__PURE__*/React.createElement(Logo, { height: 48 }), /*#__PURE__*/React.createElement("p", {
+    style: { color: "var(--cinza-500)", fontSize: 14, marginTop: 14 }
+  }, "Defina sua nova senha")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: "var(--cor-branco)",
+      borderRadius: 24,
+      padding: "36px 36px 32px",
+      boxShadow: "0 8px 40px var(--sombra-suave)",
+      border: "1px solid var(--cinza-100)"
+    }
+  }, sucesso ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: "var(--verde-100)",
+      border: "1px solid var(--verde-200)",
+      borderRadius: 12,
+      padding: "14px 16px",
+      fontSize: 13,
+      color: "var(--verde-800)",
+      lineHeight: 1.6,
+      marginBottom: 20
+    }
+  }, "✅ Senha atualizada com sucesso! Use-a no próximo login."), /*#__PURE__*/React.createElement("button", {
+    onClick: onConcluido,
+    style: {
+      width: "100%",
+      padding: "13px",
+      borderRadius: 12,
+      border: "none",
+      background: "linear-gradient(135deg,var(--indigo-500),var(--roxo-500))",
+      color: "var(--cor-branco)",
+      fontSize: 14,
+      fontWeight: 700,
+      cursor: "pointer"
+    }
+  }, "Ir para o login")) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("h2", {
+    style: { fontSize: 16, fontWeight: 700, color: "var(--cinza-900)", margin: "0 0 24px" }
+  }, "Criar nova senha"), /*#__PURE__*/React.createElement("div", {
+    style: { display: "flex", flexDirection: "column", gap: 16 }
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
+    style: { fontSize: 13, fontWeight: 600, color: "var(--cinza-700)", display: "block", marginBottom: 6 }
+  }, "Nova senha"), /*#__PURE__*/React.createElement("input", {
+    type: "password",
+    value: senha,
+    onChange: e => setSenha(e.target.value),
+    onKeyDown: e => e.key === "Enter" && !loading && salvar(),
+    placeholder: "Mínimo 6 caracteres",
+    style: inp
+  })), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
+    style: { fontSize: 13, fontWeight: 600, color: "var(--cinza-700)", display: "block", marginBottom: 6 }
+  }, "Confirmar senha"), /*#__PURE__*/React.createElement("input", {
+    type: "password",
+    value: confirmar,
+    onChange: e => setConfirmar(e.target.value),
+    onKeyDown: e => e.key === "Enter" && !loading && salvar(),
+    placeholder: "Repita a nova senha",
+    style: inp
+  })), erro && /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: "var(--vermelho-100)",
+      border: "1px solid var(--vermelho-300)",
+      borderRadius: 10,
+      padding: "10px 14px",
+      fontSize: 13,
+      color: "var(--vermelho-600)"
+    }
+  }, erro), /*#__PURE__*/React.createElement("button", {
+    onClick: salvar,
+    disabled: loading || !senha || !confirmar,
+    style: {
+      padding: "13px",
+      borderRadius: 12,
+      border: "none",
+      background: loading || !senha || !confirmar ? "var(--cinza-200)" : "linear-gradient(135deg,var(--indigo-500),var(--roxo-500))",
+      color: loading || !senha || !confirmar ? "var(--cinza-400)" : "var(--cor-branco)",
+      fontSize: 14,
+      fontWeight: 700,
+      cursor: loading || !senha || !confirmar ? "not-allowed" : "pointer"
+    }
+  }, loading ? "Salvando…" : "Salvar nova senha")))), /*#__PURE__*/React.createElement("div", {
+    style: { textAlign: "center", marginTop: 24, fontSize: 11, color: "var(--cinza-400)" }
+  }, "Tecnologia GRE · Desenvolvido por Arthur Bomfim")));
 }
 
 // ─── MODAL CRIAR PENDÊNCIA ────────────────────────────────────────────────────
@@ -6557,9 +6796,21 @@ function App() {
   const [theme, toggleTheme] = useTheme();
   const [usuario, setUsuario] = useState(null);
   const [verificandoSessao, setVerificandoSessao] = useState(true);
+  // Quando o usuário clica no link de "redefinir senha" recebido por e-mail,
+  // o Supabase Auth cria uma sessão temporária e dispara o evento
+  // PASSWORD_RECOVERY. Capturamos isso para mostrar a tela de nova senha em
+  // vez do login normal ou do app — sem precisar parsear a URL manualmente.
+  const [modoRecuperacao, setModoRecuperacao] = useState(false);
+  useEffect(() => {
+    const { data: listener } = supa.auth.onAuthStateChange((event) => {
+      if (event === "PASSWORD_RECOVERY") setModoRecuperacao(true);
+    });
+    return () => listener?.subscription?.unsubscribe();
+  }, []);
   function sair() {
     supa.auth.signOut();
     setUsuario(null);
+    setModoRecuperacao(false);
   }
   const [view, setView] = useState("dashboard");
   const [funcSelecionado, setFuncSelecionado] = useState(null);
@@ -6639,6 +6890,13 @@ function App() {
       fontWeight: 500
     }
   }, "Verificando sessão…");
+  if (modoRecuperacao) return /*#__PURE__*/React.createElement(TelaNovaSenha, {
+    onConcluido: () => {
+      setModoRecuperacao(false);
+      supa.auth.signOut();
+      setUsuario(null);
+    }
+  });
   if (!usuario) return /*#__PURE__*/React.createElement(TelaLogin, {
     funcionarios: funcionarios,
     onLogin: u => {
