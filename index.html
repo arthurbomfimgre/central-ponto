@@ -1030,6 +1030,11 @@ function gerarEmail(nomeCompleto) {
   const normalizar = s => s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
   return `${normalizar(primeiro)}.${normalizar(ultimo)}@portovale.com.br`;
 }
+// Retorna o e-mail real de um funcionário: usa o campo `email` customizado
+// (quando cadastrado pelo admin) ou gera automaticamente pelo nome.
+function emailFuncionario(func) {
+  return (func.email && func.email.trim()) ? func.email.trim().toLowerCase() : gerarEmail(func.nome);
+}
 // Administradores do sistema: Abraão Moreira (1), Arthur Bomfim (4), Bruna Pinheiro (5).
 // Admins também aparecem como funcionários e podem ter pendências criadas para si.
 const ADMIN_FUNCIONARIO_ID = 1; // mantido para compatibilidade
@@ -1762,7 +1767,7 @@ function TelaLogin({
     }
     // Casa o e-mail autenticado com o funcionário correspondente, para obter
     // funcionario_id, nome, cargo e papel (admin ou colaborador comum).
-    const func = funcionarios.find(f => gerarEmail(f.nome) === email);
+    const func = funcionarios.find(f => emailFuncionario(f) === email);
     if (!func) {
       setErro("Login válido, porém nenhum funcionário corresponde a este e-mail. Avise o administrador.");
       await supa.auth.signOut();
@@ -3620,6 +3625,7 @@ function PerfilFuncionario({
       erros_registro: func.erros_registro ?? 0,
       abonos: func.abonos ?? 0,
       integracoes: func.integracoes ?? 0,
+      email: func.email || "",
     });
     setErrEdicao("");
     setModalEditar(true);
@@ -4164,6 +4170,22 @@ function PerfilFuncionario({
       value: editando.matricula,
       onChange: e => setEditando(p => ({ ...p, matricula: e.target.value })),
       style: { width: "100%", padding: "10px 14px", borderRadius: 10, border: "1px solid var(--cinza-200)", fontSize: 13, fontFamily: "monospace", outline: "none", background: "var(--cor-branco)", boxSizing: "border-box" }
+    })
+  ),
+
+
+  /*# Campo: E-mail customizado (opcional) #*/
+  /*#__PURE__*/React.createElement("div", null,
+    /*#__PURE__*/React.createElement("label", { style: { fontSize: 13, fontWeight: 600, color: "var(--cinza-700)", display: "block", marginBottom: 4 } }, "E-mail de login (opcional)"),
+    /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, color: "var(--cinza-400)", marginBottom: 6 } },
+      "Preencha su00f3 se o e-mail nu00e3o seguir o padru00e3o nome.sobrenome@portovale.com.br"
+    ),
+    /*#__PURE__*/React.createElement("input", {
+      type: "email",
+      value: editando.email || "",
+      onChange: e => setEditando(p => ({ ...p, email: e.target.value.trim().toLowerCase() })),
+      placeholder: gerarEmail(editando.nome || func.nome),
+      style: { width: "100%", padding: "10px 14px", borderRadius: 10, border: "1px solid var(--cinza-200)", fontSize: 13, outline: "none", background: "var(--cor-branco)", boxSizing: "border-box" }
     })
   ),
 
@@ -6853,7 +6875,7 @@ function App() {
       if (!ativo) return;
       const email = data?.session?.user?.email;
       if (email) {
-        const func = funcionarios.find(f => gerarEmail(f.nome) === email);
+        const func = funcionarios.find(f => emailFuncionario(f) === email);
         if (func) setUsuario({
           id: ADMIN_IDS.includes(func.id) ? "admin" : `func_${func.id}`,
           nome: func.nome,
