@@ -1706,14 +1706,30 @@ function TelaLogin({
   async function enviarRecuperacao() {
     setStatusRecuperar("enviando");
     const email = emailRecuperar.includes("@") ? emailRecuperar.trim().toLowerCase() : `${emailRecuperar.trim().toLowerCase()}@portovale.com.br`;
-    const { error } = await supa.auth.resetPasswordForEmail(email, {
-      redirectTo: window.location.origin + window.location.pathname
-    });
-    if (error) {
-      setStatusRecuperar(error.message || "Não foi possível enviar o e-mail. Tente novamente.");
-      return;
+    try {
+      const { error } = await supa.auth.resetPasswordForEmail(email, {
+        redirectTo: window.location.origin + window.location.pathname
+      });
+      if (error) {
+        // Alguns erros do Supabase Auth não trazem `.message` populado de
+        // forma direta (ex: dependendo da versão do SDK ou do tipo de erro
+        // HTTP retornado). Sem essa extração defensiva, um objeto vazio
+        // acabava caindo direto no estado e o React tentava renderizá-lo
+        // como texto, mostrando literalmente "{}" na tela em vez de uma
+        // mensagem legível.
+        const msg = (typeof error === "string" && error)
+          || error?.message
+          || error?.error_description
+          || error?.msg
+          || (error?.status ? `Erro ${error.status} ao enviar o e-mail.` : "")
+          || "Não foi possível enviar o e-mail. Tente novamente.";
+        setStatusRecuperar(msg);
+        return;
+      }
+      setStatusRecuperar("enviado");
+    } catch (e) {
+      setStatusRecuperar(e?.message || "Falha de conexão. Verifique sua internet e tente novamente.");
     }
-    setStatusRecuperar("enviado");
   }
   async function handle() {
     setErro("");
