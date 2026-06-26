@@ -97,6 +97,27 @@ function salvarLS(key, val) {
 // demais) — o print "parecia" enviado no aparelho do funcionário, mas nunca
 // chegava ao banco para o admin ver. Reduzir para no máximo 1280px no lado
 // maior e comprimir como JPEG resolve isso, mantendo a foto legível.
+// Extrai uma mensagem de erro segura (sempre string) a partir de qualquer
+// formato de erro que o Supabase ou o navegador possam lançar. Necessário
+// porque erros HTTP 500 do GoTrue (Auth) às vezes chegam como objetos sem
+// `.message` legível, ou até como erros de rede genéricos — sem essa
+// blindagem com `typeof` explícito, um objeto podia acabar sendo passado
+// como children de um elemento React, que então renderizava literalmente
+// "{}" na tela em vez de um texto compreensível para o usuário.
+function extrairMensagemErro(err) {
+  if (typeof err === "string" && err) return err;
+  if (err && typeof err === "object") {
+    const candidatos = [err.message, err.error_description, err.msg, err.error, err.statusText];
+    for (const c of candidatos) {
+      if (typeof c === "string" && c) return c;
+    }
+    if (typeof err.status === "number" && err.status > 0) {
+      return `Erro no servidor (código ${err.status}). Tente novamente em alguns minutos.`;
+    }
+  }
+  return "Não foi possível concluir a operação. Tente novamente.";
+}
+
 function comprimirImagem(dataUrl, maxLado = 1280, qualidade = 0.75) {
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -1711,24 +1732,12 @@ function TelaLogin({
         redirectTo: window.location.origin + window.location.pathname
       });
       if (error) {
-        // Alguns erros do Supabase Auth não trazem `.message` populado de
-        // forma direta (ex: dependendo da versão do SDK ou do tipo de erro
-        // HTTP retornado). Sem essa extração defensiva, um objeto vazio
-        // acabava caindo direto no estado e o React tentava renderizá-lo
-        // como texto, mostrando literalmente "{}" na tela em vez de uma
-        // mensagem legível.
-        const msg = (typeof error === "string" && error)
-          || error?.message
-          || error?.error_description
-          || error?.msg
-          || (error?.status ? `Erro ${error.status} ao enviar o e-mail.` : "")
-          || "Não foi possível enviar o e-mail. Tente novamente.";
-        setStatusRecuperar(msg);
+        setStatusRecuperar(extrairMensagemErro(error));
         return;
       }
       setStatusRecuperar("enviado");
     } catch (e) {
-      setStatusRecuperar(e?.message || "Falha de conexão. Verifique sua internet e tente novamente.");
+      setStatusRecuperar(extrairMensagemErro(e));
     }
   }
   async function handle() {
