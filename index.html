@@ -1767,16 +1767,7 @@ function TelaLogin({
     }
     // Casa o e-mail autenticado com o funcionário correspondente, para obter
     // funcionario_id, nome, cargo e papel (admin ou colaborador comum).
-    // Em primeiros acessos (ex: celular sem cache local ainda), a lista
-    // `funcionarios` recebida por prop pode estar desatualizada — ela só é
-    // populada de fato pelo useEffect assíncrono do useSharedState, que pode
-    // ainda não ter terminado. Por isso, buscamos a lista mais recente direto
-    // do Supabase aqui antes de desistir, evitando essa falsa negativa.
-    let func = funcionarios.find(f => emailFuncionario(f) === email);
-    if (!func) {
-      const funcsAtualizados = await lerSupa(SK_FUNCS, FUNCIONARIOS_BASE);
-      func = funcsAtualizados.find(f => emailFuncionario(f) === email);
-    }
+    const func = funcionarios.find(f => emailFuncionario(f) === email);
     if (!func) {
       setErro("Login válido, porém nenhum funcionário corresponde a este e-mail. Avise o administrador.");
       await supa.auth.signOut();
@@ -6868,7 +6859,7 @@ function App() {
     setUsuario(null);
     setModoRecuperacao(false);
   }
-  const [view, setView] = useState("dashboard");
+  const [view, setView] = useState("mural"); // "Processos" é a tela de introdução, para admin e funcionário
   const [funcSelecionado, setFuncSelecionado] = useState(null);
   const [toasts, setToasts] = useState([]);
   const [funcionarios, setFuncionarios] = useSharedState(SK_FUNCS, FUNCIONARIOS_BASE);
@@ -6957,7 +6948,7 @@ function App() {
     funcionarios: funcionarios,
     onLogin: u => {
       setUsuario(u);
-      setView(u.role === "admin" ? "dashboard" : "mural");
+      setView("mural"); // Processos é a introdução, tanto para admin quanto para funcionário
     }
   });
   const NAV_ADMIN = [{
