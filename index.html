@@ -198,8 +198,19 @@ async function salvarSupa(key, val) {
       // easymob é um objeto chave->valor
       if (typeof val !== "object" || !val) return { ok: true };
       for (const [chave, dado] of Object.entries(val)) {
-        const { error } = await supa.from(table).upsert({ chave, data: dado }, { onConflict: "chave" });
-        if (error) return { ok: false, erro: error.message };
+        // .select() força o Supabase a retornar a linha realmente gravada —
+        // sem isso, um upsert bloqueado silenciosamente por RLS pode não
+        // reportar `error` algum, mas também não persistir nada, fazendo a
+        // UI achar que deu certo quando na verdade não salvou.
+        const { data: linhaSalva, error } = await supa.from(table).upsert({ chave, data: dado }, { onConflict: "chave" }).select();
+        if (error) {
+          console.error("[EASYMOB UPSERT ERROR]", { chave, tamanhoDado: dado?.length, error });
+          return { ok: false, erro: error.message };
+        }
+        if (!linhaSalva || linhaSalva.length === 0) {
+          console.error("[EASYMOB UPSERT SEM RETORNO]", { chave, tamanhoDado: dado?.length });
+          return { ok: false, erro: "O registro não foi confirmado pelo banco (possível bloqueio de permissão)." };
+        }
       }
       return { ok: true };
     }
@@ -221,6 +232,7 @@ async function salvarSupa(key, val) {
   } catch (e) {
     // Falha de rede/inesperada — já salvou no localStorage como fallback,
     // mas o chamador precisa saber que não sincronizou com o banco.
+    console.error("[SALVARSUPA EXCEPTION]", { key, error: e });
     return { ok: false, erro: e?.message || "Falha de conexão" };
   }
 }
