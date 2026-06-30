@@ -79,6 +79,15 @@ const KEY_TABLE = {
   [SK_NOTIFS]:  "notificacoes",
   [SK_RECADOS]: "recados",
   [SK_EASYMOB]: "easymob",
+  // BUG CRÍTICO CORRIGIDO: o app sempre usou a chave `${SK_EASYMOB}_map`
+  // (ex: "cp_easymob_v4_map") para guardar o mapa de prints do EasyMob via
+  // useSharedState — mas essa chave exata nunca esteve registrada aqui.
+  // Resultado: `salvarSupa` recebia `table = undefined` e retornava
+  // `{ ok: true }` sem nunca tocar no Supabase, então o print "parecia"
+  // enviado na tela do funcionário (sucesso falso-positivo), ficava só no
+  // localStorage do aparelho dele, e nunca chegava ao banco — por isso o
+  // admin nunca via nada e a tabela `easymob` continuava vazia.
+  [`${SK_EASYMOB}_map`]: "easymob",
 };
 
 // Cache local para evitar flickering
@@ -146,7 +155,11 @@ async function lerSupa(key, fb) {
   try {
     const table = KEY_TABLE[key];
     if (!table) return fb;
-    if (key === SK_EASYMOB) {
+    // A chave real usada pelo app para o mapa de prints do EasyMob tem o
+    // sufixo "_map" (ex: "cp_easymob_v4_map") — precisa ser tratada do mesmo
+    // jeito que SK_EASYMOB (chave/valor simples), senão cai no ramo de baixo
+    // que espera um array com campo `id`, formato incompatível com a tabela.
+    if (key === SK_EASYMOB || key === `${SK_EASYMOB}_map`) {
       const { data } = await supa.from(table).select("*");
       if (!data || data.length === 0) return fb;
       // easymob armazena chave/valor simples
@@ -177,7 +190,11 @@ async function salvarSupa(key, val) {
     const table = KEY_TABLE[key];
     if (!table) return { ok: true };
 
-    if (key === SK_EASYMOB) {
+    // Mesma correção: a chave real usada pelo app tem o sufixo "_map" (ex:
+    // "cp_easymob_v4_map") e precisa ser tratada como objeto chave->valor,
+    // igual SK_EASYMOB — senão caía no ramo de array por engano (ou, antes
+    // da correção do KEY_TABLE, nem chegava a entrar aqui).
+    if (key === SK_EASYMOB || key === `${SK_EASYMOB}_map`) {
       // easymob é um objeto chave->valor
       if (typeof val !== "object" || !val) return { ok: true };
       for (const [chave, dado] of Object.entries(val)) {
