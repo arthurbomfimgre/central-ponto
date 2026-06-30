@@ -6348,6 +6348,16 @@ function PortalFuncionario({
         [`${funcLogado.id}_${ocId}`]: dataUrlComprimido
       }));
       if (!resultado.ok) {
+        // Reverte o print do estado local: sem isso, a tela continuava
+        // mostrando "Print enviado ✓" e liberava o botão "Marcar como
+        // corrigido" mesmo quando o Supabase rejeitou o salvamento — dando
+        // ao funcionário uma falsa sensação de sucesso enquanto o admin
+        // nunca recebia nada.
+        setEasymobMap(prev => {
+          const next = { ...prev };
+          delete next[`${funcLogado.id}_${ocId}`];
+          return next;
+        });
         setErroEasymob("Não foi possível enviar o print. Verifique sua conexão e tente novamente.");
       }
     } catch (err) {
