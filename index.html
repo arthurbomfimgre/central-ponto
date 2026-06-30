@@ -6961,6 +6961,10 @@ function App() {
     }
   });
   const NAV_ADMIN = [{
+    id: "mural",
+    label: "Tela Inicial",
+    icon: "📋"
+  }, {
     id: "dashboard",
     label: "Dashboard",
     icon: "📊"
@@ -6977,10 +6981,6 @@ function App() {
     id: "relatorios",
     label: "Relatórios",
     icon: "📈"
-  }, {
-    id: "mural",
-    label: "Processos",
-    icon: "📋"
   }, {
     id: "portal",
     label: "Meu Portal",
@@ -7227,18 +7227,6 @@ function App() {
       gap: 10
     }
   }, /*#__PURE__*/React.createElement("button", {
-    onClick: () => setView("portal"),
-    style: {
-      padding: "6px 14px",
-      borderRadius: 20,
-      border: "none",
-      fontSize: 12,
-      fontWeight: 600,
-      cursor: "pointer",
-      background: view === "portal" ? "var(--indigo-500)" : "var(--cinza-100)",
-      color: view === "portal" ? "var(--cor-branco)" : "var(--cinza-500)"
-    }
-  }, "🏠 Portal"), /*#__PURE__*/React.createElement("button", {
     onClick: () => setView("mural"),
     style: {
       padding: "6px 14px",
@@ -7250,7 +7238,7 @@ function App() {
       background: view === "mural" ? "var(--indigo-500)" : "var(--cinza-100)",
       color: view === "mural" ? "var(--cor-branco)" : "var(--cinza-500)"
     }
-  }, "📋 Processos"), minhasPendentes > 0 && /*#__PURE__*/React.createElement("span", {
+  }, "📋 Tela Inicial"), minhasPendentes > 0 && /*#__PURE__*/React.createElement("span", {
     style: {
       background: "var(--vermelho-100)",
       color: "var(--vermelho-600)",
@@ -7259,7 +7247,19 @@ function App() {
       padding: "3px 10px",
       borderRadius: 20
     }
-  }, "🔔 ", minhasPendentes, " pendência", minhasPendentes > 1 ? "s" : ""), /*#__PURE__*/React.createElement(BotaoTema, {
+  }, "🔔 ", minhasPendentes, " pendência", minhasPendentes > 1 ? "s" : ""), /*#__PURE__*/React.createElement("button", {
+    onClick: () => setView("portal"),
+    style: {
+      padding: "6px 14px",
+      borderRadius: 20,
+      border: "none",
+      fontSize: 12,
+      fontWeight: 600,
+      cursor: "pointer",
+      background: view === "portal" ? "var(--indigo-500)" : "var(--cinza-100)",
+      color: view === "portal" ? "var(--cor-branco)" : "var(--cinza-500)"
+    }
+  }, "🏠 Portal"), /*#__PURE__*/React.createElement(BotaoTema, {
     theme: theme,
     onToggle: toggleTheme,
     compact: true
