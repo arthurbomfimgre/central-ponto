@@ -1767,7 +1767,16 @@ function TelaLogin({
     }
     // Casa o e-mail autenticado com o funcionário correspondente, para obter
     // funcionario_id, nome, cargo e papel (admin ou colaborador comum).
-    const func = funcionarios.find(f => emailFuncionario(f) === email);
+    // Em primeiros acessos (ex: celular sem cache local ainda), a lista
+    // `funcionarios` recebida por prop pode estar desatualizada — ela só é
+    // populada de fato pelo useEffect assíncrono do useSharedState, que pode
+    // ainda não ter terminado. Por isso, buscamos a lista mais recente direto
+    // do Supabase aqui antes de desistir, evitando essa falsa negativa.
+    let func = funcionarios.find(f => emailFuncionario(f) === email);
+    if (!func) {
+      const funcsAtualizados = await lerSupa(SK_FUNCS, FUNCIONARIOS_BASE);
+      func = funcsAtualizados.find(f => emailFuncionario(f) === email);
+    }
     if (!func) {
       setErro("Login válido, porém nenhum funcionário corresponde a este e-mail. Avise o administrador.");
       await supa.auth.signOut();
