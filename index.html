@@ -1005,35 +1005,8 @@ const OCS_SJCJUNHO = [{
   novo: false,
   novoParaFunc: false
 }];
-const SETORES_LIST = ["INTELIGÊNCIA COMERCIAL", "BACKOFFICE GRE", "POS CONTEMPLACAO", "GRE", "POS VENDA", "ATENDIMENTO NEGOCIOS", "COBRANÇA"];
+const SETORES_LIST = ["INTELIGÊNCIA COMERCIAL", "BACKOFFICE GRE", "POS CONTEMPLACAO", "GRE"];
 const SETORES = ["Todos", ...SETORES_LIST];
-// Mapeia o valor da coluna "Supervisao" (planilha do sistema GRE, baixada para
-// importação) para o setor correspondente no Central de Ponto. Valores vazios
-// ou "-" caem em INTELIGÊNCIA COMERCIAL (time sem supervisor dedicado).
-const MAPA_SUPERVISAO_SETOR = {
-  "": "INTELIGÊNCIA COMERCIAL",
-  "-": "INTELIGÊNCIA COMERCIAL",
-  "POS VENDA": "POS VENDA",
-  "POS CONTEMPLACAO": "POS CONTEMPLACAO",
-  "ATENDIMENTO NEGOCIOS": "ATENDIMENTO NEGOCIOS",
-  "BACKOFFICE GRE": "BACKOFFICE GRE",
-  "COBRANCA": "COBRANÇA"
-};
-function mapearSetorPorSupervisao(supervisao) {
-  const chave = (supervisao || "").trim().toUpperCase();
-  return MAPA_SUPERVISAO_SETOR[chave] || "INTELIGÊNCIA COMERCIAL";
-}
-// Prefixo de matrícula por setor, usado tanto no cadastro manual quanto na
-// importação em massa (planilha do sistema GRE).
-const PREFIXO_MATRICULA = {
-  "INTELIGÊNCIA COMERCIAL": "IC",
-  "BACKOFFICE GRE": "BG",
-  "POS CONTEMPLACAO": "PC",
-  "GRE": "COM",
-  "POS VENDA": "PV",
-  "ATENDIMENTO NEGOCIOS": "AN",
-  "COBRANÇA": "CB"
-};
 const STATUS_LIST = ["Pendente", "Corrigido", "Verificado", "Rejeitado"];
 const TIPOS_OCORRENCIA = ["Esquecimento", "Erro de Registro", "Atestado Médico", "Falta", "Banco de Horas", "Abono", "Integração"];
 const TIPO_EXIGE_EASYMOB = "Erro de Registro";
@@ -3020,7 +2993,6 @@ function ListaFuncionarios({
   const [setor, setSetor] = useState("Todos");
   const [filtroAlerta, setFiltroAlerta] = useState("Todos");
   const [modalAdd, setModalAdd] = useState(false);
-  const [modalImportar, setModalImportar] = useState(false);
   const [confirmExcluir, setConfirmExcluir] = useState(null);
   const [novo, setNovo] = useState({
     nome: "",
@@ -3057,7 +3029,13 @@ function ListaFuncionarios({
     setSalvando(true);
     setErr("");
     const nextId = Math.max(...funcionarios.map(f => f.id)) + 1;
-    const pfx = PREFIXO_MATRICULA[novo.setor] || "FUN";
+    const pfxMap = {
+      "INTELIGÊNCIA COMERCIAL": "IC",
+      "BACKOFFICE GRE": "BG",
+      "POS CONTEMPLACAO": "PC",
+      "GRE": "COM"
+    };
+    const pfx = pfxMap[novo.setor] || "FUN";
     const count = funcionarios.filter(f => f.setor === novo.setor).length + 1;
     const mat = `${pfx}-${String(count).padStart(3, "0")}`;
     const novoFunc = {
@@ -3121,90 +3099,6 @@ function ListaFuncionarios({
     }
     setTimeout(() => setSucesso(""), 9000);
   }
-  // ── Importação em massa a partir da planilha do sistema GRE ────────────────
-  // Lê Matricula/Colaborador/Cargo/Supervisao/Supervisor/Situacao. Ignora
-  // linhas cujo Supervisor seja FELIPE ALBACETE (equipe fora do escopo desta
-  // importação). O e-mail não é preenchido aqui — chega em lista separada.
-  async function processarImportacao(arquivo) {
-    setErr("");
-    const buffer = await arquivo.arrayBuffer();
-    const wb = XLSX.read(buffer, { type: "array" });
-    const ws = wb.Sheets[wb.SheetNames[0]];
-    const linhas = XLSX.utils.sheet_to_json(ws, { defval: "" });
-
-    const matriculasExistentes = new Set(funcionarios.map(f => f.matricula));
-    let proximoId = funcionarios.length ? Math.max(...funcionarios.map(f => f.id)) + 1 : 1;
-    const contadorPorSetor = {};
-    SETORES_LIST.forEach(s => {
-      contadorPorSetor[s] = funcionarios.filter(f => f.setor === s).length;
-    });
-
-    const novosFuncionarios = [];
-    const ignorados = [];
-    const duplicados = [];
-
-    linhas.forEach(linha => {
-      const supervisor = String(linha["Supervisor"] || "").trim().toUpperCase();
-      const nome = String(linha["Colaborador"] || "").trim();
-      const matriculaOriginal = String(linha["Matricula"] || "").trim();
-      const cargo = String(linha["Cargo"] || "").trim();
-      const situacao = String(linha["Situacao"] || "").trim().toUpperCase();
-
-      if (!nome || !matriculaOriginal) return; // linha vazia/inválida
-
-      if (supervisor === "FELIPE ALBACETE") {
-        ignorados.push(nome);
-        return;
-      }
-
-      const setor = mapearSetorPorSupervisao(linha["Supervisao"]);
-      const pfx = PREFIXO_MATRICULA[setor] || "FUN";
-      contadorPorSetor[setor] = (contadorPorSetor[setor] || 0) + 1;
-      const mat = `${pfx}-${String(contadorPorSetor[setor]).padStart(3, "0")}`;
-
-      if (matriculasExistentes.has(mat)) {
-        duplicados.push(nome);
-        return;
-      }
-      matriculasExistentes.add(mat);
-
-      novosFuncionarios.push({
-        id: proximoId++,
-        nome: nome.toUpperCase(),
-        matricula: mat,
-        setor,
-        cargo: cargo.toUpperCase(),
-        ativo: situacao ? situacao === "ATIVO" : true,
-        esquecimentos: 0,
-        atestados: 0,
-        faltas: 0,
-        banco_horas: 0,
-        erros_registro: 0,
-        abonos: 0,
-        integracoes: 0
-      });
-    });
-
-    if (novosFuncionarios.length === 0) {
-      setErr("Nenhum funcionário novo encontrado na planilha (todos já cadastrados, sem supervisor do Felipe Albacete, ou linhas inválidas).");
-      return;
-    }
-
-    setSalvando(true);
-    const resultado = await setFuncionarios(prev => [...prev, ...novosFuncionarios]);
-    setSalvando(false);
-    if (resultado && resultado.ok === false) {
-      setErr(`Falha ao importar: ${resultado.erro}`);
-      return;
-    }
-
-    setModalImportar(false);
-    let msg = `✅ ${novosFuncionarios.length} funcionário(s) importado(s).`;
-    if (ignorados.length) msg += ` ${ignorados.length} ignorado(s) (supervisor Felipe Albacete).`;
-    if (duplicados.length) msg += ` ${duplicados.length} com matrícula já existente, não importado(s).`;
-    setSucesso(msg);
-    setTimeout(() => setSucesso(""), 12000);
-  }
   function confirmarExcluir() {
     if (!confirmExcluir) return;
     const nome = confirmExcluir.nome;
@@ -3247,21 +3141,6 @@ function ListaFuncionarios({
     mesFiltro: mesFiltro,
     setMesFiltro: setMesFiltro
   }), /*#__PURE__*/React.createElement("button", {
-    onClick: () => setModalImportar(true),
-    style: {
-      display: "flex",
-      alignItems: "center",
-      gap: 6,
-      background: "var(--cinza-100)",
-      color: "var(--cinza-700)",
-      border: "1px solid var(--cinza-200)",
-      borderRadius: 10,
-      padding: "10px 18px",
-      fontSize: 13,
-      fontWeight: 700,
-      cursor: "pointer"
-    }
-  }, "⇪ Importar"), /*#__PURE__*/React.createElement("button", {
     onClick: () => setModalAdd(true),
     style: {
       display: "flex",
@@ -3667,56 +3546,7 @@ function ListaFuncionarios({
       alignItems: "center",
       gap: 6
     }
-  }, salvando ? "⏳ Salvando..." : "✅ Adicionar")))), modalImportar && /*#__PURE__*/React.createElement(Modal, {
-    title: "Importar funcionários",
-    onClose: () => {
-      setModalImportar(false);
-      setErr("");
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: "flex",
-      flexDirection: "column",
-      gap: 16
-    }
-  }, /*#__PURE__*/React.createElement("p", {
-    style: {
-      fontSize: 13,
-      color: "var(--cinza-500)",
-      margin: 0
-    }
-  }, "Selecione a planilha exportada do sistema (colunas Matricula, Colaborador, Cargo, Supervisao, Supervisor, Situacao). O setor é definido automaticamente pela Supervisão, e colaboradores cujo Supervisor é Felipe Albacete são ignorados."), err && /*#__PURE__*/React.createElement("div", {
-    style: {
-      background: "var(--vermelho-100)",
-      color: "var(--vermelho-600)",
-      borderRadius: 8,
-      padding: "10px 14px",
-      fontSize: 13
-    }
-  }, err), /*#__PURE__*/React.createElement("input", {
-    type: "file",
-    accept: ".xlsx,.xls",
-    disabled: salvando,
-    onChange: async e => {
-      const arquivo = e.target.files[0];
-      if (arquivo) await processarImportacao(arquivo);
-      e.target.value = "";
-    },
-    style: {
-      width: "100%",
-      padding: "10px 14px",
-      borderRadius: 10,
-      border: "1px solid var(--cinza-200)",
-      fontSize: 13,
-      background: "var(--cor-branco)",
-      boxSizing: "border-box"
-    }
-  }), salvando && /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 13,
-      color: "var(--cinza-500)"
-    }
-  }, "⏳ Importando..."))), confirmExcluir && /*#__PURE__*/React.createElement(Modal, {
+  }, salvando ? "⏳ Salvando..." : "✅ Adicionar")))), confirmExcluir && /*#__PURE__*/React.createElement(Modal, {
     title: "⚠️ Excluir funcionário",
     onClose: () => setConfirmExcluir(null),
     maxWidth: 460
