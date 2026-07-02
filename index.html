@@ -459,6 +459,7 @@ const FUNCIONARIOS_BASE = [{
   setor: "INTELIGÊNCIA COMERCIAL",
   cargo: "ANALISTA COMERCIAL",
   ativo: false,
+  historico_meses: ["2026-05", "2026-06"],
   esquecimentos: 2,
   atestados: 0,
   faltas: 0,
@@ -668,6 +669,101 @@ const FUNCIONARIOS_BASE = [{
   matricula: "IC-017",
   setor: "INTELIGÊNCIA COMERCIAL",
   cargo: "JOVEM APRENDIZ",
+  ativo: true,
+  esquecimentos: 0,
+  atestados: 0,
+  faltas: 0,
+  banco_horas: 0,
+  erros_registro: 0,
+  abonos: 0,
+  integracoes: 0
+}, {
+  // Ex-funcionária — atuou apenas em abril/2026. Cadastro mantido só para
+  // consulta histórica dos gestores (ver campo `historico_meses`).
+  id: 28,
+  nome: "EVELLYN",
+  matricula: "IC-018",
+  setor: "INTELIGÊNCIA COMERCIAL",
+  cargo: "AUXILIAR ADMINISTRATIVO",
+  ativo: false,
+  historico_meses: ["2026-04"],
+  esquecimentos: 0,
+  atestados: 0,
+  faltas: 0,
+  banco_horas: 0,
+  erros_registro: 0,
+  abonos: 0,
+  integracoes: 0
+}, {
+  // Ex-funcionária — atuou apenas em abril/2026.
+  id: 29,
+  nome: "JÉSSICA",
+  matricula: "IC-019",
+  setor: "INTELIGÊNCIA COMERCIAL",
+  cargo: "AUXILIAR ADMINISTRATIVO",
+  ativo: false,
+  historico_meses: ["2026-04"],
+  esquecimentos: 0,
+  atestados: 0,
+  faltas: 0,
+  banco_horas: 0,
+  erros_registro: 0,
+  abonos: 0,
+  integracoes: 0
+}, {
+  // Ex-funcionário — atuou em abril e maio/2026.
+  id: 30,
+  nome: "MÁRCIO",
+  matricula: "IC-020",
+  setor: "INTELIGÊNCIA COMERCIAL",
+  cargo: "AUXILIAR ADMINISTRATIVO",
+  ativo: false,
+  historico_meses: ["2026-04", "2026-05"],
+  esquecimentos: 0,
+  atestados: 0,
+  faltas: 0,
+  banco_horas: 0,
+  erros_registro: 0,
+  abonos: 0,
+  integracoes: 0
+}, {
+  // Ex-funcionário — atuou apenas em maio/2026.
+  id: 31,
+  nome: "CASSIANO",
+  matricula: "IC-021",
+  setor: "INTELIGÊNCIA COMERCIAL",
+  cargo: "AUXILIAR ADMINISTRATIVO",
+  ativo: false,
+  historico_meses: ["2026-05"],
+  esquecimentos: 0,
+  atestados: 0,
+  faltas: 0,
+  banco_horas: 0,
+  erros_registro: 0,
+  abonos: 0,
+  integracoes: 0
+}, {
+  // Integrada em junho/2026 — funcionária ativa, sem restrição de meses.
+  id: 32,
+  nome: "GIOVANNA",
+  matricula: "IC-022",
+  setor: "INTELIGÊNCIA COMERCIAL",
+  cargo: "AUXILIAR ADMINISTRATIVO",
+  ativo: true,
+  esquecimentos: 0,
+  atestados: 0,
+  faltas: 0,
+  banco_horas: 0,
+  erros_registro: 0,
+  abonos: 0,
+  integracoes: 0
+}, {
+  // Integrada em junho/2026 — funcionária ativa, sem restrição de meses.
+  id: 33,
+  nome: "LARISSA",
+  matricula: "IC-023",
+  setor: "INTELIGÊNCIA COMERCIAL",
+  cargo: "AUXILIAR ADMINISTRATIVO",
   ativo: true,
   esquecimentos: 0,
   atestados: 0,
@@ -6941,6 +7037,12 @@ function App() {
   }, []);
   const [mesFiltro, setMesFiltro] = useState(() => mesesDisponiveis()[0]?.valor || "2026-04");
   const ocorrenciasFiltradas = useMemo(() => ocorrencias.filter(o => o.data.startsWith(mesFiltro)), [ocorrencias, mesFiltro]);
+  // Funcionários visíveis no mês selecionado: colaboradores ativos aparecem
+  // sempre; ex-funcionários (ativo: false) só aparecem nos meses em que
+  // realmente trabalharam, listados em `historico_meses`. Quem não tem
+  // `historico_meses` definido segue a regra antiga (aparece/some pelo campo
+  // `ativo` global, sem restrição de mês).
+  const funcionariosVisiveis = useMemo(() => funcionarios.filter(f => !f.historico_meses || f.historico_meses.includes(mesFiltro)), [funcionarios, mesFiltro]);
   const isAdmin = usuario?.role === "admin";
   function addNotif(n) {
     setNotifs(prev => [n, ...prev].slice(0, 50));
@@ -7041,7 +7143,7 @@ function App() {
         ocorrencias: ocorrenciasFiltradas,
         setView: setView,
         setFuncSelecionado: setFuncSelecionado,
-        funcionarios: funcionarios,
+        funcionarios: funcionariosVisiveis,
         setOcorrencias: setOcorrencias,
         setFuncionarios: setFuncionarios,
         addNotif: addNotif,
@@ -7051,7 +7153,7 @@ function App() {
       if (view === "funcionarios") return /*#__PURE__*/React.createElement(ListaFuncionarios, {
         setView: setView,
         setFuncSelecionado: setFuncSelecionado,
-        funcionarios: funcionarios,
+        funcionarios: funcionariosVisiveis,
         setFuncionarios: setFuncionarios,
         ocorrencias: ocorrenciasFiltradas,
         setOcorrencias: setOcorrencias,
@@ -7081,7 +7183,7 @@ function App() {
       });
       if (view === "relatorios") return /*#__PURE__*/React.createElement(Relatorios, {
         ocorrencias: ocorrenciasFiltradas,
-        funcionarios: funcionarios,
+        funcionarios: funcionariosVisiveis,
         mesFiltro: mesFiltro,
         setMesFiltro: setMesFiltro
       });
