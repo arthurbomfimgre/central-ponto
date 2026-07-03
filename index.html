@@ -6775,7 +6775,13 @@ function PerfilFuncionario({
         fontWeight: 600,
         cursor: "pointer"
       }
-    }, "📱 Ver print") : /*#__PURE__*/React.createElement("span", {
+    }, "📱 Ver print") : o.easymobEnviado ? /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 11,
+        color: "var(--verde-700)",
+        fontWeight: 600
+      }
+    }, "✅ Enviado") : /*#__PURE__*/React.createElement("span", {
       style: {
         fontSize: 11,
         color: "var(--amber-500)",
@@ -7588,7 +7594,13 @@ function PainelAprovacao({
         fontWeight: 600,
         cursor: "pointer"
       }
-    }, "📱 Ver print EasyMob") : /*#__PURE__*/React.createElement("span", {
+    }, "📱 Ver print EasyMob") : o.easymobEnviado ? /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 12,
+        color: "var(--verde-700)",
+        fontWeight: 600
+      }
+    }, "✅ Print EasyMob enviado") : /*#__PURE__*/React.createElement("span", {
       style: {
         fontSize: 12,
         color: "var(--amber-500)",
