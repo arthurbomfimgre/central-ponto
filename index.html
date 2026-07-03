@@ -6346,6 +6346,9 @@ function PerfilFuncionario({
   const [easymobMap, setEasymobMap] = useSharedState(`${SK_EASYMOB}_map`, {});
   const [sucesso, setSucesso] = useState("");
   const [confirmExcluirOc, setConfirmExcluirOc] = useState(null);
+  const [editandoOc, setEditandoOc] = useState(null);
+  const [salvandoOc, setSalvandoOc] = useState(false);
+  const [erroEditOc, setErroEditOc] = useState("");
   const [modalEditar, setModalEditar] = useState(false);
   const [editando, setEditando] = useState(null);
   const [salvandoEdicao, setSalvandoEdicao] = useState(false);
@@ -6401,6 +6404,45 @@ function PerfilFuncionario({
     setConfirmExcluirOc(null);
     setSucesso("Ocorrência excluída com sucesso.");
     setTimeout(() => setSucesso(""), 3000);
+  }
+  function abrirEditarOc(oc) {
+    setEditandoOc({
+      id: oc.id,
+      tipo: oc.tipo,
+      data: oc.data,
+      status: oc.status,
+      observacaoAdmin: oc.observacaoAdmin || "",
+      resposta: oc.resposta || ""
+    });
+    setErroEditOc("");
+  }
+  async function salvarEdicaoOc() {
+    if (!editandoOc.tipo || !editandoOc.data) {
+      setErroEditOc("Tipo e data são obrigatórios.");
+      return;
+    }
+    setSalvandoOc(true);
+    setErroEditOc("");
+    const agora = agoraISO();
+    const resultado = await setOcorrencias(prev =>
+      prev.map(o => o.id === editandoOc.id ? {
+        ...o,
+        tipo: editandoOc.tipo,
+        data: editandoOc.data,
+        status: editandoOc.status,
+        observacaoAdmin: editandoOc.observacaoAdmin,
+        resposta: editandoOc.resposta,
+        atualizadoEm: agora
+      } : o)
+    );
+    setSalvandoOc(false);
+    if (resultado && resultado.ok === false) {
+      setErroEditOc(`Falha ao salvar: ${resultado.erro}`);
+      return;
+    }
+    setEditandoOc(null);
+    setSucesso("Pendência corrigida/atualizada com sucesso!");
+    setTimeout(() => setSucesso(""), 3500);
   }
   function criarPendencia({
     funcionario_id,
@@ -6752,7 +6794,22 @@ function PerfilFuncionario({
       style: {
         padding: "12px 16px"
       }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: { display: "flex", gap: 6 }
     }, /*#__PURE__*/React.createElement("button", {
+      onClick: () => abrirEditarOc(o),
+      title: "Corrigir / editar pendência",
+      style: {
+        background: "var(--azul-100)",
+        color: "var(--azul-700)",
+        border: "none",
+        borderRadius: 8,
+        padding: "5px 10px",
+        fontSize: 12,
+        fontWeight: 600,
+        cursor: "pointer"
+      }
+    }, "✏️"), /*#__PURE__*/React.createElement("button", {
       onClick: () => setConfirmExcluirOc(o),
       title: "Excluir ocorrência",
       style: {
@@ -6765,7 +6822,7 @@ function PerfilFuncionario({
         fontWeight: 600,
         cursor: "pointer"
       }
-    }, "🗑️")));
+    }, "🗑️"))));
   })))), modalCriar && /*#__PURE__*/React.createElement(ModalCriarPendencia, {
     funcionarios: funcionarios,
     onCriar: criarPendencia,
@@ -6886,7 +6943,87 @@ function PerfilFuncionario({
       cursor: "pointer",
       fontWeight: 700
     }
-  }, "Sim, excluir permanentemente")))), modalEditar && editando && /*#__PURE__*/React.createElement(Modal, {
+  }, "Sim, excluir permanentemente")))), editandoOc && /*#__PURE__*/React.createElement(Modal, {
+    title: "✏️ Corrigir pendência",
+    onClose: () => { setEditandoOc(null); setErroEditOc(""); },
+    maxWidth: 480
+  }, /*#__PURE__*/React.createElement("div", {
+    style: { display: "flex", flexDirection: "column", gap: 16 }
+  },
+
+  /*# Cabeçalho com func + data original #*/
+  /*#__PURE__*/React.createElement("div", {
+    style: { fontSize: 13, color: "var(--cinza-500)" }
+  }, func.nome),
+
+  /*# Campo: Tipo #*/
+  /*#__PURE__*/React.createElement("div", null,
+    /*#__PURE__*/React.createElement("label", { style: { fontSize: 13, fontWeight: 600, color: "var(--cinza-700)", display: "block", marginBottom: 6 } }, "Tipo de ocorrência"),
+    /*#__PURE__*/React.createElement("select", {
+      value: editandoOc.tipo,
+      onChange: e => setEditandoOc(p => ({ ...p, tipo: e.target.value })),
+      style: { width: "100%", padding: "10px 14px", borderRadius: 10, border: "1px solid var(--cinza-200)", fontSize: 13, outline: "none", background: "var(--cor-branco)", boxSizing: "border-box" }
+    }, TIPOS_OCORRENCIA.map(t => /*#__PURE__*/React.createElement("option", { key: t, value: t }, t)))),
+
+  /*# Campo: Data #*/
+  /*#__PURE__*/React.createElement("div", null,
+    /*#__PURE__*/React.createElement("label", { style: { fontSize: 13, fontWeight: 600, color: "var(--cinza-700)", display: "block", marginBottom: 6 } }, "Data"),
+    /*#__PURE__*/React.createElement("input", {
+      type: "date",
+      value: editandoOc.data,
+      onChange: e => setEditandoOc(p => ({ ...p, data: e.target.value })),
+      style: { width: "100%", padding: "10px 14px", borderRadius: 10, border: "1px solid var(--cinza-200)", fontSize: 13, outline: "none", background: "var(--cor-branco)", boxSizing: "border-box" }
+    })),
+
+  /*# Campo: Status #*/
+  /*#__PURE__*/React.createElement("div", null,
+    /*#__PURE__*/React.createElement("label", { style: { fontSize: 13, fontWeight: 600, color: "var(--cinza-700)", display: "block", marginBottom: 6 } }, "Status"),
+    /*#__PURE__*/React.createElement("select", {
+      value: editandoOc.status,
+      onChange: e => setEditandoOc(p => ({ ...p, status: e.target.value })),
+      style: { width: "100%", padding: "10px 14px", borderRadius: 10, border: "1px solid var(--cinza-200)", fontSize: 13, outline: "none", background: "var(--cor-branco)", boxSizing: "border-box" }
+    }, STATUS_LIST.map(s => /*#__PURE__*/React.createElement("option", { key: s, value: s }, s)))),
+
+  /*# Campo: Observação do admin (causa real) #*/
+  /*#__PURE__*/React.createElement("div", null,
+    /*#__PURE__*/React.createElement("label", { style: { fontSize: 13, fontWeight: 600, color: "var(--cinza-700)", display: "block", marginBottom: 6 } }, "Observação (motivo/causa)"),
+    /*#__PURE__*/React.createElement("textarea", {
+      value: editandoOc.observacaoAdmin,
+      onChange: e => setEditandoOc(p => ({ ...p, observacaoAdmin: e.target.value })),
+      rows: 2,
+      placeholder: "Ex: Foi outro motivo, print enviado no WhatsApp, etc.",
+      style: { width: "100%", padding: "10px 14px", borderRadius: 10, border: "1px solid var(--cinza-200)", fontSize: 13, outline: "none", background: "var(--cor-branco)", boxSizing: "border-box", resize: "vertical", fontFamily: "inherit" }
+    })),
+
+  /*# Campo: Resposta / evidência da correção #*/
+  /*#__PURE__*/React.createElement("div", null,
+    /*#__PURE__*/React.createElement("label", { style: { fontSize: 13, fontWeight: 600, color: "var(--cinza-700)", display: "block", marginBottom: 6 } }, "Resposta / evidência da correção"),
+    /*#__PURE__*/React.createElement("textarea", {
+      value: editandoOc.resposta,
+      onChange: e => setEditandoOc(p => ({ ...p, resposta: e.target.value })),
+      rows: 2,
+      placeholder: "Ex: Print enviado, corrigido no Vibe em 03/07, etc.",
+      style: { width: "100%", padding: "10px 14px", borderRadius: 10, border: "1px solid var(--cinza-200)", fontSize: 13, outline: "none", background: "var(--cor-branco)", boxSizing: "border-box", resize: "vertical", fontFamily: "inherit" }
+    })),
+
+  erroEditOc && /*#__PURE__*/React.createElement("div", {
+    style: { fontSize: 12, color: "var(--vermelho-600)", fontWeight: 600 }
+  }, erroEditOc),
+
+  /*# Botões #*/
+  /*#__PURE__*/React.createElement("div", {
+    style: { display: "flex", gap: 10, justifyContent: "flex-end" }
+  },
+  /*#__PURE__*/React.createElement("button", {
+    onClick: () => { setEditandoOc(null); setErroEditOc(""); },
+    disabled: salvandoOc,
+    style: { padding: "10px 20px", borderRadius: 10, border: "1px solid var(--cinza-200)", background: "var(--cor-branco)", fontSize: 13, cursor: "pointer", fontWeight: 600, color: "var(--cinza-500)" }
+  }, "Cancelar"),
+  /*#__PURE__*/React.createElement("button", {
+    onClick: salvarEdicaoOc,
+    disabled: salvandoOc,
+    style: { padding: "10px 20px", borderRadius: 10, border: "none", background: "var(--azul-700)", color: "var(--cor-branco)", fontSize: 13, cursor: "pointer", fontWeight: 700, opacity: salvandoOc ? 0.7 : 1 }
+  }, salvandoOc ? "Salvando..." : "Salvar correção")))), modalEditar && editando && /*#__PURE__*/React.createElement(Modal, {
     title: "✏️ Editar perfil — " + func.nome,
     onClose: () => { setModalEditar(false); setErrEdicao(""); },
     maxWidth: 560
