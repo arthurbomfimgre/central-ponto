@@ -9109,12 +9109,14 @@ function PortalFuncionario({
   setNotifs
 }) {
   const funcLogado = funcionarios.find(f => f.id === usuarioLogado.funcionario_id) || funcionarios[0];
-  // O portal do funcionário sempre acompanha o mês ATUAL (calendário real), não
-  // um filtro manual. Pendências/correções ainda em aberto (Pendente ou
-  // Corrigido aguardando verificação) continuam visíveis mesmo após o mês
-  // virar — só somem quando finalizadas (Verificado/Rejeitado).
+  // O funcionário pode navegar entre meses (mesFiltro), como no painel do
+  // admin. Por padrão começa no mês atual. Pendências/correções ainda em
+  // aberto (Pendente ou Corrigido aguardando verificação) continuam visíveis
+  // independentemente do mês selecionado — só somem quando finalizadas
+  // (Verificado/Rejeitado), para não ficarem "perdidas" ao virar o mês.
   const mesAtualReal = hoje().slice(0, 7);
-  const ocorrenciasPortal = useMemo(() => ocorrencias.filter(o => o.funcionario_id === funcLogado.id && (o.data.startsWith(mesAtualReal) || o.status === "Pendente" || o.status === "Corrigido")), [ocorrencias, funcLogado.id, mesAtualReal]);
+  const [mesFiltro, setMesFiltro] = useState(mesAtualReal);
+  const ocorrenciasPortal = useMemo(() => ocorrencias.filter(o => o.funcionario_id === funcLogado.id && (o.data.startsWith(mesFiltro) || o.status === "Pendente" || o.status === "Corrigido")), [ocorrencias, funcLogado.id, mesFiltro]);
   const minhasOcs = ocorrenciasPortal;
   const contagemFunc = contarOcorrencias(ocorrenciasPortal, funcLogado.id);
   const [modal, setModal] = useState(null);
@@ -9342,26 +9344,39 @@ function PortalFuncionario({
           }, "⭐ Funcionário Estrelinha")
         )
       ),
-      /*#__PURE__*/React.createElement("button", {
-    onClick: () => setModal({
-      acao: "avisar"
-    }),
-    style: {
-      display: "flex",
-      alignItems: "center",
-      gap: 8,
-      background: "linear-gradient(135deg,var(--indigo-500),var(--roxo-500))",
-      color: "var(--cor-branco)",
-      border: "none",
-      borderRadius: 12,
-      padding: "11px 20px",
-      fontSize: 13,
-      fontWeight: 700,
-      cursor: "pointer",
-      boxShadow: "0 4px 12px var(--sombra-indigo-media)",
-      flexShrink: 0
-    }
-  }, "📢 Avisar o gestor")), notifsVisiveis.length > 0 && /*#__PURE__*/React.createElement("div", {
+      /*#__PURE__*/React.createElement("div", {
+        style: {
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
+          flexShrink: 0
+        }
+      },
+        /*#__PURE__*/React.createElement(SeletorMes, {
+          mesFiltro: mesFiltro,
+          setMesFiltro: setMesFiltro
+        }),
+        /*#__PURE__*/React.createElement("button", {
+          onClick: () => setModal({
+            acao: "avisar"
+          }),
+          style: {
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            background: "linear-gradient(135deg,var(--indigo-500),var(--roxo-500))",
+            color: "var(--cor-branco)",
+            border: "none",
+            borderRadius: 12,
+            padding: "11px 20px",
+            fontSize: 13,
+            fontWeight: 700,
+            cursor: "pointer",
+            boxShadow: "0 4px 12px var(--sombra-indigo-media)",
+            flexShrink: 0
+          }
+        }, "📢 Avisar o gestor")
+      )), notifsVisiveis.length > 0 && /*#__PURE__*/React.createElement("div", {
     style: {
       marginBottom: 20,
       display: "flex",
