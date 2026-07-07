@@ -272,7 +272,7 @@ async function salvarSupa(key, val) {
 // salvarLS(key) e em _cache[key] — poluindo o cache local mesmo depois de a
 // flag de teste ser ativada. Bloquear a leitura/gravação real até
 // sessaoPronta === true elimina essa corrida por completo.
-function useSharedState(key, initial, sessaoPronta) {
+function useSharedState(key, initial, sessaoPronta, contaTesteFlag) {
   // Conta de teste: nunca lê nem grava no Supabase. Todo o estado fica
   // isolado sob uma chave própria no localStorage ("cp_teste_<key>"),
   // começando vazio ([]/{} conforme o tipo do `initial`, nunca os dados
@@ -295,9 +295,20 @@ function useSharedState(key, initial, sessaoPronta) {
   // *depois* que este hook já rodou seu useState inicial acima — nesse
   // caso o estado ficaria "preso" nos dados reais para sempre, mesmo com
   // a flag ativa. Este efeito detecta a mudança e recarrega do
-  // localStorage isolado assim que ela acontece. Também dispara quando
-  // sessaoPronta passa a valer true, para resolver a fonte correta pela
-  // primeira vez (em vez do estado vazio inicial acima).
+  // localStorage isolado assim que ela acontece.
+  //
+  // IMPORTANTE: as dependências incluem `contaTesteFlag` (não só
+  // `sessaoPronta`). No login manual (tela de login, sem F5), a tela de
+  // login já é renderizada com sessaoPronta=true e usuario=null — ou
+  // seja, useSharedState já dispara sua carga real do Supabase enquanto
+  // o usuário ainda está digitando a senha. Quando o login como conta
+  // teste é concluído, `contaTesteAtiva()` muda de false->true, mas
+  // `sessaoPronta` continua true e não muda — então, sem essa dependência
+  // extra, este efeito nunca rodava de novo e o estado ficava travado nos
+  // dados reais já carregados durante a tela de login (só sumiam com F5,
+  // que reinicia sessaoPronta do zero). Passar um valor derivado do
+  // usuário logado (ex: contaTesteAtivaAgora) força este efeito a reagir
+  // exatamente no momento em que o login como conta teste se efetiva.
   const modoTesteAnterior = useRef(null);
   useEffect(() => {
     if (!sessaoPronta) return;
@@ -306,10 +317,13 @@ function useSharedState(key, initial, sessaoPronta) {
       modoTesteAnterior.current = modoTesteAgora;
       setRaw(modoTesteAgora ? lerLS(chaveTeste, vazio) : (_cache[key] ?? lerLS(key, initial)));
     }
-  }, [sessaoPronta]);
+  }, [sessaoPronta, contaTesteFlag]);
 
   // Carga inicial do Supabase — pulada inteiramente em modo teste, e
   // adiada até a sessão estar verificada (ver comentário acima do hook).
+  // Também repetida quando contaTesteFlag muda para false (ex: logout da
+  // conta teste seguido de login como conta real), garantindo que os
+  // dados reais voltem a ser buscados nesse caso.
   useEffect(() => {
     if (!sessaoPronta) return;
     if (contaTesteAtiva()) return;
@@ -319,7 +333,7 @@ function useSharedState(key, initial, sessaoPronta) {
         loaded.current = true;
       }
     });
-  }, [key, sessaoPronta]);
+  }, [key, sessaoPronta, contaTesteFlag]);
 
   // Polling a cada 3s para sincronizar entre dispositivos — desligado em
   // modo teste e enquanto a sessão ainda não foi verificada
@@ -10109,18 +10123,28 @@ function App() {
   const [funcSelecionado, setFuncSelecionado] = useState(null);
   const [toasts, setToasts] = useState([]);
   // sessaoPronta: só true depois que a checagem inicial de sessão
-  // (getSession(), mais abaixo) já rodou e já decidiu se a conta é de
-  // teste ou real. Ver comentário detalhado em useSharedState() sobre por
-  // que isso é essencial para não vazar dados reais para a conta teste.
-  const sessaoPronta = !verificandoSessao;
-  const [funcionarios, setFuncionarios] = useSharedState(SK_FUNCS, FUNCIONARIOS_BASE, sessaoPronta);
-  const [ocorrencias, setOcorrencias] = useSharedState(SK_OCS, [...OCS_SJCABRIL, ...OCS_SJCMAIO, ...OCS_SJCJUNHO, ...OCS_SJCJULHO], sessaoPronta);
-  const [notifs, setNotifs] = useSharedState(SK_NOTIFS, [], sessaoPronta);
+  // (getSession(), mais abaixo) já rodou E já existe um usuário logado.
+  // Exigir `usuario` aqui (não só o fim de verificandoSessao) é essencial:
+  // sem isso, enquanto a TelaLogin ainda está na tela (usuario ainda
+  // null, verificandoSessao já false porque não havia sessão nenhuma
+  // salva), useSharedState já disparava a busca real do Supabase antes de
+  // qualquer login acontecer — inclusive antes de alguém logar como conta
+  // teste. Só liberamos a busca real quando já sabemos quem logou.
+  const sessaoPronta = !verificandoSessao && !!usuario;
+  // contaTesteAtivaAgora precisa ser calculado ANTES de passar para os
+  // hooks abaixo (não depois, como antes), pois agora é usado como
+  // dependência extra em useSharedState para garantir que o efeito de
+  // troca de fonte de dados reaja exatamente no instante em que o login
+  // como conta teste se efetiva — ver comentário detalhado dentro de
+  // useSharedState().
+  const contaTesteAtivaAgora = !!usuario?.contaTeste;
+  const [funcionarios, setFuncionarios] = useSharedState(SK_FUNCS, FUNCIONARIOS_BASE, sessaoPronta, contaTesteAtivaAgora);
+  const [ocorrencias, setOcorrencias] = useSharedState(SK_OCS, [...OCS_SJCABRIL, ...OCS_SJCMAIO, ...OCS_SJCJUNHO, ...OCS_SJCJULHO], sessaoPronta, contaTesteAtivaAgora);
+  const [notifs, setNotifs] = useSharedState(SK_NOTIFS, [], sessaoPronta, contaTesteAtivaAgora);
   // useSharedState já entrega o dado correto sozinho: dados reais para
   // admins/funcionários normais, e o estado isolado em localStorage (que
   // começa vazio e cresce conforme a conta de teste importa/cadastra) para
   // o perfil de teste. Não é necessário forçar nada aqui.
-  const contaTesteAtivaAgora = !!usuario?.contaTeste;
   const funcionariosExibidos = funcionarios;
   const ocorrenciasExibidas = ocorrencias;
   const notifsExibidas = notifs;
