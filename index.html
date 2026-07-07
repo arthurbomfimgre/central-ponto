@@ -5806,6 +5806,9 @@ function ListaFuncionarios({
   const [modalAdd, setModalAdd] = useState(false);
   const [modalImportarExcel, setModalImportarExcel] = useState(false);
   const [confirmExcluir, setConfirmExcluir] = useState(null);
+  const [confirmExcluirTodos, setConfirmExcluirTodos] = useState(false);
+  const [textoConfirmTodos, setTextoConfirmTodos] = useState("");
+  const [excluindoTodos, setExcluindoTodos] = useState(false);
   const [novo, setNovo] = useState({
     nome: "",
     cargo: "",
@@ -5920,6 +5923,24 @@ function ListaFuncionarios({
     setTimeout(() => setSucesso(""), 3500);
     setConfirmExcluir(null);
   }
+  // Exclusão em massa — restrita à conta de teste (ver botão abaixo, que só
+  // aparece quando contaTeste é true). Remove todos os funcionários e todas
+  // as ocorrências vinculadas a eles, de uma vez. Exige que o admin digite
+  // "EXCLUIR" no campo de confirmação antes de habilitar o botão final,
+  // como proteção extra contra clique acidental numa ação irreversível
+  // desse tamanho.
+  async function excluirTodosFuncionarios() {
+    if (textoConfirmTodos.trim().toUpperCase() !== "EXCLUIR") return;
+    setExcluindoTodos(true);
+    const totalFuncs = funcionarios.length;
+    await setOcorrencias([]);
+    await setFuncionarios([]);
+    setExcluindoTodos(false);
+    setConfirmExcluirTodos(false);
+    setTextoConfirmTodos("");
+    setSucesso(`${totalFuncs} funcionário(s) e todas as ocorrências foram removidos.`);
+    setTimeout(() => setSucesso(""), 4500);
+  }
   return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     style: {
       display: "flex",
@@ -5967,7 +5988,23 @@ function ListaFuncionarios({
       fontWeight: 700,
       cursor: "pointer"
     }
-  }, "📥 Importar Excel"), /*#__PURE__*/React.createElement("button", {
+  }, "📥 Importar Excel"), contaTeste && /*#__PURE__*/React.createElement("button", {
+    onClick: () => setConfirmExcluirTodos(true),
+    disabled: funcionarios.length === 0,
+    style: {
+      display: "flex",
+      alignItems: "center",
+      gap: 6,
+      background: "var(--cor-branco)",
+      color: funcionarios.length === 0 ? "var(--cinza-400)" : "var(--vermelho-600)",
+      border: `1px solid ${funcionarios.length === 0 ? "var(--cinza-200)" : "var(--vermelho-300)"}`,
+      borderRadius: 10,
+      padding: "10px 18px",
+      fontSize: 13,
+      fontWeight: 700,
+      cursor: funcionarios.length === 0 ? "not-allowed" : "pointer"
+    }
+  }, "🗑️ Excluir todos"), /*#__PURE__*/React.createElement("button", {
     onClick: () => setModalAdd(true),
     style: {
       display: "flex",
@@ -6454,7 +6491,85 @@ function ListaFuncionarios({
       cursor: "pointer",
       fontWeight: 700
     }
-  }, "Sim, excluir permanentemente")))));
+  }, "Sim, excluir permanentemente")))), confirmExcluirTodos && /*#__PURE__*/React.createElement(Modal, {
+    title: "⚠️ Excluir todos os funcionários",
+    onClose: () => {
+      setConfirmExcluirTodos(false);
+      setTextoConfirmTodos("");
+    },
+    maxWidth: 460
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      flexDirection: "column",
+      gap: 18
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: "var(--vermelho-100)",
+      border: "1px solid var(--vermelho-300)",
+      borderRadius: 12,
+      padding: "14px 16px",
+      fontSize: 13,
+      color: "var(--vermelho-800)",
+      lineHeight: 1.6
+    }
+  }, /*#__PURE__*/React.createElement("strong", null, "Esta ação é permanente e não pode ser desfeita."), /*#__PURE__*/React.createElement("br", null), "Todos os ", funcionarios.length, " funcionário(s) e todas as ", ocorrencias.length, " ocorrências vinculadas a eles serão removidos do sistema."), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
+    style: {
+      display: "block",
+      fontSize: 13,
+      fontWeight: 600,
+      color: "var(--cinza-700)",
+      marginBottom: 8
+    }
+  }, "Digite ", /*#__PURE__*/React.createElement("strong", null, "EXCLUIR"), " para confirmar:"), /*#__PURE__*/React.createElement("input", {
+    type: "text",
+    value: textoConfirmTodos,
+    onChange: e => setTextoConfirmTodos(e.target.value),
+    placeholder: "EXCLUIR",
+    autoFocus: true,
+    style: {
+      width: "100%",
+      padding: "10px 14px",
+      borderRadius: 10,
+      border: "1px solid var(--cinza-200)",
+      fontSize: 14
+    }
+  })), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      gap: 10,
+      justifyContent: "flex-end"
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: () => {
+      setConfirmExcluirTodos(false);
+      setTextoConfirmTodos("");
+    },
+    style: {
+      padding: "10px 20px",
+      borderRadius: 10,
+      border: "1px solid var(--cinza-200)",
+      background: "var(--cor-branco)",
+      fontSize: 13,
+      cursor: "pointer",
+      fontWeight: 600,
+      color: "var(--cinza-500)"
+    }
+  }, "Cancelar"), /*#__PURE__*/React.createElement("button", {
+    onClick: excluirTodosFuncionarios,
+    disabled: textoConfirmTodos.trim().toUpperCase() !== "EXCLUIR" || excluindoTodos,
+    style: {
+      padding: "10px 20px",
+      borderRadius: 10,
+      border: "none",
+      background: textoConfirmTodos.trim().toUpperCase() === "EXCLUIR" ? "var(--vermelho-600)" : "var(--cinza-300)",
+      color: "var(--cor-branco)",
+      fontSize: 13,
+      cursor: textoConfirmTodos.trim().toUpperCase() === "EXCLUIR" && !excluindoTodos ? "pointer" : "not-allowed",
+      fontWeight: 700
+    }
+  }, excluindoTodos ? "Excluindo..." : "Excluir todos permanentemente")))));
 }
 
 // ─── IMPORTAR EXCEL (exclusivo da conta de teste) ────────────────────────────
