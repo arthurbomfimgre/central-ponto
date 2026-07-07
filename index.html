@@ -6383,6 +6383,191 @@ function ListaFuncionarios({
   }, "Sim, excluir permanentemente")))));
 }
 
+// ─── IMPORTAR EXCEL (exclusivo da conta de teste) ────────────────────────────
+// Colunas esperadas na planilha (formato usado pela GRE Comercial):
+//   Matricula | Colaborador | Cargo | Area | Situacao | Supervisor | Gerencia
+//   | e-mail Profissional  (demais colunas são ignoradas)
+// A importação é incremental: compara pela `matricula` com quem já existe
+// neste ambiente de teste e adiciona somente os registros novos, nunca
+// duplica nem sobrescreve quem já foi importado antes.
+const MAPA_COLUNAS_IMPORT_EXCEL = {
+  matricula: "Matricula",
+  nome: "Colaborador",
+  cargo: "Cargo",
+  setor: "Area",
+  situacao: "Situacao",
+  supervisor: "Supervisor",
+  gerencia: "Gerencia",
+  emailProfissional: "e-mail Profissional"
+};
+
+function lerArquivoExcel(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = e => {
+      try {
+        const wb = XLSX.read(e.target.result, { type: "binary" });
+        const primeiraAba = wb.SheetNames[0];
+        const linhas = XLSX.utils.sheet_to_json(wb.Sheets[primeiraAba], { defval: "" });
+        resolve(linhas);
+      } catch (err) {
+        reject(err);
+      }
+    };
+    reader.onerror = () => reject(new Error("Não foi possível ler o arquivo."));
+    reader.readAsBinaryString(file);
+  });
+}
+
+function ImportarExcelTeste({ funcionarios, setFuncionarios }) {
+  const [arquivo, setArquivo] = useState(null);
+  const [processando, setProcessando] = useState(false);
+  const [resultado, setResultado] = useState(null); // { importados, ignorados, erro }
+  const [preview, setPreview] = useState(null); // linhas cruas antes de confirmar
+
+  async function selecionarArquivo(file) {
+    setArquivo(file);
+    setResultado(null);
+    setPreview(null);
+    if (!file) return;
+    setProcessando(true);
+    try {
+      const linhas = await lerArquivoExcel(file);
+      setPreview(linhas);
+    } catch (err) {
+      setResultado({ erro: extrairMensagemErro(err) });
+    } finally {
+      setProcessando(false);
+    }
+  }
+
+  function confirmarImportacao() {
+    if (!preview || preview.length === 0) return;
+    setProcessando(true);
+    const matriculasExistentes = new Set(funcionarios.map(f => String(f.matricula).trim()));
+    let nextId = (funcionarios.reduce((max, f) => Math.max(max, f.id), 0)) + 1;
+    const novos = [];
+    let ignorados = 0;
+
+    preview.forEach(linha => {
+      const matricula = String(linha[MAPA_COLUNAS_IMPORT_EXCEL.matricula] ?? "").trim();
+      const nome = String(linha[MAPA_COLUNAS_IMPORT_EXCEL.nome] ?? "").trim();
+      if (!matricula || !nome) { ignorados++; return; }
+      if (matriculasExistentes.has(matricula)) { ignorados++; return; }
+
+      const situacao = String(linha[MAPA_COLUNAS_IMPORT_EXCEL.situacao] ?? "").trim().toUpperCase();
+      novos.push({
+        id: nextId++,
+        nome: nome.toUpperCase(),
+        matricula,
+        setor: String(linha[MAPA_COLUNAS_IMPORT_EXCEL.setor] ?? "").trim().toUpperCase() || "—",
+        cargo: String(linha[MAPA_COLUNAS_IMPORT_EXCEL.cargo] ?? "").trim().toUpperCase() || "—",
+        ativo: situacao ? situacao === "ATIVO" : true,
+        esquecimentos: 0,
+        atestados: 0,
+        faltas: 0,
+        banco_horas: 0,
+        erros_registro: 0,
+        abonos: 0,
+        integracoes: 0,
+        // Campos extras da planilha, guardados para uso futuro (sem tela
+        // própria ainda) — não afetam nenhuma lógica existente do app.
+        supervisor: String(linha[MAPA_COLUNAS_IMPORT_EXCEL.supervisor] ?? "").trim() || null,
+        gerencia: String(linha[MAPA_COLUNAS_IMPORT_EXCEL.gerencia] ?? "").trim() || null,
+        emailProfissional: String(linha[MAPA_COLUNAS_IMPORT_EXCEL.emailProfissional] ?? "").trim().toLowerCase() || null
+      });
+      matriculasExistentes.add(matricula);
+    });
+
+    setFuncionarios(prev => [...prev, ...novos]);
+    setResultado({ importados: novos.length, ignorados });
+    setPreview(null);
+    setArquivo(null);
+    setProcessando(false);
+  }
+
+  const cardStyle = {
+    background: "var(--cor-branco)",
+    borderRadius: 16,
+    padding: 28,
+    boxShadow: "0 1px 3px var(--sombra-leve)",
+    maxWidth: 640
+  };
+
+  return /*#__PURE__*/React.createElement("div", { style: { padding: 8 } },
+    /*#__PURE__*/React.createElement("h2", {
+      style: { fontSize: 20, fontWeight: 700, color: "var(--cinza-900)", marginBottom: 4 }
+    }, "📥 Importar funcionários por Excel"),
+    /*#__PURE__*/React.createElement("p", {
+      style: { fontSize: 13, color: "var(--cinza-500)", marginBottom: 20 }
+    }, "Ambiente de teste — os dados importados aqui ficam isolados neste navegador e não afetam o sistema real."),
+    /*#__PURE__*/React.createElement("div", { style: cardStyle },
+      /*#__PURE__*/React.createElement("label", {
+        style: {
+          display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+          gap: 8, border: "2px dashed var(--cinza-200)", borderRadius: 12, padding: "32px 16px",
+          cursor: "pointer", textAlign: "center"
+        }
+      },
+        /*#__PURE__*/React.createElement("span", { style: { fontSize: 28 } }, "📄"),
+        /*#__PURE__*/React.createElement("span", { style: { fontSize: 13, fontWeight: 600, color: "var(--cinza-700)" } },
+          arquivo ? arquivo.name : "Clique para selecionar um arquivo .xlsx"),
+        /*#__PURE__*/React.createElement("span", { style: { fontSize: 11, color: "var(--cinza-400)" } },
+          "Colunas esperadas: Matricula, Colaborador, Cargo, Area, Situacao"),
+        /*#__PURE__*/React.createElement("input", {
+          type: "file",
+          accept: ".xlsx,.xls",
+          style: { display: "none" },
+          onChange: e => selecionarArquivo(e.target.files?.[0] || null)
+        })
+      ),
+
+      processando && /*#__PURE__*/React.createElement("p", {
+        style: { fontSize: 12, color: "var(--cinza-400)", marginTop: 14, textAlign: "center" }
+      }, "Processando…"),
+
+      resultado?.erro && /*#__PURE__*/React.createElement("div", {
+        style: {
+          marginTop: 16, background: "var(--vermelho-100)", color: "var(--vermelho-800)",
+          borderRadius: 10, padding: "10px 14px", fontSize: 13, fontWeight: 600
+        }
+      }, "⚠️ ", resultado.erro),
+
+      preview && !processando && /*#__PURE__*/React.createElement("div", { style: { marginTop: 18 } },
+        /*#__PURE__*/React.createElement("p", { style: { fontSize: 13, color: "var(--cinza-700)", marginBottom: 10 } },
+          /*#__PURE__*/React.createElement("strong", null, preview.length), " linha(s) encontrada(s) no arquivo. Confirme para importar apenas os funcionários ainda não cadastrados neste ambiente."),
+        /*#__PURE__*/React.createElement("div", { style: { display: "flex", gap: 10 } },
+          /*#__PURE__*/React.createElement("button", {
+            onClick: confirmarImportacao,
+            style: {
+              background: "var(--marca-gradiente)", color: "var(--cor-branco)", border: "none",
+              borderRadius: 10, padding: "10px 20px", fontSize: 13, fontWeight: 700, cursor: "pointer"
+            }
+          }, "Confirmar importação"),
+          /*#__PURE__*/React.createElement("button", {
+            onClick: () => { setPreview(null); setArquivo(null); },
+            style: {
+              background: "var(--cinza-100)", color: "var(--cinza-600)", border: "none",
+              borderRadius: 10, padding: "10px 20px", fontSize: 13, fontWeight: 600, cursor: "pointer"
+            }
+          }, "Cancelar")
+        )
+      ),
+
+      resultado && !resultado.erro && /*#__PURE__*/React.createElement("div", {
+        style: {
+          marginTop: 16, background: "var(--verde-100)", color: "var(--verde-800)",
+          borderRadius: 10, padding: "12px 16px", fontSize: 13, fontWeight: 600
+        }
+      }, "✓ ", resultado.importados, " funcionário(s) importado(s). ", resultado.ignorados, " ignorado(s) (já existiam ou sem matrícula/nome).")
+    ),
+
+    /*#__PURE__*/React.createElement("p", {
+      style: { fontSize: 12, color: "var(--cinza-400)", marginTop: 16, maxWidth: 640 }
+    }, "Total de funcionários cadastrados neste ambiente de teste: ", /*#__PURE__*/React.createElement("strong", null, funcionarios.length), ".")
+  );
+}
+
 // ─── PERFIL DO FUNCIONÁRIO ────────────────────────────────────────────────────
 function PerfilFuncionario({
   func,
@@ -10004,7 +10189,11 @@ function App() {
     id: "portal",
     label: "Meu Portal",
     icon: "🏠"
-  }];
+  }, ...(contaTesteAtivaAgora ? [{
+    id: "importar_excel",
+    label: "Importar Excel",
+    icon: "📥"
+  }] : [])];
   const menuAtivo = {
     background: "linear-gradient(135deg,var(--indigo-500),var(--roxo-500))",
     color: "var(--cor-branco)",
@@ -10074,6 +10263,10 @@ function App() {
         addNotif: addNotif,
         notifs: notifsExibidas,
         setNotifs: setNotifs
+      });
+      if (view === "importar_excel" && contaTesteAtivaAgora) return /*#__PURE__*/React.createElement(ImportarExcelTeste, {
+        funcionarios: funcionariosExibidos,
+        setFuncionarios: setFuncionarios
       });
     }
     if (view === "mural") return /*#__PURE__*/React.createElement(ProcessosPonto, { usuario: usuario, setView: setView });
