@@ -6464,6 +6464,15 @@ function ListaFuncionarios({
 // A importação é incremental: compara pela `matricula` com quem já existe
 // neste ambiente de teste e adiciona somente os registros novos, nunca
 // duplica nem sobrescreve quem já foi importado antes.
+//
+// Nome exibido: o e-mail profissional corporativo segue o padrão
+// nome.sobrenome@portovaleconsorcios.com.br — diferente do nome civil
+// completo da coluna "Colaborador" (ex: "AVILLER JONES DA SILVA DIAS").
+// Preferimos extrair só as duas partes do e-mail ("AVILLER JONES") como
+// nome de exibição, por ser mais próximo de como a pessoa é conhecida no
+// dia a dia. Quando o e-mail estiver ausente ou fora do padrão esperado,
+// caímos de volta para o nome completo da planilha (ver
+// extrairNomeCurtoDoEmail, logo abaixo).
 const MAPA_COLUNAS_IMPORT_EXCEL = {
   matricula: "Matricula",
   nome: "Colaborador",
@@ -6474,6 +6483,31 @@ const MAPA_COLUNAS_IMPORT_EXCEL = {
   gerencia: "Gerencia",
   emailProfissional: "e-mail Profissional"
 };
+
+// Extrai um nome "curto" (dois nomes) a partir do e-mail profissional
+// corporativo, no padrão nome.sobrenome@portovaleconsorcios.com.br —
+// diferente do e-mail de LOGIN (@portovale.com.br, ver gerarEmail acima).
+// Usado como alternativa ao nome completo da planilha (que costuma vir com
+// nome civil inteiro, ex: "AVILLER JONES DA SILVA DIAS"), extraindo só as
+// duas partes que aparecem antes do "@": "aviller.jones" -> "AVILLER JONES".
+// Retorna null se o e-mail não seguir o padrão esperado (sem "@", sem ".",
+// ou domínio diferente), para o chamador decidir o fallback (nome completo
+// da planilha).
+function extrairNomeCurtoDoEmail(emailProfissional) {
+  if (!emailProfissional || typeof emailProfissional !== "string") return null;
+  const email = emailProfissional.trim().toLowerCase();
+  const [usuario, dominio] = email.split("@");
+  if (!usuario || !dominio) return null;
+  if (!dominio.includes("portovaleconsorcios.com.br")) return null;
+  // O usuário do e-mail pode ter mais de um ponto (ex: sobrenomes
+  // compostos ou homônimos com sufixo numérico) — usamos só as duas
+  // primeiras partes, que é o "nome.sobrenome" propriamente dito.
+  const partes = usuario.split(".").filter(Boolean);
+  if (partes.length < 2) return null;
+  const normalizar = s => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const nome = `${partes[0]} ${partes[1]}`;
+  return normalizar(nome).toUpperCase();
+}
 
 function lerArquivoExcel(file) {
   return new Promise((resolve, reject) => {
@@ -6525,9 +6559,17 @@ function ModalImportarExcel({ funcionarios, setFuncionarios, onClose }) {
 
     preview.forEach(linha => {
       const matricula = String(linha[MAPA_COLUNAS_IMPORT_EXCEL.matricula] ?? "").trim();
-      const nome = String(linha[MAPA_COLUNAS_IMPORT_EXCEL.nome] ?? "").trim();
-      if (!matricula || !nome) { ignorados++; return; }
+      const nomeCompleto = String(linha[MAPA_COLUNAS_IMPORT_EXCEL.nome] ?? "").trim();
+      if (!matricula || !nomeCompleto) { ignorados++; return; }
       if (matriculasExistentes.has(matricula)) { ignorados++; return; }
+
+      const emailProfissional = String(linha[MAPA_COLUNAS_IMPORT_EXCEL.emailProfissional] ?? "").trim().toLowerCase() || null;
+      // Prioriza o nome curto derivado do e-mail profissional
+      // (nome.sobrenome@portovaleconsorcios.com.br -> "NOME SOBRENOME").
+      // Se o e-mail estiver ausente ou fora do padrão esperado, cai de
+      // volta para o nome completo original da planilha.
+      const nomeCurtoDoEmail = extrairNomeCurtoDoEmail(emailProfissional);
+      const nome = nomeCurtoDoEmail || nomeCompleto;
 
       const situacao = String(linha[MAPA_COLUNAS_IMPORT_EXCEL.situacao] ?? "").trim().toUpperCase();
       novos.push({
@@ -6548,7 +6590,11 @@ function ModalImportarExcel({ funcionarios, setFuncionarios, onClose }) {
         // própria ainda) — não afetam nenhuma lógica existente do app.
         supervisor: String(linha[MAPA_COLUNAS_IMPORT_EXCEL.supervisor] ?? "").trim() || null,
         gerencia: String(linha[MAPA_COLUNAS_IMPORT_EXCEL.gerencia] ?? "").trim() || null,
-        emailProfissional: String(linha[MAPA_COLUNAS_IMPORT_EXCEL.emailProfissional] ?? "").trim().toLowerCase() || null
+        emailProfissional,
+        // Nome completo original da planilha, preservado à parte para
+        // referência/consulta futura, já que `nome` agora pode ser a
+        // versão curta extraída do e-mail.
+        nomeCompleto: nomeCompleto.toUpperCase()
       });
       matriculasExistentes.add(matricula);
     });
