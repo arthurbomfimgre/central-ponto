@@ -272,6 +272,20 @@ function useSharedState(key, initial) {
     return _cache[key] ?? lerLS(key, initial);
   });
   const loaded = useRef(false);
+  // A flag de conta de teste é ativada de forma assíncrona (dentro de um
+  // useEffect de login/restauração de sessão), então pode passar a valer
+  // *depois* que este hook já rodou seu useState inicial acima — nesse
+  // caso o estado ficaria "preso" nos dados reais para sempre, mesmo com
+  // a flag ativa. Este efeito detecta a mudança e recarrega do
+  // localStorage isolado assim que ela acontece.
+  const modoTesteAnterior = useRef(contaTesteAtiva());
+  useEffect(() => {
+    const modoTesteAgora = contaTesteAtiva();
+    if (modoTesteAgora !== modoTesteAnterior.current) {
+      modoTesteAnterior.current = modoTesteAgora;
+      setRaw(modoTesteAgora ? lerLS(chaveTeste, vazio) : (_cache[key] ?? lerLS(key, initial)));
+    }
+  });
 
   // Carga inicial do Supabase — pulada inteiramente em modo teste
   useEffect(() => {
@@ -6549,7 +6563,7 @@ function ModalImportarExcel({ funcionarios, setFuncionarios, onClose }) {
 
     preview && !processando && /*#__PURE__*/React.createElement("div", { style: { marginTop: 18 } },
       /*#__PURE__*/React.createElement("p", { style: { fontSize: 13, color: "var(--cinza-700)", marginBottom: 10 } },
-        /*#__PURE__*/React.createElement("strong", null, preview.length), " linha(s) encontrada(s) no arquivo. Confirme para importar apenas os funcionários ainda não cadastrados neste ambiente."),
+        /*#__PURE__*/React.createElement("strong", null, preview.length), " linha(s) encontrada(s) no arquivo. Ao confirmar, o sistema verifica automaticamente pela matrícula e adiciona somente quem ainda não está cadastrado — quem já existe é ignorado sem duplicar."),
       /*#__PURE__*/React.createElement("div", { style: { display: "flex", gap: 10 } },
         /*#__PURE__*/React.createElement("button", {
           onClick: confirmarImportacao,
@@ -10072,15 +10086,14 @@ function App() {
   const [funcionarios, setFuncionarios] = useSharedState(SK_FUNCS, FUNCIONARIOS_BASE);
   const [ocorrencias, setOcorrencias] = useSharedState(SK_OCS, [...OCS_SJCABRIL, ...OCS_SJCMAIO, ...OCS_SJCJUNHO, ...OCS_SJCJULHO]);
   const [notifs, setNotifs] = useSharedState(SK_NOTIFS, []);
-  // Blindagem contra a corrida entre o primeiro render de useSharedState (que
-  // já pode ter lido dados reais do Supabase antes da flag de conta de teste
-  // ser ativada) e a confirmação de sessão/login: enquanto `usuario` for de
-  // conta de teste, tudo que os componentes filhos recebem é forçado a vazio,
-  // não importa o que os hooks acima carregaram.
+  // useSharedState já entrega o dado correto sozinho: dados reais para
+  // admins/funcionários normais, e o estado isolado em localStorage (que
+  // começa vazio e cresce conforme a conta de teste importa/cadastra) para
+  // o perfil de teste. Não é necessário forçar nada aqui.
   const contaTesteAtivaAgora = !!usuario?.contaTeste;
-  const funcionariosExibidos = contaTesteAtivaAgora ? [] : funcionarios;
-  const ocorrenciasExibidas = contaTesteAtivaAgora ? [] : ocorrencias;
-  const notifsExibidas = contaTesteAtivaAgora ? [] : notifs;
+  const funcionariosExibidos = funcionarios;
+  const ocorrenciasExibidas = ocorrencias;
+  const notifsExibidas = notifs;
   // Restaura a sessão ao recarregar a página (F5), evitando pedir login de
   // novo enquanto a sessão do Supabase Auth ainda for válida.
   useEffect(() => {
