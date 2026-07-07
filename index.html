@@ -9164,6 +9164,27 @@ function PortalFuncionario({
   setNotifs
 }) {
   const funcLogado = funcionarios.find(f => f.id === usuarioLogado.funcionario_id) || funcionarios[0];
+  // Conta de teste (ou qualquer cenário sem nenhum funcionário cadastrado):
+  // não há dono do portal para exibir. Em vez de deixar o restante do
+  // componente quebrar tentando ler `funcLogado.id`/`.nome` de undefined
+  // (o que gerava tela em branco), mostra um aviso simples e para aqui.
+  if (!funcLogado) {
+    return /*#__PURE__*/React.createElement("div", {
+      style: {
+        minHeight: "60vh",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 8,
+        color: "var(--cinza-400)",
+        fontSize: 13,
+        fontWeight: 500,
+        textAlign: "center",
+        padding: 24
+      }
+    }, /*#__PURE__*/React.createElement("div", { style: { fontSize: 32 } }, "🗂️"), /*#__PURE__*/React.createElement("div", null, "Nenhum funcionário cadastrado neste ambiente."), /*#__PURE__*/React.createElement("div", null, "Esta é uma conta de teste — o Portal fica disponível assim que houver ao menos um funcionário."));
+  }
   // O funcionário pode navegar entre meses (mesFiltro), como no painel do
   // admin. Por padrão começa no mês atual. Pendências/correções ainda em
   // aberto (Pendente ou Corrigido aguardando verificação) continuam visíveis
