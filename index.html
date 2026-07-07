@@ -9853,6 +9853,15 @@ function App() {
   const [funcionarios, setFuncionarios] = useSharedState(SK_FUNCS, FUNCIONARIOS_BASE);
   const [ocorrencias, setOcorrencias] = useSharedState(SK_OCS, [...OCS_SJCABRIL, ...OCS_SJCMAIO, ...OCS_SJCJUNHO, ...OCS_SJCJULHO]);
   const [notifs, setNotifs] = useSharedState(SK_NOTIFS, []);
+  // Blindagem contra a corrida entre o primeiro render de useSharedState (que
+  // já pode ter lido dados reais do Supabase antes da flag de conta de teste
+  // ser ativada) e a confirmação de sessão/login: enquanto `usuario` for de
+  // conta de teste, tudo que os componentes filhos recebem é forçado a vazio,
+  // não importa o que os hooks acima carregaram.
+  const contaTesteAtivaAgora = !!usuario?.contaTeste;
+  const funcionariosExibidos = contaTesteAtivaAgora ? [] : funcionarios;
+  const ocorrenciasExibidas = contaTesteAtivaAgora ? [] : ocorrencias;
+  const notifsExibidas = contaTesteAtivaAgora ? [] : notifs;
   // Restaura a sessão ao recarregar a página (F5), evitando pedir login de
   // novo enquanto a sessão do Supabase Auth ainda for válida.
   useEffect(() => {
@@ -9889,7 +9898,7 @@ function App() {
     };
   }, []);
   const [mesFiltro, setMesFiltro] = useState(() => mesesDisponiveis()[0]?.valor || "2026-04");
-  const ocorrenciasFiltradas = useMemo(() => ocorrencias.filter(o => o.data.startsWith(mesFiltro)), [ocorrencias, mesFiltro]);
+  const ocorrenciasFiltradas = useMemo(() => ocorrenciasExibidas.filter(o => o.data.startsWith(mesFiltro)), [ocorrenciasExibidas, mesFiltro]);
   const isAdmin = usuario?.role === "admin";
   function addNotif(n) {
     setNotifs(prev => [n, ...prev].slice(0, 50));
@@ -9904,7 +9913,7 @@ function App() {
   }
   useEffect(() => {
     if (!usuario || isAdmin) return;
-    const meusNotifs = notifs.filter(n => n.paraFunc === usuario.funcionario_id && !n.dismissed);
+    const meusNotifs = notifsExibidas.filter(n => n.paraFunc === usuario.funcionario_id && !n.dismissed);
     if (meusNotifs.length > 0) {
       const ultimo = meusNotifs[0];
       const toast = {
@@ -9917,10 +9926,10 @@ function App() {
       });
       setTimeout(() => setToasts(p => p.filter(t => t.id !== toast.id)), 4500);
     }
-  }, [notifs]);
-  const pendentesNovos = ocorrencias.filter(o => o.status === "Corrigido" && o.novo).length;
-  const minhasPendentes = ocorrencias.filter(o => {
-    const f = funcionarios.find(f => f.id === usuario?.funcionario_id);
+  }, [notifsExibidas]);
+  const pendentesNovos = ocorrenciasExibidas.filter(o => o.status === "Corrigido" && o.novo).length;
+  const minhasPendentes = ocorrenciasExibidas.filter(o => {
+    const f = funcionariosExibidos.find(f => f.id === usuario?.funcionario_id);
     return f && o.funcionario_id === f.id && o.status === "Pendente";
   }).length;
   if (verificandoSessao) return /*#__PURE__*/React.createElement("div", {
@@ -9990,7 +9999,7 @@ function App() {
         ocorrencias: ocorrenciasFiltradas,
         setView: setView,
         setFuncSelecionado: setFuncSelecionado,
-        funcionarios: funcionarios,
+        funcionarios: funcionariosExibidos,
         setOcorrencias: setOcorrencias,
         setFuncionarios: setFuncionarios,
         addNotif: addNotif,
@@ -10000,7 +10009,7 @@ function App() {
       if (view === "funcionarios") return /*#__PURE__*/React.createElement(ListaFuncionarios, {
         setView: setView,
         setFuncSelecionado: setFuncSelecionado,
-        funcionarios: funcionarios,
+        funcionarios: funcionariosExibidos,
         setFuncionarios: setFuncionarios,
         ocorrencias: ocorrenciasFiltradas,
         setOcorrencias: setOcorrencias,
@@ -10012,7 +10021,7 @@ function App() {
         ocorrencias: ocorrenciasFiltradas,
         setOcorrencias: setOcorrencias,
         setView: setView,
-        funcionarios: funcionarios,
+        funcionarios: funcionariosExibidos,
         setFuncionarios: setFuncionarios,
         addNotif: addNotif,
         mesFiltro: mesFiltro,
@@ -10021,7 +10030,7 @@ function App() {
       if (view === "aprovacao") return /*#__PURE__*/React.createElement(PainelAprovacao, {
         ocorrencias: ocorrenciasFiltradas,
         setOcorrencias: setOcorrencias,
-        funcionarios: funcionarios,
+        funcionarios: funcionariosExibidos,
         setFuncionarios: setFuncionarios,
         addNotif: addNotif,
         isAdmin: isAdmin,
@@ -10030,31 +10039,31 @@ function App() {
       });
       if (view === "relatorios") return /*#__PURE__*/React.createElement(Relatorios, {
         ocorrencias: ocorrenciasFiltradas,
-        funcionarios: funcionarios,
+        funcionarios: funcionariosExibidos,
         mesFiltro: mesFiltro,
         setMesFiltro: setMesFiltro
       });
       if (view === "mural") return /*#__PURE__*/React.createElement(ProcessosPonto, { usuario: usuario, setView: setView });
       if (view === "portal") return /*#__PURE__*/React.createElement(PortalFuncionario, {
-        ocorrencias: ocorrencias,
+        ocorrencias: ocorrenciasExibidas,
         setOcorrencias: setOcorrencias,
         usuarioLogado: usuario,
-        funcionarios: funcionarios,
+        funcionarios: funcionariosExibidos,
         setFuncionarios: setFuncionarios,
         addNotif: addNotif,
-        notifs: notifs,
+        notifs: notifsExibidas,
         setNotifs: setNotifs
       });
     }
     if (view === "mural") return /*#__PURE__*/React.createElement(ProcessosPonto, { usuario: usuario, setView: setView });
     return /*#__PURE__*/React.createElement(PortalFuncionario, {
-      ocorrencias: ocorrencias,
+      ocorrencias: ocorrenciasExibidas,
       setOcorrencias: setOcorrencias,
       usuarioLogado: usuario,
-      funcionarios: funcionarios,
+      funcionarios: funcionariosExibidos,
       setFuncionarios: setFuncionarios,
       addNotif: addNotif,
-      notifs: notifs,
+      notifs: notifsExibidas,
       setNotifs: setNotifs
     });
   }
