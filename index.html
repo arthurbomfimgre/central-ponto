@@ -93,6 +93,27 @@ const KEY_TABLE = {
 // Cache local para evitar flickering
 const _cache = {};
 
+// ─── CONTA DE TESTE ─────────────────────────────────────────────────────────
+// E-mails cadastrados aqui logam como admin, mas nunca tocam no Supabase:
+// todo o estado (funcionários, ocorrências, notificações) é isolado em
+// localStorage sob um prefixo próprio, começando sempre "zerado" e
+// persistindo apenas no navegador daquele dispositivo — mesmo depois de
+// deslogar/logar de novo. Os dados reais de produção nunca são lidos nem
+// alterados por essa conta.
+const CONTAS_TESTE = {
+  "comercial@portovale.com.br": { nome: "Conta Teste", cargo: "Ambiente de Teste" }
+};
+const LS_FLAG_CONTA_TESTE = "cp_conta_teste_ativa";
+function contaTesteAtiva() {
+  return lerLS(LS_FLAG_CONTA_TESTE, false) === true;
+}
+function ativarContaTeste() {
+  salvarLS(LS_FLAG_CONTA_TESTE, true);
+}
+function desativarContaTeste() {
+  try { localStorage.removeItem(LS_FLAG_CONTA_TESTE); } catch (_e) {}
+}
+
 // Fallback localStorage
 function lerLS(key, fb) {
   try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fb; } catch (_e) { return fb; }
@@ -239,11 +260,22 @@ async function salvarSupa(key, val) {
 
 // Hook principal — carrega do Supabase, mantém sincronia via polling
 function useSharedState(key, initial) {
-  const [state, setRaw] = useState(() => _cache[key] ?? lerLS(key, initial));
+  // Conta de teste: nunca lê nem grava no Supabase. Todo o estado fica
+  // isolado sob uma chave própria no localStorage ("cp_teste_<key>"),
+  // começando vazio ([]/{} conforme o tipo do `initial`, nunca os dados
+  // reais de seed) e persistindo só nesse dispositivo entre login/logout.
+  const chaveTeste = `cp_teste_${key}`;
+  const vazio = Array.isArray(initial) ? [] : (initial && typeof initial === "object" ? {} : initial);
+
+  const [state, setRaw] = useState(() => {
+    if (contaTesteAtiva()) return lerLS(chaveTeste, vazio);
+    return _cache[key] ?? lerLS(key, initial);
+  });
   const loaded = useRef(false);
 
-  // Carga inicial do Supabase
+  // Carga inicial do Supabase — pulada inteiramente em modo teste
   useEffect(() => {
+    if (contaTesteAtiva()) return;
     lerSupa(key, initial).then(val => {
       if (val !== null && val !== undefined) {
         setRaw(val);
@@ -252,8 +284,9 @@ function useSharedState(key, initial) {
     });
   }, [key]);
 
-  // Polling a cada 3s para sincronizar entre dispositivos
+  // Polling a cada 3s para sincronizar entre dispositivos — desligado em modo teste
   useEffect(() => {
+    if (contaTesteAtiva()) return;
     const id = setInterval(async () => {
       const fresh = await lerSupa(key, null);
       if (fresh !== null && fresh !== undefined) {
@@ -272,6 +305,13 @@ function useSharedState(key, initial) {
       next = typeof valOrFn === "function" ? valOrFn(prev) : valOrFn;
       return next;
     });
+    if (contaTesteAtiva()) {
+      // Grava só localmente, isolado da chave real — nunca chama o Supabase.
+      return Promise.resolve().then(() => {
+        salvarLS(chaveTeste, next);
+        return { ok: true };
+      });
+    }
     // Retorna a Promise do salvamento — chamadores que precisam confirmar
     // sucesso (ex: upload de print do EasyMob) podem usar `await`; os demais
     // continuam funcionando normalmente ao ignorar o retorno.
@@ -4504,6 +4544,21 @@ function TelaLogin({
     // só é populada de fato pelo useEffect assíncrono do useSharedState, que
     // pode ainda não ter terminado. Por isso, buscamos a lista mais recente
     // direto do Supabase aqui antes de desistir, evitando essa falsa negativa.
+    // Conta de teste: nunca casa com a lista real de funcionários. Loga
+    // direto como admin isolado, sem tocar no Supabase — ver CONTAS_TESTE.
+    if (CONTAS_TESTE[email]) {
+      ativarContaTeste();
+      onLogin({
+        id: "admin_teste",
+        nome: CONTAS_TESTE[email].nome,
+        cargo: CONTAS_TESTE[email].cargo,
+        role: "admin",
+        funcionario_id: "teste",
+        contaTeste: true
+      });
+      setLoading(false);
+      return;
+    }
     let func = funcionarios.find(f => emailFuncionario(f) === email);
     if (!func) {
       const funcsAtualizados = await lerSupa(SK_FUNCS, FUNCIONARIOS_BASE);
@@ -9788,6 +9843,7 @@ function App() {
   }, []);
   function sair() {
     supa.auth.signOut();
+    desativarContaTeste();
     setUsuario(null);
     setModoRecuperacao(false);
   }
@@ -9806,7 +9862,17 @@ function App() {
     }) => {
       if (!ativo) return;
       const email = data?.session?.user?.email;
-      if (email) {
+      if (email && CONTAS_TESTE[email]) {
+        ativarContaTeste();
+        setUsuario({
+          id: "admin_teste",
+          nome: CONTAS_TESTE[email].nome,
+          cargo: CONTAS_TESTE[email].cargo,
+          role: "admin",
+          funcionario_id: "teste",
+          contaTeste: true
+        });
+      } else if (email) {
         const func = funcionarios.find(f => emailFuncionario(f) === email);
         if (func) setUsuario({
           id: ADMIN_IDS.includes(func.id) ? "admin" : `func_${func.id}`,
