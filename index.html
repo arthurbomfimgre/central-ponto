@@ -259,7 +259,20 @@ async function salvarSupa(key, val) {
 }
 
 // Hook principal — carrega do Supabase, mantém sincronia via polling
-function useSharedState(key, initial) {
+//
+// `sessaoPronta` (booleano) indica se a verificação inicial de sessão
+// (supa.auth.getSession(), que decide de forma ASSÍNCRONA se o login é de
+// conta de teste ou real) já terminou. Enquanto ela não terminar, este hook
+// NÃO pode buscar nem cachear dados reais do Supabase — porque, no cenário
+// de navegador limpo + sessão restaurada de conta teste, o componente App()
+// monta e os hooks useSharedState() já disparavam a busca real de forma
+// síncrona/imediata no primeiro render, antes do getSession() assíncrono
+// ainda descobrir e marcar contaTesteAtiva(). O resultado era um "flash" de
+// dados reais e, pior, esses dados reais chegavam a ser gravados em
+// salvarLS(key) e em _cache[key] — poluindo o cache local mesmo depois de a
+// flag de teste ser ativada. Bloquear a leitura/gravação real até
+// sessaoPronta === true elimina essa corrida por completo.
+function useSharedState(key, initial, sessaoPronta) {
   // Conta de teste: nunca lê nem grava no Supabase. Todo o estado fica
   // isolado sob uma chave própria no localStorage ("cp_teste_<key>"),
   // começando vazio ([]/{} conforme o tipo do `initial`, nunca os dados
@@ -268,6 +281,11 @@ function useSharedState(key, initial) {
   const vazio = Array.isArray(initial) ? [] : (initial && typeof initial === "object" ? {} : initial);
 
   const [state, setRaw] = useState(() => {
+    // Sessão ainda não verificada: nunca usar _cache/localStorage "reais"
+    // aqui, pois não sabemos ainda se este é um login de conta de teste.
+    // Começa vazio/neutro; o efeito abaixo (assim que sessaoPronta virar
+    // true) é quem decide a fonte correta.
+    if (!sessaoPronta) return vazio;
     if (contaTesteAtiva()) return lerLS(chaveTeste, vazio);
     return _cache[key] ?? lerLS(key, initial);
   });
@@ -277,18 +295,23 @@ function useSharedState(key, initial) {
   // *depois* que este hook já rodou seu useState inicial acima — nesse
   // caso o estado ficaria "preso" nos dados reais para sempre, mesmo com
   // a flag ativa. Este efeito detecta a mudança e recarrega do
-  // localStorage isolado assim que ela acontece.
-  const modoTesteAnterior = useRef(contaTesteAtiva());
+  // localStorage isolado assim que ela acontece. Também dispara quando
+  // sessaoPronta passa a valer true, para resolver a fonte correta pela
+  // primeira vez (em vez do estado vazio inicial acima).
+  const modoTesteAnterior = useRef(null);
   useEffect(() => {
+    if (!sessaoPronta) return;
     const modoTesteAgora = contaTesteAtiva();
     if (modoTesteAgora !== modoTesteAnterior.current) {
       modoTesteAnterior.current = modoTesteAgora;
       setRaw(modoTesteAgora ? lerLS(chaveTeste, vazio) : (_cache[key] ?? lerLS(key, initial)));
     }
-  });
+  }, [sessaoPronta]);
 
-  // Carga inicial do Supabase — pulada inteiramente em modo teste
+  // Carga inicial do Supabase — pulada inteiramente em modo teste, e
+  // adiada até a sessão estar verificada (ver comentário acima do hook).
   useEffect(() => {
+    if (!sessaoPronta) return;
     if (contaTesteAtiva()) return;
     lerSupa(key, initial).then(val => {
       if (val !== null && val !== undefined) {
@@ -296,10 +319,12 @@ function useSharedState(key, initial) {
         loaded.current = true;
       }
     });
-  }, [key]);
+  }, [key, sessaoPronta]);
 
-  // Polling a cada 3s para sincronizar entre dispositivos — desligado em modo teste
+  // Polling a cada 3s para sincronizar entre dispositivos — desligado em
+  // modo teste e enquanto a sessão ainda não foi verificada
   useEffect(() => {
+    if (!sessaoPronta) return;
     if (contaTesteAtiva()) return;
     const id = setInterval(async () => {
       const fresh = await lerSupa(key, null);
@@ -311,7 +336,7 @@ function useSharedState(key, initial) {
       }
     }, 3000);
     return () => clearInterval(id);
-  }, [key]);
+  }, [key, sessaoPronta]);
 
   const setState = useCallback(valOrFn => {
     let next;
@@ -10083,9 +10108,14 @@ function App() {
   const [view, setView] = useState("mural"); // "Processos" é a tela de introdução, para admin e funcionário
   const [funcSelecionado, setFuncSelecionado] = useState(null);
   const [toasts, setToasts] = useState([]);
-  const [funcionarios, setFuncionarios] = useSharedState(SK_FUNCS, FUNCIONARIOS_BASE);
-  const [ocorrencias, setOcorrencias] = useSharedState(SK_OCS, [...OCS_SJCABRIL, ...OCS_SJCMAIO, ...OCS_SJCJUNHO, ...OCS_SJCJULHO]);
-  const [notifs, setNotifs] = useSharedState(SK_NOTIFS, []);
+  // sessaoPronta: só true depois que a checagem inicial de sessão
+  // (getSession(), mais abaixo) já rodou e já decidiu se a conta é de
+  // teste ou real. Ver comentário detalhado em useSharedState() sobre por
+  // que isso é essencial para não vazar dados reais para a conta teste.
+  const sessaoPronta = !verificandoSessao;
+  const [funcionarios, setFuncionarios] = useSharedState(SK_FUNCS, FUNCIONARIOS_BASE, sessaoPronta);
+  const [ocorrencias, setOcorrencias] = useSharedState(SK_OCS, [...OCS_SJCABRIL, ...OCS_SJCMAIO, ...OCS_SJCJUNHO, ...OCS_SJCJULHO], sessaoPronta);
+  const [notifs, setNotifs] = useSharedState(SK_NOTIFS, [], sessaoPronta);
   // useSharedState já entrega o dado correto sozinho: dados reais para
   // admins/funcionários normais, e o estado isolado em localStorage (que
   // começa vazio e cresce conforme a conta de teste importa/cadastra) para
