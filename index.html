@@ -188,9 +188,28 @@ async function lerSupa(key, fb) {
       data.forEach(r => { obj[r.chave] = r.data; });
       return obj;
     }
-    const { data } = await supa.from(table).select("data");
+    // A tabela `funcionarios` guarda, além do objeto solto em `data`, as
+    // colunas de hierarquia comercial (nivel, gerencia_id, diretoria_id,
+    // superintendencia_id, modalidade, vinculo_especial, auth_user_id) como
+    // colunas próprias — usadas depois pelo RLS para restringir o acesso no
+    // banco. O `select("data")` puro as descartava silenciosamente, então
+    // aqui elas são buscadas junto e mescladas em cada objeto retornado
+    // (sobrepondo `data`, nunca o contrário — essas colunas são a fonte da
+    // verdade sobre hierarquia, mesmo que `data` também tenha campos com o
+    // mesmo nome por engano).
+    const colunas = key === SK_FUNCS ? "data, nivel, superintendencia_id, diretoria_id, gerencia_id, modalidade, vinculo_especial, auth_user_id" : "data";
+    const { data } = await supa.from(table).select(colunas);
     if (!data || data.length === 0) return fb;
-    const result = data.map(r => r.data);
+    const result = key === SK_FUNCS ? data.map(r => ({
+      ...r.data,
+      nivel: r.nivel ?? r.data?.nivel,
+      superintendencia_id: r.superintendencia_id ?? r.data?.superintendencia_id ?? null,
+      diretoria_id: r.diretoria_id ?? r.data?.diretoria_id ?? null,
+      gerencia_id: r.gerencia_id ?? r.data?.gerencia_id ?? null,
+      modalidade: r.modalidade ?? r.data?.modalidade ?? "presencial",
+      vinculo_especial: r.vinculo_especial ?? r.data?.vinculo_especial ?? null,
+      auth_user_id: r.auth_user_id ?? r.data?.auth_user_id ?? null
+    })) : data.map(r => r.data);
     _cache[key] = result;
     salvarLS(key, result);
     return result;
@@ -242,7 +261,22 @@ async function salvarSupa(key, val) {
       await supa.from(table).delete().neq("id", -999999);
       return { ok: true };
     }
-    const rows = val.map(item => ({ id: item.id, data: item }));
+    // Em `funcionarios`, além do objeto solto em `data`, preservamos as
+    // colunas próprias de hierarquia comercial a cada save — sem isso, um
+    // upsert feito depois de editar um funcionário (ex: trocar o cargo)
+    // reescreveria a linha só com `data`, apagando nivel/gerencia_id/etc.
+    // que o RLS depende para restringir o acesso no banco.
+    const rows = val.map(item => key === SK_FUNCS ? {
+      id: item.id,
+      data: item,
+      nivel: item.nivel ?? null,
+      superintendencia_id: item.superintendencia_id ?? null,
+      diretoria_id: item.diretoria_id ?? null,
+      gerencia_id: item.gerencia_id ?? null,
+      modalidade: item.modalidade ?? "presencial",
+      vinculo_especial: item.vinculo_especial ?? null,
+      auth_user_id: item.auth_user_id ?? null
+    } : { id: item.id, data: item });
     const { error: errUpsert } = await supa.from(table).upsert(rows, { onConflict: "id" });
     if (errUpsert) return { ok: false, erro: errUpsert.message };
 
@@ -3865,6 +3899,31 @@ function emailFuncionario(func) {
 const ADMIN_FUNCIONARIO_ID = 1; // mantido para compatibilidade
 const ADMIN_IDS = [1, 4, 5];
 
+// ─── HIERARQUIA COMERCIAL ──────────────────────────────────────────────────
+// Resolve o nível de acesso de um funcionário dentro da nova hierarquia
+// (admin_geral > superintendente > diretor > gerente > vendedor).
+//
+// Compatibilidade: funcionários de teste/legado (cadastrados antes da
+// hierarquia existir, ex: FUNCIONARIOS_BASE) não têm `nivel` gravado no
+// banco. Para esses, mantemos o comportamento antigo como fallback: quem
+// está em ADMIN_IDS vira "admin_geral", o resto vira "vendedor" — assim
+// nada quebra para os dados de teste já existentes, e todo funcionário
+// migrado via Supabase (com `nivel` já definido) passa a usar a hierarquia
+// real automaticamente.
+function resolverNivel(func) {
+  if (func?.nivel) return func.nivel;
+  return ADMIN_IDS.includes(func?.id) ? "admin_geral" : "vendedor";
+}
+// Papel legado (admin/funcionario) derivado do nível novo — usado onde o
+// código ainda só entende esse binário (ex: `isAdmin`, RLS antiga do front).
+// Só "admin_geral" mantém o painel administrativo completo; os demais
+// níveis de gestão (superintendente/diretor/gerente) ainda caem em
+// "funcionario" por enquanto — telas de gestão dedicadas para eles são o
+// próximo passo, feito à parte para manter esta mudança pequena e testável.
+function papelLegado(nivel) {
+  return nivel === "admin_geral" ? "admin" : "funcionario";
+}
+
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
 function getSem(esq) {
   return esq <= 1 ? "verde" : esq === 2 ? "amarelo" : esq === 3 ? "vermelho" : "roxo";
@@ -4623,11 +4682,17 @@ function TelaLogin({
       setLoading(false);
       return;
     }
+    const nivel = resolverNivel(func);
     const user = {
       id: ADMIN_IDS.includes(func.id) ? "admin" : `func_${func.id}`,
       nome: func.nome,
       cargo: func.cargo,
-      role: ADMIN_IDS.includes(func.id) ? "admin" : "funcionario",
+      role: papelLegado(nivel),
+      nivel,
+      superintendencia_id: func.superintendencia_id ?? null,
+      diretoria_id: func.diretoria_id ?? null,
+      gerencia_id: func.gerencia_id ?? null,
+      modalidade: func.modalidade ?? "presencial",
       funcionario_id: func.id
     };
     onLogin(user);
@@ -10330,13 +10395,21 @@ function App() {
         });
       } else if (email) {
         const func = funcionarios.find(f => emailFuncionario(f) === email);
-        if (func) setUsuario({
-          id: ADMIN_IDS.includes(func.id) ? "admin" : `func_${func.id}`,
-          nome: func.nome,
-          cargo: func.cargo,
-          role: ADMIN_IDS.includes(func.id) ? "admin" : "funcionario",
-          funcionario_id: func.id
-        });
+        if (func) {
+          const nivel = resolverNivel(func);
+          setUsuario({
+            id: ADMIN_IDS.includes(func.id) ? "admin" : `func_${func.id}`,
+            nome: func.nome,
+            cargo: func.cargo,
+            role: papelLegado(nivel),
+            nivel,
+            superintendencia_id: func.superintendencia_id ?? null,
+            diretoria_id: func.diretoria_id ?? null,
+            gerencia_id: func.gerencia_id ?? null,
+            modalidade: func.modalidade ?? "presencial",
+            funcionario_id: func.id
+          });
+        }
       }
       setVerificandoSessao(false);
     });
@@ -10347,6 +10420,12 @@ function App() {
   const [mesFiltro, setMesFiltro] = useState(() => mesesDisponiveis()[0]?.valor || "2026-04");
   const ocorrenciasFiltradas = useMemo(() => ocorrenciasExibidas.filter(o => o.data.startsWith(mesFiltro)), [ocorrenciasExibidas, mesFiltro]);
   const isAdmin = usuario?.role === "admin";
+  // Níveis de gestão da hierarquia comercial (superintendente/diretor/
+  // gerente). Ainda não têm telas próprias — por enquanto caem no portal
+  // de funcionário comum, igual vendedor, até as telas de gestão serem
+  // construídas num passo seguinte. Exposto aqui desde já para as próximas
+  // mudanças não precisarem recalcular isso em vários lugares.
+  const isGestor = ["superintendente", "diretor", "gerente"].includes(usuario?.nivel);
   function addNotif(n) {
     setNotifs(prev => [n, ...prev].slice(0, 50));
     if (!n.paraFunc || isAdmin) {
