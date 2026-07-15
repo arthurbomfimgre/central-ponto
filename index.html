@@ -65,6 +65,10 @@ const supa      = window.supabase.createClient(SUPA_URL, SUPA_KEY);
 
 // URL da Edge Function que cria o usuário Auth automaticamente ao cadastrar funcionário
 const EDGE_CRIAR_USUARIO = `${SUPA_URL}/functions/v1/criar-usuario-funcionario`;
+// Cria em lote os usuários Auth de todos os funcionários comerciais que
+// ainda não têm auth_user_id (ver componente ArvoreHierarquia). Só a conta
+// de teste comercial@portovale.com.br vê o botão que dispara isso.
+const EDGE_CRIAR_USUARIOS_COMERCIAL_LOTE = `${SUPA_URL}/functions/v1/criar-usuarios-comercial-lote`;
 
 // Mapeamento: chave -> tabela Supabase
 const SK_OCS    = "cp_ocorrencias_v4";
@@ -10678,6 +10682,44 @@ function ArvoreHierarquia() {
   const [busca, setBusca] = useState("");
   const [aberto, setAberto] = useState({});
   const toggle = chave => setAberto(prev => ({ ...prev, [chave]: !prev[chave] }));
+  const [criandoUsuarios, setCriandoUsuarios] = useState(false);
+  const [resumoUsuarios, setResumoUsuarios] = useState(null);
+
+  const semLoginCount = useMemo(
+    () => funcionarios.filter(f => !f.auth_user_id).length,
+    [funcionarios]
+  );
+
+  async function criarUsuariosEmLote() {
+    if (criandoUsuarios) return;
+    setCriandoUsuarios(true);
+    setResumoUsuarios(null);
+    try {
+      const res = await fetch(EDGE_CRIAR_USUARIOS_COMERCIAL_LOTE, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "apikey": SUPA_KEY,
+          "Authorization": `Bearer ${SUPA_KEY}`
+        }
+      });
+      const json = await res.json();
+      if (!json.ok) {
+        setResumoUsuarios({ erro: json.erro || "Falha desconhecida." });
+      } else {
+        setResumoUsuarios({
+          criados: json.resultados.criados.length,
+          jaExistiam: json.resultados.jaExistiam.length,
+          falhas: json.resultados.falhas,
+          senha: json.senha_inicial
+        });
+      }
+    } catch (e) {
+      setResumoUsuarios({ erro: "Não foi possível contatar a Edge Function. Verifique se ela está publicada." });
+    } finally {
+      setCriandoUsuarios(false);
+    }
+  }
 
   const arvoreCompleta = useMemo(
     () => montarArvore({ superintendencias, diretorias, gerencias, funcionarios }),
@@ -10736,6 +10778,43 @@ function ArvoreHierarquia() {
         fontSize: 13, outline: "none", background: "var(--cor-branco)", color: "var(--cinza-900)"
       }
     }),
+    semLoginCount > 0 && /*#__PURE__*/React.createElement("div", {
+      style: {
+        background: "var(--amber-100)", border: "1px solid var(--amber-200)",
+        borderRadius: 12, padding: "12px 16px", display: "flex",
+        alignItems: "center", gap: 12, flexWrap: "wrap"
+      }
+    },
+      /*#__PURE__*/React.createElement("div", { style: { flex: 1, minWidth: 220, fontSize: 12.5, color: "var(--amber-800)" } },
+        "⚠️ ", semLoginCount, " funcionário(s) ainda sem login criado (auth_user_id vazio)."),
+      /*#__PURE__*/React.createElement("button", {
+        onClick: criarUsuariosEmLote,
+        disabled: criandoUsuarios,
+        style: {
+          padding: "8px 16px", borderRadius: 10, border: "none",
+          background: criandoUsuarios ? "var(--cinza-300)" : "var(--marca-600)",
+          color: "var(--cor-branco)", fontSize: 12.5, fontWeight: 700,
+          cursor: criandoUsuarios ? "default" : "pointer", flexShrink: 0
+        }
+      }, criandoUsuarios ? "Criando…" : "Criar logins em lote")
+    ),
+    resumoUsuarios && /*#__PURE__*/React.createElement("div", {
+      style: {
+        background: resumoUsuarios.erro ? "var(--vermelho-100)" : "var(--verde-100)",
+        border: `1px solid ${resumoUsuarios.erro ? "var(--vermelho-300)" : "var(--verde-200)"}`,
+        borderRadius: 12, padding: "12px 16px", fontSize: 12.5,
+        color: resumoUsuarios.erro ? "var(--vermelho-800)" : "var(--verde-800)"
+      }
+    },
+      resumoUsuarios.erro
+        ? `❌ ${resumoUsuarios.erro}`
+        : /*#__PURE__*/React.createElement(React.Fragment, null,
+            `✅ ${resumoUsuarios.criados} login(s) criado(s) · ${resumoUsuarios.jaExistiam} já existiam · ${resumoUsuarios.falhas.length} falha(s).`,
+            resumoUsuarios.senha && /*#__PURE__*/React.createElement("div", { style: { marginTop: 4 } }, `Senha inicial padrão: ${resumoUsuarios.senha}`),
+            resumoUsuarios.falhas.length > 0 && /*#__PURE__*/React.createElement("ul", { style: { marginTop: 6, paddingLeft: 18 } },
+              resumoUsuarios.falhas.map(f => /*#__PURE__*/React.createElement("li", { key: f.id }, `${f.nome}: ${f.motivo}`)))
+          )
+    ),
     arvore.length === 0
       ? /*#__PURE__*/React.createElement("div", { style: { padding: 40, textAlign: "center", color: "var(--cinza-300)", fontSize: 13 } }, "Nenhum resultado para essa busca.")
       : arvore.map(s => /*#__PURE__*/React.createElement(NoSuperintendencia, {
