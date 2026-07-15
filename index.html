@@ -4665,8 +4665,14 @@ function TelaLogin({
         nome: CONTAS_TESTE[email].nome,
         cargo: CONTAS_TESTE[email].cargo,
         role: "admin",
+        nivel: "admin_geral",
         funcionario_id: "teste",
-        contaTeste: true
+        contaTeste: true,
+        // Só esta conta (comercial@portovale.com.br) vê as telas novas da
+        // hierarquia comercial enquanto elas ainda estão em construção —
+        // nenhum outro admin/funcionário real é afetado até decidirmos
+        // liberar de vez.
+        previewHierarquia: true
       });
       setLoading(false);
       return;
@@ -10324,6 +10330,424 @@ function PortalFuncionario({
 }
 
 // ─── APP PRINCIPAL ────────────────────────────────────────────────────────────
+// ─── ÁRVORE HIERÁRQUICA COMERCIAL — Superintendente → Diretor → Gerente → Vendedor ──
+// Visível apenas para a conta de teste comercial@portovale.com.br (gate via
+// previewHierarquia no App). Lê diretamente das tabelas normalizadas do
+// Supabase (funcionarios_comercial, gerencias, diretorias, superintendencias)
+// em vez do mecanismo useSharedState/chave-valor usado pelo resto do app,
+// já que essas tabelas têm colunas reais e não passam pelo polling genérico.
+const NIVEL_LABEL = {
+  superintendente: "Superintendente",
+  diretor: "Diretor",
+  gerente: "Gerente",
+  vendedor: "Vendedor"
+};
+const NIVEL_COR = {
+  superintendente: { bg: "var(--marca-gradiente)", texto: "var(--cor-branco)" },
+  diretor: { bg: "var(--indigo-100)", texto: "var(--indigo-600)" },
+  gerente: { bg: "var(--roxo-100)", texto: "var(--roxo-600)" },
+  vendedor: { bg: "var(--cinza-100)", texto: "var(--cinza-600)" }
+};
+function normalizarBusca(s) {
+  return (s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+}
+function useArvoreComercialData() {
+  const [estado, setEstado] = useState({
+    carregando: true,
+    erro: null,
+    superintendencias: [],
+    diretorias: [],
+    gerencias: [],
+    funcionarios: []
+  });
+  useEffect(() => {
+    let ativo = true;
+    (async () => {
+      try {
+        const [supRes, dirRes, gerRes, funcRes] = await Promise.all([
+          supa.from("superintendencias").select("*"),
+          supa.from("diretorias").select("*"),
+          supa.from("gerencias").select("*"),
+          supa.from("funcionarios_comercial").select("*")
+        ]);
+        const erro = supRes.error || dirRes.error || gerRes.error || funcRes.error;
+        if (erro) throw erro;
+        if (!ativo) return;
+        setEstado({
+          carregando: false,
+          erro: null,
+          superintendencias: supRes.data || [],
+          diretorias: dirRes.data || [],
+          gerencias: gerRes.data || [],
+          funcionarios: (funcRes.data || []).filter(f => (f.situacao || "ATIVO").toUpperCase() === "ATIVO")
+        });
+      } catch (e) {
+        if (!ativo) return;
+        setEstado(prev => ({ ...prev, carregando: false, erro: e.message || "Erro ao carregar dados." }));
+      }
+    })();
+    return () => { ativo = false; };
+  }, []);
+  return estado;
+}
+// Monta a árvore em memória a partir das listas planas. Cada diretoria pode
+// ter, além de suas gerências normais, um "grupo" de vendedores vinculados
+// diretamente a ela (gerencia_id nulo — ex.: Edilene Aquino Soares → Simone
+// Anjos), exibido com o rótulo "-" em vez de um card de gerência.
+function montarArvore({ superintendencias, diretorias, gerencias, funcionarios }) {
+  const porGerencia = new Map();
+  const diretosNaDiretoria = new Map(); // diretoria_id -> [vendedores sem gerência]
+  const gerentesPorGerencia = new Map();
+  const diretoresPorDiretoria = new Map();
+  const superintendentesPorSuperintendencia = new Map();
+
+  for (const f of funcionarios) {
+    if (f.nivel === "vendedor") {
+      if (f.gerencia_id != null) {
+        if (!porGerencia.has(f.gerencia_id)) porGerencia.set(f.gerencia_id, []);
+        porGerencia.get(f.gerencia_id).push(f);
+      } else if (f.diretoria_id != null) {
+        if (!diretosNaDiretoria.has(f.diretoria_id)) diretosNaDiretoria.set(f.diretoria_id, []);
+        diretosNaDiretoria.get(f.diretoria_id).push(f);
+      }
+    } else if (f.nivel === "gerente" && f.gerencia_id != null) {
+      gerentesPorGerencia.set(f.gerencia_id, f);
+    } else if (f.nivel === "diretor" && f.diretoria_id != null) {
+      diretoresPorDiretoria.set(f.diretoria_id, f);
+    } else if (f.nivel === "superintendente" && f.superintendencia_id != null) {
+      superintendentesPorSuperintendencia.set(f.superintendencia_id, f);
+    }
+  }
+
+  const ordenarNome = (a, b) => (a.nome_completo || "").localeCompare(b.nome_completo || "", "pt-BR");
+
+  const gerenciasPorDiretoria = new Map();
+  for (const g of gerencias) {
+    if (!gerenciasPorDiretoria.has(g.diretoria_id)) gerenciasPorDiretoria.set(g.diretoria_id, []);
+    gerenciasPorDiretoria.get(g.diretoria_id).push(g);
+  }
+  const diretoriasPorSuperintendencia = new Map();
+  for (const d of diretorias) {
+    if (!diretoriasPorSuperintendencia.has(d.superintendencia_id)) diretoriasPorSuperintendencia.set(d.superintendencia_id, []);
+    diretoriasPorSuperintendencia.get(d.superintendencia_id).push(d);
+  }
+
+  return [...superintendencias].sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR")).map(s => {
+    const diretoriasDaSup = (diretoriasPorSuperintendencia.get(s.id) || []).slice().sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
+    const diretoriasMontadas = diretoriasDaSup.map(d => {
+      const gerenciasDaDir = (gerenciasPorDiretoria.get(d.id) || []).slice().sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
+      const gerenciasMontadas = gerenciasDaDir.map(g => ({
+        ...g,
+        gerente: gerentesPorGerencia.get(g.id) || null,
+        vendedores: (porGerencia.get(g.id) || []).slice().sort(ordenarNome)
+      }));
+      const semGerencia = (diretosNaDiretoria.get(d.id) || []).slice().sort(ordenarNome);
+      let totalDir = gerenciasMontadas.reduce((acc, g) => acc + g.vendedores.length + (g.gerente ? 1 : 0), 0) + semGerencia.length;
+      return {
+        ...d,
+        diretor: diretoresPorDiretoria.get(d.id) || null,
+        gerencias: gerenciasMontadas,
+        semGerencia,
+        totalPessoas: totalDir + 1 // +1 pelo próprio diretor, se existir (aprox.)
+      };
+    });
+    const totalSup = diretoriasMontadas.reduce((acc, d) => acc + d.totalPessoas, 0);
+    return {
+      ...s,
+      superintendente: superintendentesPorSuperintendencia.get(s.id) || null,
+      diretorias: diretoriasMontadas,
+      totalPessoas: totalSup
+    };
+  });
+}
+function filtrarArvorePorBusca(arvore, termoBruto) {
+  const termo = normalizarBusca(termoBruto);
+  if (!termo) return arvore;
+  const bate = f => f && normalizarBusca(f.nome_completo).includes(termo);
+  return arvore
+    .map(s => {
+      const diretorias = s.diretorias
+        .map(d => {
+          const gerencias = d.gerencias
+            .map(g => {
+              const vendedores = g.vendedores.filter(bate);
+              const passa = bate(g.gerente) || normalizarBusca(g.nome).includes(termo) || vendedores.length > 0;
+              return passa ? { ...g, vendedores: bate(g.gerente) || normalizarBusca(g.nome).includes(termo) ? g.vendedores : vendedores } : null;
+            })
+            .filter(Boolean);
+          const semGerencia = d.semGerencia.filter(bate);
+          const passaDir = bate(d.diretor) || normalizarBusca(d.nome).includes(termo) || gerencias.length > 0 || semGerencia.length > 0;
+          return passaDir ? { ...d, gerencias, semGerencia } : null;
+        })
+        .filter(Boolean);
+      const passaSup = bate(s.superintendente) || normalizarBusca(s.nome).includes(termo) || diretorias.length > 0;
+      return passaSup ? { ...s, diretorias } : null;
+    })
+    .filter(Boolean);
+}
+function LinhaPessoa({ pessoa, nivel, destaque }) {
+  const cor = NIVEL_COR[nivel];
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      alignItems: "center",
+      gap: 10,
+      padding: "8px 10px",
+      borderRadius: 10,
+      background: destaque ? "var(--marca-50)" : "transparent"
+    }
+  }, /*#__PURE__*/React.createElement(Avatar, { nome: pessoa.nome_completo, id: pessoa.id, size: 28 }),
+    /*#__PURE__*/React.createElement("div", { style: { minWidth: 0, flex: 1 } },
+      /*#__PURE__*/React.createElement("div", {
+        style: { fontSize: 13, fontWeight: 600, color: "var(--cinza-900)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }
+      }, pessoa.nome_completo),
+      /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, color: "var(--cinza-400)" } }, pessoa.cargo_origem)
+    ),
+    /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 20,
+        background: cor.bg, color: cor.texto, flexShrink: 0
+      }
+    }, NIVEL_LABEL[nivel]),
+    pessoa.modalidade === "home_office" && /*#__PURE__*/React.createElement("span", {
+      title: "Home office",
+      style: { fontSize: 13, flexShrink: 0 }
+    }, "🏠"),
+    pessoa.vinculo_especial && /*#__PURE__*/React.createElement("span", {
+      title: `Vínculo especial: ${pessoa.vinculo_especial}`,
+      style: { fontSize: 13, flexShrink: 0 }
+    }, "⚠️")
+  );
+}
+function CardGerencia({ gerencia, aberta, onToggle }) {
+  const qtd = gerencia.vendedores.length + (gerencia.gerente ? 1 : 0);
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: "var(--cinza-50)",
+      border: "1px solid var(--cinza-100)",
+      borderRadius: 12,
+      overflow: "hidden"
+    }
+  },
+    /*#__PURE__*/React.createElement("button", {
+      onClick: onToggle,
+      style: {
+        width: "100%", display: "flex", alignItems: "center", gap: 10,
+        padding: "10px 12px", background: "transparent", border: "none",
+        cursor: "pointer", textAlign: "left"
+      }
+    },
+      /*#__PURE__*/React.createElement("span", { style: { fontSize: 12, color: "var(--cinza-400)", transform: aberta ? "rotate(90deg)" : "rotate(0deg)", transition: "transform .15s", flexShrink: 0 } }, "▶"),
+      gerencia.gerente ? /*#__PURE__*/React.createElement(Avatar, { nome: gerencia.gerente.nome_completo, id: gerencia.gerente.id, size: 26 })
+        : /*#__PURE__*/React.createElement("div", { style: { width: 26, height: 26, borderRadius: "50%", background: "var(--cinza-200)", flexShrink: 0 } }),
+      /*#__PURE__*/React.createElement("div", { style: { flex: 1, minWidth: 0 } },
+        /*#__PURE__*/React.createElement("div", { style: { fontSize: 13, fontWeight: 700, color: "var(--cinza-900)" } }, gerencia.nome),
+        /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, color: "var(--cinza-400)" } },
+          gerencia.gerente ? gerencia.gerente.nome_completo : "Sem gerente definido")
+      ),
+      /*#__PURE__*/React.createElement("span", {
+        style: { fontSize: 11, fontWeight: 600, color: "var(--cinza-500)", background: "var(--cinza-100)", padding: "2px 8px", borderRadius: 20, flexShrink: 0 }
+      }, qtd, " ", qtd === 1 ? "pessoa" : "pessoas")
+    ),
+    aberta && /*#__PURE__*/React.createElement("div", {
+      style: { padding: "0 10px 10px 34px", display: "flex", flexDirection: "column", gap: 2 }
+    },
+      gerencia.gerente && /*#__PURE__*/React.createElement(LinhaPessoa, { pessoa: gerencia.gerente, nivel: "gerente", destaque: true }),
+      gerencia.vendedores.length === 0 && !gerencia.gerente
+        ? /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: "var(--cinza-300)", padding: "6px 10px" } }, "Nenhum vendedor nesta gerência.")
+        : gerencia.vendedores.map(v => /*#__PURE__*/React.createElement(LinhaPessoa, { key: v.id, pessoa: v, nivel: "vendedor" }))
+    )
+  );
+}
+function NoDiretoria({ diretoria, aberta, onToggle, gerenciasAbertas, onToggleGerencia }) {
+  const totalGerencias = diretoria.gerencias.length;
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: "var(--cor-branco)",
+      border: "1px solid var(--cinza-100)",
+      borderRadius: 14,
+      overflow: "hidden"
+    }
+  },
+    /*#__PURE__*/React.createElement("button", {
+      onClick: onToggle,
+      style: {
+        width: "100%", display: "flex", alignItems: "center", gap: 12,
+        padding: "14px 16px", background: "transparent", border: "none",
+        cursor: "pointer", textAlign: "left"
+      }
+    },
+      /*#__PURE__*/React.createElement("span", { style: { fontSize: 13, color: "var(--cinza-400)", transform: aberta ? "rotate(90deg)" : "rotate(0deg)", transition: "transform .15s", flexShrink: 0 } }, "▶"),
+      diretoria.diretor ? /*#__PURE__*/React.createElement(Avatar, { nome: diretoria.diretor.nome_completo, id: diretoria.diretor.id, size: 34 })
+        : /*#__PURE__*/React.createElement("div", { style: { width: 34, height: 34, borderRadius: "50%", background: "var(--cinza-200)", flexShrink: 0 } }),
+      /*#__PURE__*/React.createElement("div", { style: { flex: 1, minWidth: 0 } },
+        /*#__PURE__*/React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8 } },
+          /*#__PURE__*/React.createElement("span", { style: { fontSize: 15, fontWeight: 700, color: "var(--cinza-900)" } }, diretoria.nome),
+          /*#__PURE__*/React.createElement("span", {
+            style: { fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 20, background: NIVEL_COR.diretor.bg, color: NIVEL_COR.diretor.texto }
+          }, "Diretoria")
+        ),
+        /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: "var(--cinza-400)", marginTop: 2 } },
+          diretoria.diretor ? diretoria.diretor.nome_completo : "Sem diretor definido", " · ", totalGerencias, " ", totalGerencias === 1 ? "gerência" : "gerências")
+      ),
+      /*#__PURE__*/React.createElement("span", {
+        style: { fontSize: 12, fontWeight: 700, color: "var(--marca-600)", background: "var(--marca-50)", padding: "4px 10px", borderRadius: 20, flexShrink: 0 }
+      }, diretoria.totalPessoas, " pessoas")
+    ),
+    aberta && /*#__PURE__*/React.createElement("div", {
+      style: { padding: "0 16px 16px 16px", display: "flex", flexDirection: "column", gap: 8 }
+    },
+      diretoria.gerencias.map(g => /*#__PURE__*/React.createElement(CardGerencia, {
+        key: g.id,
+        gerencia: g,
+        aberta: !!gerenciasAbertas[`g_${g.id}`],
+        onToggle: () => onToggleGerencia(`g_${g.id}`)
+      })),
+      diretoria.semGerencia.length > 0 && /*#__PURE__*/React.createElement("div", {
+        style: { background: "var(--cinza-50)", border: "1px dashed var(--cinza-200)", borderRadius: 12, padding: "10px 12px" }
+      },
+        /*#__PURE__*/React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 6 } },
+          /*#__PURE__*/React.createElement("span", {
+            style: { fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 20, background: "var(--cinza-200)", color: "var(--cinza-600)" }
+          }, "-"),
+          /*#__PURE__*/React.createElement("span", { style: { fontSize: 12, fontWeight: 600, color: "var(--cinza-500)" } }, "Sem gerência — reporta direto à diretoria")
+        ),
+        diretoria.semGerencia.map(v => /*#__PURE__*/React.createElement(LinhaPessoa, { key: v.id, pessoa: v, nivel: "vendedor" }))
+      ),
+      diretoria.gerencias.length === 0 && diretoria.semGerencia.length === 0 && /*#__PURE__*/React.createElement("div", {
+        style: { fontSize: 12, color: "var(--cinza-300)", padding: "6px 4px" }
+      }, "Nenhuma gerência cadastrada nesta diretoria.")
+    )
+  );
+}
+function NoSuperintendencia({ superintendencia, aberta, onToggle, estadoAberto, onToggleChave }) {
+  const totalDiretorias = superintendencia.diretorias.length;
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: "var(--cor-branco)",
+      borderRadius: 16,
+      boxShadow: "0 1px 3px var(--sombra-leve)",
+      overflow: "hidden"
+    }
+  },
+    /*#__PURE__*/React.createElement("button", {
+      onClick: onToggle,
+      style: {
+        width: "100%", display: "flex", alignItems: "center", gap: 14,
+        padding: "18px 20px", border: "none", cursor: "pointer", textAlign: "left",
+        background: aberta ? "var(--marca-gradiente)" : "var(--cor-branco)",
+        color: aberta ? "var(--cor-branco)" : "var(--cinza-900)",
+        transition: "background .15s"
+      }
+    },
+      /*#__PURE__*/React.createElement("span", { style: { fontSize: 15, transform: aberta ? "rotate(90deg)" : "rotate(0deg)", transition: "transform .15s", flexShrink: 0 } }, "▶"),
+      superintendencia.superintendente ? /*#__PURE__*/React.createElement(Avatar, { nome: superintendencia.superintendente.nome_completo, id: superintendencia.superintendente.id, size: 40 })
+        : /*#__PURE__*/React.createElement("div", { style: { width: 40, height: 40, borderRadius: "50%", background: "rgba(255,255,255,.3)", flexShrink: 0 } }),
+      /*#__PURE__*/React.createElement("div", { style: { flex: 1, minWidth: 0 } },
+        /*#__PURE__*/React.createElement("div", { style: { fontSize: 17, fontWeight: 800 } }, superintendencia.nome),
+        /*#__PURE__*/React.createElement("div", { style: { fontSize: 12.5, opacity: .85, marginTop: 2 } },
+          superintendencia.superintendente ? superintendencia.superintendente.nome_completo : "Sem superintendente definido",
+          " · ", totalDiretorias, " ", totalDiretorias === 1 ? "diretoria" : "diretorias")
+      ),
+      /*#__PURE__*/React.createElement("span", {
+        style: {
+          fontSize: 13, fontWeight: 700, padding: "5px 12px", borderRadius: 20, flexShrink: 0,
+          background: aberta ? "rgba(255,255,255,.22)" : "var(--marca-50)",
+          color: aberta ? "var(--cor-branco)" : "var(--marca-600)"
+        }
+      }, superintendencia.totalPessoas, " pessoas")
+    ),
+    aberta && /*#__PURE__*/React.createElement("div", {
+      style: { padding: 20, display: "flex", flexDirection: "column", gap: 10, background: "var(--cinza-50)" }
+    },
+      superintendencia.diretorias.length === 0
+        ? /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: "var(--cinza-300)" } }, "Nenhuma diretoria cadastrada nesta superintendência.")
+        : superintendencia.diretorias.map(d => /*#__PURE__*/React.createElement(NoDiretoria, {
+            key: d.id,
+            diretoria: d,
+            aberta: !!estadoAberto[`d_${d.id}`],
+            onToggle: () => onToggleChave(`d_${d.id}`),
+            gerenciasAbertas: estadoAberto,
+            onToggleGerencia: onToggleChave
+          }))
+    )
+  );
+}
+function ArvoreHierarquia() {
+  const { carregando, erro, superintendencias, diretorias, gerencias, funcionarios } = useArvoreComercialData();
+  const [busca, setBusca] = useState("");
+  const [aberto, setAberto] = useState({});
+  const toggle = chave => setAberto(prev => ({ ...prev, [chave]: !prev[chave] }));
+
+  const arvoreCompleta = useMemo(
+    () => montarArvore({ superintendencias, diretorias, gerencias, funcionarios }),
+    [superintendencias, diretorias, gerencias, funcionarios]
+  );
+  const arvore = useMemo(() => filtrarArvorePorBusca(arvoreCompleta, busca), [arvoreCompleta, busca]);
+
+  // Expande automaticamente todos os níveis quando há uma busca ativa, para
+  // que o resultado filtrado apareça já visível em vez de escondido em nós
+  // colapsados.
+  useEffect(() => {
+    if (!busca.trim()) return;
+    const novo = {};
+    for (const s of arvore) {
+      novo[`s_${s.id}`] = true;
+      for (const d of s.diretorias) {
+        novo[`d_${d.id}`] = true;
+        for (const g of d.gerencias) novo[`g_${g.id}`] = true;
+      }
+    }
+    setAberto(prev => ({ ...prev, ...novo }));
+  }, [busca, arvore]);
+
+  const totais = useMemo(() => ({
+    superintendencias: superintendencias.length,
+    diretorias: diretorias.length,
+    gerencias: gerencias.length,
+    vendedores: funcionarios.filter(f => f.nivel === "vendedor").length,
+    total: funcionarios.length
+  }), [superintendencias, diretorias, gerencias, funcionarios]);
+
+  if (carregando) {
+    return /*#__PURE__*/React.createElement("div", {
+      style: { padding: 40, textAlign: "center", color: "var(--cinza-400)", fontSize: 13 }
+    }, "Carregando estrutura comercial…");
+  }
+  if (erro) {
+    return /*#__PURE__*/React.createElement("div", {
+      style: { padding: 40, textAlign: "center", color: "var(--vermelho-600)", fontSize: 13 }
+    }, "Não foi possível carregar a hierarquia: ", erro);
+  }
+
+  return /*#__PURE__*/React.createElement("div", { style: { padding: "24px 28px", maxWidth: 980, margin: "0 auto", display: "flex", flexDirection: "column", gap: 18 } },
+    /*#__PURE__*/React.createElement("div", null,
+      /*#__PURE__*/React.createElement("h1", { style: { fontSize: 22, fontWeight: 800, color: "var(--cinza-900)", marginBottom: 4 } }, "Hierarquia Comercial"),
+      /*#__PURE__*/React.createElement("p", { style: { fontSize: 13, color: "var(--cinza-400)" } },
+        totais.total, " funcionários · ", totais.superintendencias, " superintendências · ",
+        totais.diretorias, " diretorias · ", totais.gerencias, " gerências · ", totais.vendedores, " vendedores")
+    ),
+    /*#__PURE__*/React.createElement("input", {
+      value: busca,
+      onChange: e => setBusca(e.target.value),
+      placeholder: "Buscar por nome…",
+      style: {
+        padding: "10px 14px", borderRadius: 12, border: "1px solid var(--cinza-200)",
+        fontSize: 13, outline: "none", background: "var(--cor-branco)", color: "var(--cinza-900)"
+      }
+    }),
+    arvore.length === 0
+      ? /*#__PURE__*/React.createElement("div", { style: { padding: 40, textAlign: "center", color: "var(--cinza-300)", fontSize: 13 } }, "Nenhum resultado para essa busca.")
+      : arvore.map(s => /*#__PURE__*/React.createElement(NoSuperintendencia, {
+          key: s.id,
+          superintendencia: s,
+          aberta: !!aberto[`s_${s.id}`],
+          onToggle: () => toggle(`s_${s.id}`),
+          estadoAberto: aberto,
+          onToggleChave: toggle
+        }))
+  );
+}
 function App() {
   const [theme, toggleTheme] = useTheme();
   const [usuario, setUsuario] = useState(null);
@@ -10390,8 +10814,10 @@ function App() {
           nome: CONTAS_TESTE[email].nome,
           cargo: CONTAS_TESTE[email].cargo,
           role: "admin",
+          nivel: "admin_geral",
           funcionario_id: "teste",
-          contaTeste: true
+          contaTeste: true,
+          previewHierarquia: true
         });
       } else if (email) {
         const func = funcionarios.find(f => emailFuncionario(f) === email);
@@ -10426,6 +10852,12 @@ function App() {
   // construídas num passo seguinte. Exposto aqui desde já para as próximas
   // mudanças não precisarem recalcular isso em vários lugares.
   const isGestor = ["superintendente", "diretor", "gerente"].includes(usuario?.nivel);
+  // Gate explícito: enquanto as telas da hierarquia comercial nova estão em
+  // construção, só a conta comercial@portovale.com.br (CONTAS_TESTE) as
+  // enxerga. Nenhum admin/funcionário real vê nada diferente até este flag
+  // ser removido de propósito, quando as telas estiverem prontas para todo
+  // mundo.
+  const previewHierarquia = !!usuario?.previewHierarquia;
   function addNotif(n) {
     setNotifs(prev => [n, ...prev].slice(0, 50));
     if (!n.paraFunc || isAdmin) {
@@ -10505,7 +10937,15 @@ function App() {
     id: "relatorios",
     label: "Relatórios",
     icon: "📈"
-  }, {
+  },
+  // Só aparece para a conta de teste comercial@portovale.com.br enquanto a
+  // hierarquia comercial estiver em preview — ver previewHierarquia acima.
+  ...(previewHierarquia ? [{
+    id: "hierarquia",
+    label: "Hierarquia",
+    icon: "🗂️"
+  }] : []),
+  {
     id: "portal",
     label: "Meu Portal",
     icon: "🏠"
@@ -10570,6 +11010,7 @@ function App() {
         mesFiltro: mesFiltro,
         setMesFiltro: setMesFiltro
       });
+      if (view === "hierarquia" && previewHierarquia) return /*#__PURE__*/React.createElement(ArvoreHierarquia, null);
       if (view === "mural") return /*#__PURE__*/React.createElement(ProcessosPonto, { usuario: usuario, setView: setView });
       if (view === "portal") return /*#__PURE__*/React.createElement(PortalFuncionario, {
         ocorrencias: ocorrenciasExibidas,
