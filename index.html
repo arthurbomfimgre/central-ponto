@@ -10694,28 +10694,37 @@ function ArvoreHierarquia() {
     if (criandoUsuarios) return;
     setCriandoUsuarios(true);
     setResumoUsuarios(null);
+    const acumulado = { criados: 0, jaExistiam: 0, falhas: [] };
+    const LOTE = 40;
     try {
-      const res = await fetch(EDGE_CRIAR_USUARIOS_COMERCIAL_LOTE, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "apikey": SUPA_KEY,
-          "Authorization": `Bearer ${SUPA_KEY}`
-        }
-      });
-      const json = await res.json();
-      if (!json.ok) {
-        setResumoUsuarios({ erro: json.erro || "Falha desconhecida." });
-      } else {
-        setResumoUsuarios({
-          criados: json.resultados.criados.length,
-          jaExistiam: json.resultados.jaExistiam.length,
-          falhas: json.resultados.falhas,
-          senha: json.senha_inicial
+      // Chama a Edge Function repetidas vezes, um lote pequeno por vez, até
+      // não sobrar ninguém sem login — evita timeout (504) ao tentar
+      // processar os 581 numa chamada só.
+      for (let i = 0; i < 30; i++) { // trava de segurança: no máx. 30 lotes (1200 pessoas)
+        const res = await fetch(EDGE_CRIAR_USUARIOS_COMERCIAL_LOTE, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "apikey": SUPA_KEY,
+            "Authorization": `Bearer ${SUPA_KEY}`
+          },
+          body: JSON.stringify({ limite: LOTE })
         });
+        const json = await res.json();
+        if (!json.ok) {
+          setResumoUsuarios({ erro: json.erro || "Falha desconhecida.", ...acumulado });
+          setCriandoUsuarios(false);
+          return;
+        }
+        acumulado.criados += json.resultados.criados.length;
+        acumulado.jaExistiam += json.resultados.jaExistiam.length;
+        acumulado.falhas.push(...json.resultados.falhas);
+        setResumoUsuarios({ ...acumulado, senha: json.senha_inicial, emAndamento: true });
+        if (json.processados_neste_lote < LOTE) break; // acabou
       }
+      setResumoUsuarios(prev => ({ ...prev, emAndamento: false }));
     } catch (e) {
-      setResumoUsuarios({ erro: "Não foi possível contatar a Edge Function. Verifique se ela está publicada." });
+      setResumoUsuarios({ erro: "Não foi possível contatar a Edge Function. Verifique se ela está publicada.", ...acumulado });
     } finally {
       setCriandoUsuarios(false);
     }
@@ -10796,7 +10805,7 @@ function ArvoreHierarquia() {
           color: "var(--cor-branco)", fontSize: 12.5, fontWeight: 700,
           cursor: criandoUsuarios ? "default" : "pointer", flexShrink: 0
         }
-      }, criandoUsuarios ? "Criando…" : "Criar logins em lote")
+      }, criandoUsuarios ? "Criando… (não feche esta aba)" : "Criar logins em lote")
     ),
     resumoUsuarios && /*#__PURE__*/React.createElement("div", {
       style: {
@@ -10806,14 +10815,14 @@ function ArvoreHierarquia() {
         color: resumoUsuarios.erro ? "var(--vermelho-800)" : "var(--verde-800)"
       }
     },
-      resumoUsuarios.erro
-        ? `❌ ${resumoUsuarios.erro}`
-        : /*#__PURE__*/React.createElement(React.Fragment, null,
-            `✅ ${resumoUsuarios.criados} login(s) criado(s) · ${resumoUsuarios.jaExistiam} já existiam · ${resumoUsuarios.falhas.length} falha(s).`,
-            resumoUsuarios.senha && /*#__PURE__*/React.createElement("div", { style: { marginTop: 4 } }, `Senha inicial padrão: ${resumoUsuarios.senha}`),
-            resumoUsuarios.falhas.length > 0 && /*#__PURE__*/React.createElement("ul", { style: { marginTop: 6, paddingLeft: 18 } },
-              resumoUsuarios.falhas.map(f => /*#__PURE__*/React.createElement("li", { key: f.id }, `${f.nome}: ${f.motivo}`)))
-          )
+      resumoUsuarios.erro && `❌ ${resumoUsuarios.erro}`,
+      !resumoUsuarios.erro && /*#__PURE__*/React.createElement(React.Fragment, null,
+        resumoUsuarios.emAndamento ? "⏳ Processando… " : "✅ Concluído. ",
+        `${resumoUsuarios.criados} login(s) criado(s) · ${resumoUsuarios.jaExistiam} já existiam · ${(resumoUsuarios.falhas || []).length} falha(s).`,
+        resumoUsuarios.senha && /*#__PURE__*/React.createElement("div", { style: { marginTop: 4 } }, `Senha inicial padrão: ${resumoUsuarios.senha}`),
+        resumoUsuarios.falhas && resumoUsuarios.falhas.length > 0 && /*#__PURE__*/React.createElement("ul", { style: { marginTop: 6, paddingLeft: 18 } },
+          resumoUsuarios.falhas.map(f => /*#__PURE__*/React.createElement("li", { key: f.id }, `${f.nome}: ${f.motivo}`)))
+      )
     ),
     arvore.length === 0
       ? /*#__PURE__*/React.createElement("div", { style: { padding: 40, textAlign: "center", color: "var(--cinza-300)", fontSize: 13 } }, "Nenhum resultado para essa busca.")
