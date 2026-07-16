@@ -3906,6 +3906,12 @@ function normalizarFuncComercial(fc) {
   return {
     ...fc,
     nome: fc.nome_completo,
+    // `funcionarios_comercial` guarda status em `situacao` ('ATIVO'/outro),
+    // mas o resto do app (badges "Ativo/Inativo", filtros, contadores) lê o
+    // campo booleano `ativo` da tabela legada. Sem este mapeamento, todo
+    // comercial cai em `ativo: undefined` (falsy) e aparece como inativo
+    // mesmo estando ativo. [PENDÊNCIA 3]
+    ativo: String(fc.situacao ?? "ATIVO").toUpperCase() === "ATIVO",
     origemComercial: true
   };
 }
@@ -5973,13 +5979,20 @@ function ListaFuncionarios({
     const ok3 = filtroAlerta === "Todos" || filtroAlerta === "Normal" && esq <= 1 || filtroAlerta === "Atenção" && esq === 2 || filtroAlerta === "Limite" && esq === 3 || filtroAlerta === "Excedido" && esq >= 4;
     const ok4 = subUnidadeFiltro === "Todos" || (
       usuario?.nivel === "diretor" ? f.gerencia_id === subUnidadeFiltro :
-      usuario?.nivel === "superintendente" ? f.diretoria_id === subUnidadeFiltro :
+      // Superintendente filtra por diretoria, mas a maioria dos vendedores só
+      // tem gerencia_id preenchido (não diretoria_id) — é preciso subir via
+      // gerencias.diretoria_id para achá-los também, senão só aparecem os
+      // poucos vinculados direto à diretoria (ex: Edilene). [PENDÊNCIA 2]
+      usuario?.nivel === "superintendente" ? (
+        f.diretoria_id === subUnidadeFiltro ||
+        gerenciasComercial.some(g => g.diretoria_id === subUnidadeFiltro && g.id === f.gerencia_id)
+      ) :
       true
     );
     return ok1 && ok2 && ok3 && ok4;
   }).sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR", {
     sensitivity: "base"
-  })), [busca, setor, filtroAlerta, funcionarios, contagens, subUnidadeFiltro, usuario]);
+  })), [busca, setor, filtroAlerta, funcionarios, contagens, subUnidadeFiltro, usuario, gerenciasComercial]);
   async function adicionar() {
     if (!novo.nome.trim() || !novo.cargo.trim()) {
       setErr("Preencha nome e cargo.");
@@ -10456,7 +10469,14 @@ const NIVEL_COR = {
 function normalizarBusca(s) {
   return (s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
 }
-function useArvoreComercialData() {
+// `sessaoPronta` (default true) evita a mesma corrida já resolvida em
+// useSharedState: sem isso, este hook dispara sua busca no mount do `App`
+// — antes do login terminar —, roda como usuário anônimo, o RLS bloqueia
+// (retorna 0 linhas) e, como o efeito só roda uma vez ([] de deps), o
+// resultado vazio fica preso pro resto da sessão mesmo depois do login
+// completar. Componentes que só montam depois do login (ex: ArvoreHierarquia)
+// podem manter o valor padrão `true`.
+function useArvoreComercialData(sessaoPronta = true) {
   const [estado, setEstado] = useState({
     carregando: true,
     erro: null,
@@ -10466,6 +10486,7 @@ function useArvoreComercialData() {
     funcionarios: []
   });
   useEffect(() => {
+    if (!sessaoPronta) return;
     let ativo = true;
     (async () => {
       try {
@@ -10492,7 +10513,7 @@ function useArvoreComercialData() {
       }
     })();
     return () => { ativo = false; };
-  }, []);
+  }, [sessaoPronta]);
   return estado;
 }
 // Monta a árvore em memória a partir das listas planas. Cada diretoria pode
@@ -10984,7 +11005,7 @@ function App() {
   // gerências/diretorias/superintendências), usados para: (1) unificar com
   // a lista legada em `funcionarios` para todas as telas de admin/gestão, e
   // (2) calcular o escopo de visão de gerente/diretor/superintendente.
-  const dadosComercial = useArvoreComercialData();
+  const dadosComercial = useArvoreComercialData(sessaoPronta);
   // useSharedState já entrega o dado correto sozinho: dados reais para
   // admins/funcionários normais, e o estado isolado em localStorage (que
   // começa vazio e cresce conforme a conta de teste importa/cadastra) para
