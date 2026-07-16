@@ -5552,7 +5552,8 @@ function Dashboard({
   setFuncionarios,
   addNotif,
   mesFiltro,
-  setMesFiltro
+  setMesFiltro,
+  seletorEscopo
 }) {
   const [modalCriar, setModalCriar] = useState(false);
   // ocorrencias já chega filtrada pelo mês selecionado globalmente (via App)
@@ -5657,7 +5658,7 @@ function Dashboard({
       cursor: "pointer",
       boxShadow: "0 4px 12px var(--sombra-indigo-media)"
     }
-  }, "➕ Pendência do dia"))), /*#__PURE__*/React.createElement("div", {
+  }, "➕ Pendência do dia"))), seletorEscopo || null, /*#__PURE__*/React.createElement("div", {
     style: {
       display: "grid",
       gridTemplateColumns: "repeat(auto-fit,minmax(155px,1fr))",
@@ -6275,7 +6276,8 @@ function ListaFuncionarios({
     }
   }, ["Todos", "Normal", "Atenção", "Limite", "Excedido"].map(s => /*#__PURE__*/React.createElement("option", {
     key: s
-  }, s)))),
+  }, s))))
+  ),
   usaVisaoArvore ? /*#__PURE__*/React.createElement("div", {
     key: "arvore-funcionarios",
     style: { display: "flex", flexDirection: "column", gap: 10 }
@@ -6758,7 +6760,7 @@ function ListaFuncionarios({
       cursor: textoConfirmTodos.trim().toUpperCase() === "EXCLUIR" && !excluindoTodos ? "pointer" : "not-allowed",
       fontWeight: 700
     }
-  }, excluindoTodos ? "Excluindo..." : "Excluir todos permanentemente"))))));
+  }, excluindoTodos ? "Excluindo..." : "Excluir todos permanentemente")))));
 }
 
 // ─── IMPORTAR EXCEL (exclusivo da conta de teste) ────────────────────────────
@@ -8438,7 +8440,8 @@ function Relatorios({
   ocorrencias,
   funcionarios,
   mesFiltro,
-  setMesFiltro
+  setMesFiltro,
+  seletorEscopo
 }) {
   const [setorFiltro, setSetorFiltro] = useState("Todos");
   const [view, setView] = useState("resumo"); // resumo | detalhe
@@ -8555,7 +8558,7 @@ function Relatorios({
       cursor: "pointer",
       boxShadow: "0 4px 12px var(--sombra-verde)"
     }
-  }, "📥 Exportar XLSX"))), /*#__PURE__*/React.createElement("div", {
+  }, "📥 Exportar XLSX"))), seletorEscopo || null, /*#__PURE__*/React.createElement("div", {
     style: {
       background: "var(--cor-branco)",
       border: "1px solid var(--cinza-100)",
@@ -10686,6 +10689,106 @@ function CardGerencia({ gerencia, aberta, onToggle }) {
     )
   );
 }
+// Seletor de escopo de relatório — exclusivo do superintendente, usado em
+// Dashboard e Relatórios. Checkbox por diretoria (marca/desmarca todas as
+// gerências dela de uma vez) + checkbox por gerência individualmente.
+// Conjunto vazio de `selecionadas` = sem recorte (mostra tudo); a UI trata
+// esse estado como "nenhuma marcada" para não confundir o usuário com tudo
+// pré-marcado silenciosamente.
+function SeletorEscopoRelatorio({ gerencias, diretorias, selecionadas, setSelecionadas }) {
+  const [aberto, setAberto] = useState(false);
+  const gerenciasPorDiretoria = useMemo(() => {
+    const map = new Map();
+    gerencias.forEach(g => {
+      if (!map.has(g.diretoria_id)) map.set(g.diretoria_id, []);
+      map.get(g.diretoria_id).push(g);
+    });
+    return map;
+  }, [gerencias]);
+  const diretoriasComGerencia = diretorias.filter(d => (gerenciasPorDiretoria.get(d.id) || []).length > 0)
+    .slice().sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
+  function toggleGerencia(id) {
+    setSelecionadas(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+  function toggleDiretoria(d) {
+    const idsGerenciasDaDir = (gerenciasPorDiretoria.get(d.id) || []).map(g => g.id);
+    const todasMarcadas = idsGerenciasDaDir.every(id => selecionadas.has(id));
+    setSelecionadas(prev => {
+      const next = new Set(prev);
+      idsGerenciasDaDir.forEach(id => todasMarcadas ? next.delete(id) : next.add(id));
+      return next;
+    });
+  }
+  const qtdSelecionadas = selecionadas.size;
+  return /*#__PURE__*/React.createElement("div", {
+    style: { background: "var(--cor-branco)", border: "1px solid var(--cinza-100)", borderRadius: 14, marginBottom: 20, overflow: "hidden" }
+  },
+    /*#__PURE__*/React.createElement("button", {
+      onClick: () => setAberto(a => !a),
+      style: {
+        width: "100%", display: "flex", alignItems: "center", gap: 10,
+        padding: "12px 16px", background: "transparent", border: "none",
+        cursor: "pointer", textAlign: "left"
+      }
+    },
+      /*#__PURE__*/React.createElement("span", { style: { fontSize: 12, color: "var(--cinza-400)", transform: aberto ? "rotate(90deg)" : "rotate(0deg)", transition: "transform .15s", flexShrink: 0 } }, "▶"),
+      /*#__PURE__*/React.createElement("span", { style: { fontSize: 13, fontWeight: 700, color: "var(--cinza-900)", flex: 1 } }, "🔎 Escopo do relatório"),
+      /*#__PURE__*/React.createElement("span", {
+        style: { fontSize: 11, fontWeight: 600, color: "var(--marca-600)", background: "var(--marca-50)", padding: "3px 10px", borderRadius: 20, flexShrink: 0 }
+      }, qtdSelecionadas === 0 ? "Todas as gerências" : `${qtdSelecionadas} ${qtdSelecionadas === 1 ? "gerência selecionada" : "gerências selecionadas"}`)
+    ),
+    aberto && /*#__PURE__*/React.createElement("div", {
+      style: { padding: "0 16px 16px 16px", display: "flex", flexDirection: "column", gap: 10 }
+    },
+      /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: "var(--cinza-400)" } },
+        "Sem nada marcado, o relatório mostra todas as diretorias e gerências. Marque abaixo para restringir a um recorte específico."),
+      qtdSelecionadas > 0 && /*#__PURE__*/React.createElement("button", {
+        onClick: () => setSelecionadas(new Set()),
+        style: {
+          alignSelf: "flex-start", background: "var(--cinza-100)", color: "var(--cinza-600)",
+          border: "none", borderRadius: 8, padding: "6px 12px", fontSize: 12, fontWeight: 600, cursor: "pointer"
+        }
+      }, "Limpar seleção"),
+      diretoriasComGerencia.map(d => {
+        const gerenciasDaDir = gerenciasPorDiretoria.get(d.id) || [];
+        const todasMarcadas = gerenciasDaDir.every(g => selecionadas.has(g.id));
+        const algumaMarcada = gerenciasDaDir.some(g => selecionadas.has(g.id));
+        return /*#__PURE__*/React.createElement("div", {
+          key: d.id,
+          style: { background: "var(--cinza-50)", border: "1px solid var(--cinza-100)", borderRadius: 12, padding: "10px 12px" }
+        },
+          /*#__PURE__*/React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer", marginBottom: 6 } },
+            /*#__PURE__*/React.createElement("input", {
+              type: "checkbox",
+              checked: todasMarcadas,
+              ref: el => { if (el) el.indeterminate = algumaMarcada && !todasMarcadas; },
+              onChange: () => toggleDiretoria(d),
+              style: { width: 15, height: 15, cursor: "pointer" }
+            }),
+            /*#__PURE__*/React.createElement("span", { style: { fontSize: 13, fontWeight: 700, color: "var(--cinza-900)" } }, d.nome)
+          ),
+          /*#__PURE__*/React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: "6px 16px", paddingLeft: 23 } },
+            gerenciasDaDir.slice().sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR")).map(g =>
+              /*#__PURE__*/React.createElement("label", { key: g.id, style: { display: "flex", alignItems: "center", gap: 6, cursor: "pointer" } },
+                /*#__PURE__*/React.createElement("input", {
+                  type: "checkbox",
+                  checked: selecionadas.has(g.id),
+                  onChange: () => toggleGerencia(g.id),
+                  style: { width: 14, height: 14, cursor: "pointer" }
+                }),
+                /*#__PURE__*/React.createElement("span", { style: { fontSize: 12.5, color: "var(--cinza-600)" } }, g.nome)
+              )
+            )
+          )
+        );
+      })
+    )
+  );
+}
 // Linha de um vendedor dentro da árvore de "Funcionários" (visão de
 // superintendente/diretor) — mesmo layout de dado (Avatar, Semáforo, badge
 // de situação, botões Ver perfil/Excluir) já usado na tabela plana, só que
@@ -11149,6 +11252,38 @@ function App() {
   }, [funcionarios, dadosComercial, usuario, contaTesteAtivaAgora]);
   const ocorrenciasExibidas = ocorrencias;
   const notifsExibidas = notifs;
+  // Escopo de relatório — exclusivo do superintendente: um recorte OPCIONAL
+  // de gerências, além do escopo hierárquico já aplicado por
+  // filtrarPorEscopoGestor(). Afeta só Dashboard e Relatórios (a pedido —
+  // a árvore de Funcionários continua mostrando tudo). Guardado como Set de
+  // gerencia_id; vazio = sem recorte extra, mostra a superintendência
+  // inteira (estado inicial "nada marcado" não pode significar "não vejo
+  // nada", senão o dashboard nasceria vazio — então vazio é tratado como
+  // "todas selecionadas").
+  const [gerenciasEscopoRelatorio, setGerenciasEscopoRelatorio] = useState(() => new Set());
+  // Reseta o recorte sempre que troca de usuário (login/logout), para não
+  // vazar a seleção de uma sessão de superintendente para a próxima.
+  useEffect(() => {
+    setGerenciasEscopoRelatorio(new Set());
+  }, [usuario?.id]);
+  const gerenciasDaSuperEscopo = useMemo(() => {
+    if (usuario?.nivel !== "superintendente") return [];
+    const diretoriasDaSuper = new Set(
+      dadosComercial.diretorias.filter(d => d.superintendencia_id === usuario.superintendencia_id).map(d => d.id)
+    );
+    return dadosComercial.gerencias.filter(g => diretoriasDaSuper.has(g.diretoria_id));
+  }, [usuario, dadosComercial]);
+  // Aplica o recorte extra de gerências (só para superintendente, só em
+  // Dashboard/Relatórios) por cima do escopo hierárquico já presente em
+  // `funcionariosExibidos`. Conjunto vazio = sem recorte (vê tudo).
+  function aplicarEscopoRelatorio(lista) {
+    if (usuario?.nivel !== "superintendente" || gerenciasEscopoRelatorio.size === 0) return lista;
+    return lista.filter(f => gerenciasEscopoRelatorio.has(f.gerencia_id));
+  }
+  const funcionariosRelatorio = useMemo(
+    () => aplicarEscopoRelatorio(funcionariosExibidos),
+    [funcionariosExibidos, usuario, gerenciasEscopoRelatorio]
+  );
   // Restaura a sessão ao recarregar a página (F5), evitando pedir login de
   // novo enquanto a sessão do Supabase Auth ainda for válida.
   useEffect(() => {
@@ -11225,6 +11360,14 @@ function App() {
     }
     return porMes;
   }, [ocorrenciasExibidas, mesFiltro, isGestor, funcionariosExibidos]);
+  // Mesma base de ocorrenciasFiltradas, mas restrita ao recorte extra de
+  // gerências escolhido pelo superintendente (só usada em Dashboard/
+  // Relatórios — ver funcionariosRelatorio acima).
+  const ocorrenciasRelatorio = useMemo(() => {
+    if (usuario?.nivel !== "superintendente" || gerenciasEscopoRelatorio.size === 0) return ocorrenciasFiltradas;
+    const idsDoEscopo = new Set(funcionariosRelatorio.map(f => f.id));
+    return ocorrenciasFiltradas.filter(o => idsDoEscopo.has(o.funcionario_id));
+  }, [ocorrenciasFiltradas, usuario, gerenciasEscopoRelatorio, funcionariosRelatorio]);
   // Gate explícito: enquanto as telas da hierarquia comercial nova estão em
   // construção, só a conta comercial@portovale.com.br (CONTAS_TESTE) as
   // enxerga. Nenhum admin/funcionário real vê nada diferente até este flag
@@ -11335,15 +11478,21 @@ function App() {
   function renderView() {
     if (temAcessoGestao) {
       if (view === "dashboard") return /*#__PURE__*/React.createElement(Dashboard, {
-        ocorrencias: ocorrenciasFiltradas,
+        ocorrencias: ocorrenciasRelatorio,
         setView: setView,
         setFuncSelecionado: setFuncSelecionado,
-        funcionarios: funcionariosExibidos,
+        funcionarios: funcionariosRelatorio,
         setOcorrencias: setOcorrencias,
         setFuncionarios: setFuncionarios,
         addNotif: addNotif,
         mesFiltro: mesFiltro,
-        setMesFiltro: setMesFiltro
+        setMesFiltro: setMesFiltro,
+        seletorEscopo: usuario?.nivel === "superintendente" && /*#__PURE__*/React.createElement(SeletorEscopoRelatorio, {
+          gerencias: gerenciasDaSuperEscopo,
+          diretorias: dadosComercial.diretorias,
+          selecionadas: gerenciasEscopoRelatorio,
+          setSelecionadas: setGerenciasEscopoRelatorio
+        })
       });
       if (view === "funcionarios") return /*#__PURE__*/React.createElement(ListaFuncionarios, {
         setView: setView,
@@ -11382,10 +11531,16 @@ function App() {
         setMesFiltro: setMesFiltro
       });
       if (view === "relatorios") return /*#__PURE__*/React.createElement(Relatorios, {
-        ocorrencias: ocorrenciasFiltradas,
-        funcionarios: funcionariosExibidos,
+        ocorrencias: ocorrenciasRelatorio,
+        funcionarios: funcionariosRelatorio,
         mesFiltro: mesFiltro,
-        setMesFiltro: setMesFiltro
+        setMesFiltro: setMesFiltro,
+        seletorEscopo: usuario?.nivel === "superintendente" && /*#__PURE__*/React.createElement(SeletorEscopoRelatorio, {
+          gerencias: gerenciasDaSuperEscopo,
+          diretorias: dadosComercial.diretorias,
+          selecionadas: gerenciasEscopoRelatorio,
+          setSelecionadas: setGerenciasEscopoRelatorio
+        })
       });
       if (view === "hierarquia" && previewHierarquia) return /*#__PURE__*/React.createElement(ArvoreHierarquia, null);
       if (view === "mural") return /*#__PURE__*/React.createElement(ProcessosPonto, { usuario: usuario, setView: setView });
