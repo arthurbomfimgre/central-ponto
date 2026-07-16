@@ -3896,7 +3896,18 @@ function gerarEmail(nomeCompleto) {
 // Retorna o e-mail real de um funcionário: usa o campo `email` customizado
 // (quando cadastrado pelo admin) ou gera automaticamente pelo nome.
 function emailFuncionario(func) {
-  return (func.email && func.email.trim()) ? func.email.trim().toLowerCase() : gerarEmail(func.nome);
+  return (func.email && func.email.trim()) ? func.email.trim().toLowerCase() : gerarEmail(func.nome || func.nome_completo);
+}
+// Normaliza um registro vindo de `funcionarios_comercial` (tabela nova, campos
+// nome_completo/gerencia_id/etc) para o mesmo formato que o resto do app
+// espera de `funcionarios` (tabela antiga, campo nome). Mantém os IDs de
+// hierarquia intactos para o cálculo de escopo (ver resolverNivel/NAV).
+function normalizarFuncComercial(fc) {
+  return {
+    ...fc,
+    nome: fc.nome_completo,
+    origemComercial: true
+  };
 }
 // Administradores do sistema: Abraão Moreira (1), Arthur Bomfim (4), Bruna Pinheiro (5).
 // Admins também aparecem como funcionários e podem ter pendências criadas para si.
@@ -3926,6 +3937,33 @@ function resolverNivel(func) {
 // próximo passo, feito à parte para manter esta mudança pequena e testável.
 function papelLegado(nivel) {
   return nivel === "admin_geral" ? "admin" : "funcionario";
+}
+// Filtra a lista de funcionários pelo escopo de gestão do usuário logado:
+// - gerente vê só sua própria gerência
+// - diretor vê toda sua diretoria (inclui vendedores que só têm gerencia_id
+//   preenchido — é preciso subir via gerencias.diretoria_id para achá-los,
+//   além dos vendedores ligados direto à diretoria sem gerência, ex: Edilene)
+// - superintendente vê toda sua superintendência (mesma lógica, subindo mais
+//   um nível via diretorias.superintendencia_id)
+// - admin_geral/vendedor: sem filtro aqui (admin vê tudo; vendedor não usa
+//   esta função, ele nem chega nas telas de gestão)
+// `gerencias`/`diretorias` são as listas planas de funcionarios_comercial
+// (ver useArvoreComercialData) — usadas só para o join de escopo.
+function filtrarPorEscopoGestor(lista, usuario, { gerencias = [], diretorias = [] } = {}) {
+  if (!usuario) return lista;
+  if (usuario.nivel === "gerente") {
+    return lista.filter(f => f.gerencia_id === usuario.gerencia_id);
+  }
+  if (usuario.nivel === "diretor") {
+    const gerenciasDaDiretoria = new Set(gerencias.filter(g => g.diretoria_id === usuario.diretoria_id).map(g => g.id));
+    return lista.filter(f => f.diretoria_id === usuario.diretoria_id || gerenciasDaDiretoria.has(f.gerencia_id));
+  }
+  if (usuario.nivel === "superintendente") {
+    const diretoriasDaSuper = new Set(diretorias.filter(d => d.superintendencia_id === usuario.superintendencia_id).map(d => d.id));
+    const gerenciasDaSuper = new Set(gerencias.filter(g => diretoriasDaSuper.has(g.diretoria_id)).map(g => g.id));
+    return lista.filter(f => diretoriasDaSuper.has(f.diretoria_id) || gerenciasDaSuper.has(f.gerencia_id));
+  }
+  return lista;
 }
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
@@ -4686,6 +4724,12 @@ function TelaLogin({
       const funcsAtualizados = await lerSupa(SK_FUNCS, FUNCIONARIOS_BASE);
       func = funcsAtualizados.find(f => emailFuncionario(f) === email);
     }
+    // Não achou na tabela antiga (funcionarios): tenta a hierarquia comercial
+    // nova (funcionarios_comercial), onde estão os 581 vendedores/gestores.
+    if (!func) {
+      const { data: funcComercial } = await supa.from("funcionarios_comercial").select("*").eq("email", email).maybeSingle();
+      if (funcComercial) func = normalizarFuncComercial(funcComercial);
+    }
     if (!func) {
       setErro("Login válido, porém nenhum funcionário corresponde a este e-mail. Avise o administrador.");
       await supa.auth.signOut();
@@ -4694,7 +4738,7 @@ function TelaLogin({
     }
     const nivel = resolverNivel(func);
     const user = {
-      id: ADMIN_IDS.includes(func.id) ? "admin" : `func_${func.id}`,
+      id: !func.origemComercial && ADMIN_IDS.includes(func.id) ? "admin" : `func_${func.id}`,
       nome: func.nome,
       cargo: func.cargo,
       role: papelLegado(nivel),
@@ -5873,11 +5917,31 @@ function ListaFuncionarios({
   setOcorrencias,
   mesFiltro,
   setMesFiltro,
-  contaTeste
+  contaTeste,
+  usuario,
+  gerenciasComercial = [],
+  diretoriasComercial = []
 }) {
   const [busca, setBusca] = useState("");
   const [setor, setSetor] = useState("Todos");
   const [filtroAlerta, setFiltroAlerta] = useState("Todos");
+  // Filtro adicional de sub-unidade, só para diretor (filtra por gerência
+  // dentro da sua diretoria) e superintendente (filtra por diretoria dentro
+  // da sua superintendência). "Todos" mantém o escopo completo do gestor.
+  const [subUnidadeFiltro, setSubUnidadeFiltro] = useState("Todos");
+  const opcoesSubUnidade = useMemo(() => {
+    if (usuario?.nivel === "diretor") {
+      return gerenciasComercial.filter(g => g.diretoria_id === usuario.diretoria_id);
+    }
+    if (usuario?.nivel === "superintendente") {
+      return diretoriasComercial.filter(d => d.superintendencia_id === usuario.superintendencia_id);
+    }
+    return [];
+  }, [usuario, gerenciasComercial, diretoriasComercial]);
+  // Diretor e superintendente têm acesso de visão à hierarquia, mas não
+  // podem criar, editar ou excluir funcionários — só admin_geral e gerente
+  // (dentro da própria equipe) podem.
+  const somenteLeituraGestor = ["diretor", "superintendente"].includes(usuario?.nivel);
   const [modalAdd, setModalAdd] = useState(false);
   const [modalImportarExcel, setModalImportarExcel] = useState(false);
   const [confirmExcluir, setConfirmExcluir] = useState(null);
@@ -5907,10 +5971,15 @@ function ListaFuncionarios({
     const ok2 = setor === "Todos" || f.setor === setor;
     const esq = contagens[f.id].esquecimentos;
     const ok3 = filtroAlerta === "Todos" || filtroAlerta === "Normal" && esq <= 1 || filtroAlerta === "Atenção" && esq === 2 || filtroAlerta === "Limite" && esq === 3 || filtroAlerta === "Excedido" && esq >= 4;
-    return ok1 && ok2 && ok3;
+    const ok4 = subUnidadeFiltro === "Todos" || (
+      usuario?.nivel === "diretor" ? f.gerencia_id === subUnidadeFiltro :
+      usuario?.nivel === "superintendente" ? f.diretoria_id === subUnidadeFiltro :
+      true
+    );
+    return ok1 && ok2 && ok3 && ok4;
   }).sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR", {
     sensitivity: "base"
-  })), [busca, setor, filtroAlerta, funcionarios, contagens]);
+  })), [busca, setor, filtroAlerta, funcionarios, contagens, subUnidadeFiltro, usuario]);
   async function adicionar() {
     if (!novo.nome.trim() || !novo.cargo.trim()) {
       setErr("Preencha nome e cargo.");
@@ -6079,7 +6148,7 @@ function ListaFuncionarios({
       fontWeight: 700,
       cursor: funcionarios.length === 0 ? "not-allowed" : "pointer"
     }
-  }, "🗑️ Excluir todos"), /*#__PURE__*/React.createElement("button", {
+  }, "🗑️ Excluir todos"), !somenteLeituraGestor && /*#__PURE__*/React.createElement("button", {
     onClick: () => setModalAdd(true),
     style: {
       display: "flex",
@@ -6183,7 +6252,38 @@ function ListaFuncionarios({
     }
   }, ["Todos", "Normal", "Atenção", "Limite", "Excedido"].map(s => /*#__PURE__*/React.createElement("option", {
     key: s
-  }, s))))), /*#__PURE__*/React.createElement("div", {
+  }, s)))), opcoesSubUnidade.length > 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      flexDirection: "column",
+      gap: 4
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 11,
+      fontWeight: 700,
+      color: "var(--cinza-400)",
+      textTransform: "uppercase",
+      letterSpacing: ".05em"
+    }
+  }, usuario?.nivel === "diretor" ? "Gerência" : "Diretoria"), /*#__PURE__*/React.createElement("select", {
+    value: subUnidadeFiltro,
+    onChange: e => setSubUnidadeFiltro(e.target.value === "Todos" ? "Todos" : Number(e.target.value)),
+    style: {
+      padding: "9px 14px",
+      borderRadius: 10,
+      border: "1px solid var(--cinza-200)",
+      fontSize: 13,
+      background: "var(--cor-branco)",
+      cursor: "pointer"
+    }
+  }, [/*#__PURE__*/React.createElement("option", {
+    key: "Todos",
+    value: "Todos"
+  }, "Todos"), ...opcoesSubUnidade.map(u => /*#__PURE__*/React.createElement("option", {
+    key: u.id,
+    value: u.id
+  }, u.nome))]))), /*#__PURE__*/React.createElement("div", {
     style: {
       background: "var(--cor-branco)",
       border: "1px solid var(--cinza-100)",
@@ -6326,7 +6426,7 @@ function ListaFuncionarios({
         fontWeight: 600,
         cursor: "pointer"
       }
-    }, "Ver perfil"), /*#__PURE__*/React.createElement("button", {
+    }, "Ver perfil"), !somenteLeituraGestor && /*#__PURE__*/React.createElement("button", {
       onClick: () => setConfirmExcluir(f),
       style: {
         background: "var(--vermelho-100)",
@@ -6880,7 +6980,8 @@ function PerfilFuncionario({
   setFuncionarios,
   addNotif,
   mesFiltro,
-  setMesFiltro
+  setMesFiltro,
+  somenteLeitura = false
 }) {
   const [filtroStatus, setFiltroStatus] = useState("Todos");
   const [modalCriar, setModalCriar] = useState(false);
@@ -7120,7 +7221,7 @@ function PerfilFuncionario({
       fontSize: 12,
       color: "var(--cinza-400)"
     }
-  }, "Esquecimentos no mês"))), /*#__PURE__*/React.createElement("button", {
+  }, "Esquecimentos no mês"))), !somenteLeitura && /*#__PURE__*/React.createElement("button", {
     onClick: () => setModalCriar(true),
     style: {
       padding: "10px 18px",
@@ -7135,7 +7236,7 @@ function PerfilFuncionario({
       alignItems: "center",
       gap: 6
     }
-  }, "➕ Pendência do dia"), /*#__PURE__*/React.createElement("button", {
+  }, "➕ Pendência do dia"), !somenteLeitura && /*#__PURE__*/React.createElement("button", {
     onClick: abrirEditar,
     style: {
       padding: "10px 18px",
@@ -7340,7 +7441,7 @@ function PerfilFuncionario({
       }
     }, /*#__PURE__*/React.createElement(Badge, {
       status: o.status
-    })), /*#__PURE__*/React.createElement("td", {
+    })), !somenteLeitura && /*#__PURE__*/React.createElement("td", {
       style: {
         padding: "12px 16px"
       }
@@ -7373,7 +7474,7 @@ function PerfilFuncionario({
         cursor: "pointer"
       }
     }, "🗑️"))));
-  })))), modalCriar && /*#__PURE__*/React.createElement(ModalCriarPendencia, {
+  })))), !somenteLeitura && modalCriar && /*#__PURE__*/React.createElement(ModalCriarPendencia, {
     funcionarios: funcionarios,
     onCriar: criarPendencia,
     onClose: () => setModalCriar(false),
@@ -10879,20 +10980,30 @@ function App() {
   const [funcionarios, setFuncionarios] = useSharedState(SK_FUNCS, FUNCIONARIOS_BASE, sessaoPronta, contaTesteAtivaAgora);
   const [ocorrencias, setOcorrencias] = useSharedState(SK_OCS, [...OCS_SJCABRIL, ...OCS_SJCMAIO, ...OCS_SJCJUNHO, ...OCS_SJCJULHO], sessaoPronta, contaTesteAtivaAgora);
   const [notifs, setNotifs] = useSharedState(SK_NOTIFS, [], sessaoPronta, contaTesteAtivaAgora);
+  // Dados da hierarquia comercial (funcionarios_comercial + estrutura de
+  // gerências/diretorias/superintendências), usados para: (1) unificar com
+  // a lista legada em `funcionarios` para todas as telas de admin/gestão, e
+  // (2) calcular o escopo de visão de gerente/diretor/superintendente.
+  const dadosComercial = useArvoreComercialData();
   // useSharedState já entrega o dado correto sozinho: dados reais para
   // admins/funcionários normais, e o estado isolado em localStorage (que
   // começa vazio e cresce conforme a conta de teste importa/cadastra) para
   // o perfil de teste. Não é necessário forçar nada aqui.
-  const funcionariosExibidos = funcionarios;
+  const funcionariosExibidos = useMemo(() => {
+    // Conta de teste continua isolada em seu próprio localStorage — nunca
+    // mistura com dados reais da hierarquia comercial.
+    if (contaTesteAtivaAgora) return funcionarios;
+    const unificados = [...funcionarios, ...dadosComercial.funcionarios.map(normalizarFuncComercial)];
+    return filtrarPorEscopoGestor(unificados, usuario, dadosComercial);
+  }, [funcionarios, dadosComercial, usuario, contaTesteAtivaAgora]);
   const ocorrenciasExibidas = ocorrencias;
   const notifsExibidas = notifs;
   // Restaura a sessão ao recarregar a página (F5), evitando pedir login de
   // novo enquanto a sessão do Supabase Auth ainda for válida.
   useEffect(() => {
     let ativo = true;
-    supa.auth.getSession().then(({
-      data
-    }) => {
+    (async () => {
+      const { data } = await supa.auth.getSession();
       if (!ativo) return;
       const email = data?.session?.user?.email;
       if (email && CONTAS_TESTE[email]) {
@@ -10908,11 +11019,17 @@ function App() {
           previewHierarquia: true
         });
       } else if (email) {
-        const func = funcionarios.find(f => emailFuncionario(f) === email);
-        if (func) {
+        let func = funcionarios.find(f => emailFuncionario(f) === email);
+        // Não achou na tabela antiga: tenta a hierarquia comercial nova
+        // (funcionarios_comercial), igual ao fluxo de login.
+        if (!func) {
+          const { data: funcComercial } = await supa.from("funcionarios_comercial").select("*").eq("email", email).maybeSingle();
+          if (funcComercial) func = normalizarFuncComercial(funcComercial);
+        }
+        if (func && ativo) {
           const nivel = resolverNivel(func);
           setUsuario({
-            id: ADMIN_IDS.includes(func.id) ? "admin" : `func_${func.id}`,
+            id: !func.origemComercial && ADMIN_IDS.includes(func.id) ? "admin" : `func_${func.id}`,
             nome: func.nome,
             cargo: func.cargo,
             role: papelLegado(nivel),
@@ -10925,14 +11042,13 @@ function App() {
           });
         }
       }
-      setVerificandoSessao(false);
-    });
+      if (ativo) setVerificandoSessao(false);
+    })();
     return () => {
       ativo = false;
     };
   }, []);
   const [mesFiltro, setMesFiltro] = useState(() => mesesDisponiveis()[0]?.valor || "2026-04");
-  const ocorrenciasFiltradas = useMemo(() => ocorrenciasExibidas.filter(o => o.data.startsWith(mesFiltro)), [ocorrenciasExibidas, mesFiltro]);
   const isAdmin = usuario?.role === "admin";
   // Níveis de gestão da hierarquia comercial (superintendente/diretor/
   // gerente). Ainda não têm telas próprias — por enquanto caem no portal
@@ -10940,6 +11056,24 @@ function App() {
   // construídas num passo seguinte. Exposto aqui desde já para as próximas
   // mudanças não precisarem recalcular isso em vários lugares.
   const isGestor = ["superintendente", "diretor", "gerente"].includes(usuario?.nivel);
+  // Controla quem vê a sidebar/nav de gestão (Dashboard, Funcionários,
+  // Verificações, Relatórios): admin_geral e os 3 níveis de gestão
+  // comercial. Vendedor comum continua só com Tela Inicial + Meu Portal.
+  // Diferente de `isAdmin`, que continua controlando permissões de EDIÇÃO
+  // (diretor/superintendente têm acesso de visão mas não podem editar).
+  const temAcessoGestao = isAdmin || isGestor;
+  const ocorrenciasFiltradas = useMemo(() => {
+    const porMes = ocorrenciasExibidas.filter(o => o.data.startsWith(mesFiltro));
+    // Gestor comercial (gerente/diretor/superintendente): restringe também
+    // as ocorrências ao conjunto de funcionários do seu escopo, para que
+    // Verificações e Relatórios não vazem dados de fora da sua equipe.
+    // admin_geral vê tudo; funcionariosExibidos já vem filtrado por escopo.
+    if (isGestor) {
+      const idsDoEscopo = new Set(funcionariosExibidos.map(f => f.id));
+      return porMes.filter(o => idsDoEscopo.has(o.funcionario_id));
+    }
+    return porMes;
+  }, [ocorrenciasExibidas, mesFiltro, isGestor, funcionariosExibidos]);
   // Gate explícito: enquanto as telas da hierarquia comercial nova estão em
   // construção, só a conta comercial@portovale.com.br (CONTAS_TESTE) as
   // enxerga. Nenhum admin/funcionário real vê nada diferente até este flag
@@ -11048,7 +11182,7 @@ function App() {
     color: "var(--cinza-500)"
   };
   function renderView() {
-    if (isAdmin) {
+    if (temAcessoGestao) {
       if (view === "dashboard") return /*#__PURE__*/React.createElement(Dashboard, {
         ocorrencias: ocorrenciasFiltradas,
         setView: setView,
@@ -11069,7 +11203,10 @@ function App() {
         setOcorrencias: setOcorrencias,
         mesFiltro: mesFiltro,
         setMesFiltro: setMesFiltro,
-        contaTeste: contaTesteAtivaAgora
+        contaTeste: contaTesteAtivaAgora,
+        usuario: usuario,
+        gerenciasComercial: dadosComercial.gerencias,
+        diretoriasComercial: dadosComercial.diretorias
       });
       if (view === "perfil" && funcSelecionado) return /*#__PURE__*/React.createElement(PerfilFuncionario, {
         func: funcSelecionado,
@@ -11080,7 +11217,8 @@ function App() {
         setFuncionarios: setFuncionarios,
         addNotif: addNotif,
         mesFiltro: mesFiltro,
-        setMesFiltro: setMesFiltro
+        setMesFiltro: setMesFiltro,
+        somenteLeitura: ["diretor", "superintendente"].includes(usuario?.nivel)
       });
       if (view === "aprovacao") return /*#__PURE__*/React.createElement(PainelAprovacao, {
         ocorrencias: ocorrenciasFiltradas,
@@ -11130,7 +11268,7 @@ function App() {
       fontFamily: "-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif",
       display: "flex"
     }
-  }, isAdmin && /*#__PURE__*/React.createElement("div", {
+  }, temAcessoGestao && /*#__PURE__*/React.createElement("div", {
     style: {
       width: 220,
       background: "var(--cor-branco)",
@@ -11254,7 +11392,7 @@ function App() {
       flex: 1,
       minWidth: 0
     }
-  }, !isAdmin && /*#__PURE__*/React.createElement("div", {
+  }, !temAcessoGestao && /*#__PURE__*/React.createElement("div", {
     style: {
       background: "var(--cor-branco)",
       borderBottom: "1px solid var(--cinza-100)",
@@ -11333,9 +11471,9 @@ function App() {
     }
   }, "Sair"))), /*#__PURE__*/React.createElement("div", {
     style: {
-      padding: isAdmin ? "32px 36px" : "24px"
+      padding: temAcessoGestao ? "32px 36px" : "24px"
     }
-  }, renderView(), !isAdmin && /*#__PURE__*/React.createElement("div", {
+  }, renderView(), !temAcessoGestao && /*#__PURE__*/React.createElement("div", {
     style: {
       marginTop: 32,
       paddingTop: 16,
