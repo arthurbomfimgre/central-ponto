@@ -5935,65 +5935,13 @@ function ListaFuncionarios({
   // dentro da sua diretoria). Superintendente: cascata de dois níveis —
   // primeiro escolhe a diretoria, depois (opcional) a gerência dentro dela.
   // "Todos" em qualquer nível mantém o escopo completo daquele nível.
-  const [diretoriaFiltro, setDiretoriaFiltro] = useState("Todos");
-  const [gerenciaFiltro, setGerenciaFiltro] = useState("Todos");
-  const opcoesDiretoria = useMemo(() => {
-    if (usuario?.nivel !== "superintendente") return [];
-    return diretoriasComercial.filter(d => d.superintendencia_id === usuario.superintendencia_id);
-  }, [usuario, diretoriasComercial]);
-  // Gerências disponíveis no 2º nível: para diretor, sempre as da própria
-  // diretoria; para superintendente, só depois de escolher uma diretoria no
-  // 1º nível (senão a lista ficaria com gerências de diretorias distintas
-  // misturadas, o que não faz sentido num único dropdown).
-  const opcoesGerencia = useMemo(() => {
-    if (usuario?.nivel === "diretor") {
-      return gerenciasComercial.filter(g => g.diretoria_id === usuario.diretoria_id);
-    }
-    if (usuario?.nivel === "superintendente" && diretoriaFiltro !== "Todos") {
-      return gerenciasComercial.filter(g => g.diretoria_id === diretoriaFiltro);
-    }
-    return [];
-  }, [usuario, gerenciasComercial, diretoriaFiltro]);
-  // Ao trocar a diretoria selecionada, reseta a gerência escolhida — senão
-  // ficaria um filtro de gerência "órfão" de uma diretoria diferente.
-  function selecionarDiretoria(valor) {
-    setDiretoriaFiltro(valor);
-    setGerenciaFiltro("Todos");
-  }
-  // Renderiza um dropdown de filtro de sub-unidade (usado para Diretoria e
-  // Gerência) — extraído pra função porque agora são até dois níveis em
-  // cascata para superintendente.
-  function campoSubUnidade(label, valor, onChange, opcoes) {
-    return /*#__PURE__*/React.createElement("div", {
-      key: label,
-      style: { display: "flex", flexDirection: "column", gap: 4 }
-    }, /*#__PURE__*/React.createElement("span", {
-      style: {
-        fontSize: 11,
-        fontWeight: 700,
-        color: "var(--cinza-400)",
-        textTransform: "uppercase",
-        letterSpacing: ".05em"
-      }
-    }, label), /*#__PURE__*/React.createElement("select", {
-      value: valor,
-      onChange: e => onChange(e.target.value === "Todos" ? "Todos" : Number(e.target.value)),
-      style: {
-        padding: "9px 14px",
-        borderRadius: 10,
-        border: "1px solid var(--cinza-200)",
-        fontSize: 13,
-        background: "var(--cor-branco)",
-        cursor: "pointer"
-      }
-    }, [/*#__PURE__*/React.createElement("option", {
-      key: "Todos",
-      value: "Todos"
-    }, "Todos"), ...opcoes.map(u => /*#__PURE__*/React.createElement("option", {
-      key: u.id,
-      value: u.id
-    }, u.nome))]));
-  }
+  // Visão em árvore (substitui os dropdowns em cascata): superintendente e
+  // diretor navegam clicando para expandir Diretoria → Gerência, no mesmo
+  // padrão visual de NoDiretoria/CardGerencia (tela "Hierarquia Comercial").
+  // `estadoAberto` guarda quais nós estão expandidos, por chave `d_<id>`/`g_<id>`.
+  const usaVisaoArvore = ["superintendente", "diretor"].includes(usuario?.nivel);
+  const [estadoAberto, setEstadoAberto] = useState({});
+  const toggleAberto = chave => setEstadoAberto(prev => ({ ...prev, [chave]: !prev[chave] }));
   // Diretor e superintendente têm acesso de visão à hierarquia, mas não
   // podem criar, editar ou excluir funcionários — só admin_geral e gerente
   // (dentro da própria equipe) podem.
@@ -6027,20 +5975,34 @@ function ListaFuncionarios({
     const ok2 = setor === "Todos" || f.setor === setor;
     const esq = contagens[f.id].esquecimentos;
     const ok3 = filtroAlerta === "Todos" || filtroAlerta === "Normal" && esq <= 1 || filtroAlerta === "Atenção" && esq === 2 || filtroAlerta === "Limite" && esq === 3 || filtroAlerta === "Excedido" && esq >= 4;
-    // Diretor: filtra só por gerência (nível único).
-    const ok4Diretor = usuario?.nivel !== "diretor" || gerenciaFiltro === "Todos" || f.gerencia_id === gerenciaFiltro;
-    // Superintendente: 1º nível (diretoria) restringe pegando também quem só
-    // tem gerencia_id preenchido dentro dela [PENDÊNCIA 2]; 2º nível
-    // (gerência), se escolhido, restringe mais ainda dentro da diretoria.
-    const diretoriaDoFuncionarioBate = diretoriaFiltro === "Todos" || f.diretoria_id === diretoriaFiltro ||
-      gerenciasComercial.some(g => g.diretoria_id === diretoriaFiltro && g.id === f.gerencia_id);
-    const gerenciaDoFuncionarioBate = gerenciaFiltro === "Todos" || f.gerencia_id === gerenciaFiltro;
-    const ok4Superintendente = usuario?.nivel !== "superintendente" || (diretoriaDoFuncionarioBate && gerenciaDoFuncionarioBate);
-    const ok4 = ok4Diretor && ok4Superintendente;
-    return ok1 && ok2 && ok3 && ok4;
+    return ok1 && ok2 && ok3;
   }).sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR", {
     sensitivity: "base"
-  })), [busca, setor, filtroAlerta, funcionarios, contagens, diretoriaFiltro, gerenciaFiltro, usuario, gerenciasComercial]);
+  })), [busca, setor, filtroAlerta, funcionarios, contagens]);
+  // Agrupa `lista` (já filtrada por busca/setor/situação) em árvore
+  // Diretoria → Gerência para a visão expansível de superintendente/diretor.
+  // Superintendente vê todas as diretorias da própria superintendência;
+  // diretor vê só a própria diretoria (única "raiz"). Um funcionário entra
+  // na gerência via gerencia_id, ou direto na diretoria (sem gerência) via
+  // fallback pelo diretoria_id (mesma regra da [PENDÊNCIA 2] antiga).
+  const arvoreFuncionarios = useMemo(() => {
+    if (!usaVisaoArvore) return [];
+    const diretoriasBase = usuario?.nivel === "diretor"
+      ? diretoriasComercial.filter(d => d.id === usuario.diretoria_id)
+      : diretoriasComercial.filter(d => d.superintendencia_id === usuario?.superintendencia_id);
+    return diretoriasBase.slice().sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR")).map(d => {
+      const gerenciasDaDir = gerenciasComercial.filter(g => g.diretoria_id === d.id)
+        .slice().sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
+      const gerenciasMontadas = gerenciasDaDir.map(g => ({
+        ...g,
+        vendedores: lista.filter(f => f.gerencia_id === g.id)
+      }));
+      const idsGerenciasDaDir = new Set(gerenciasDaDir.map(g => g.id));
+      const semGerencia = lista.filter(f => f.diretoria_id === d.id && !idsGerenciasDaDir.has(f.gerencia_id) && f.gerencia_id == null);
+      const totalPessoas = gerenciasMontadas.reduce((acc, g) => acc + g.vendedores.length, 0) + semGerencia.length;
+      return { ...d, gerencias: gerenciasMontadas, semGerencia, totalPessoas };
+    });
+  }, [usaVisaoArvore, usuario, diretoriasComercial, gerenciasComercial, lista]);
   async function adicionar() {
     if (!novo.nome.trim() || !novo.cargo.trim()) {
       setErr("Preencha nome e cargo.");
@@ -6314,10 +6276,28 @@ function ListaFuncionarios({
   }, ["Todos", "Normal", "Atenção", "Limite", "Excedido"].map(s => /*#__PURE__*/React.createElement("option", {
     key: s
   }, s)))),
-  usuario?.nivel === "superintendente" && opcoesDiretoria.length > 0 && campoSubUnidade("Diretoria", diretoriaFiltro, selecionarDiretoria, opcoesDiretoria),
-  usuario?.nivel === "superintendente" && opcoesGerencia.length > 0 && campoSubUnidade("Gerência", gerenciaFiltro, setGerenciaFiltro, opcoesGerencia),
-  usuario?.nivel === "diretor" && opcoesGerencia.length > 0 && campoSubUnidade("Gerência", gerenciaFiltro, setGerenciaFiltro, opcoesGerencia),
-  /*#__PURE__*/React.createElement("div", {
+  usaVisaoArvore ? /*#__PURE__*/React.createElement("div", {
+    key: "arvore-funcionarios",
+    style: { display: "flex", flexDirection: "column", gap: 10 }
+  },
+    arvoreFuncionarios.length === 0
+      ? /*#__PURE__*/React.createElement("div", {
+          style: { padding: 40, textAlign: "center", color: "var(--cinza-400)", fontSize: 13, background: "var(--cor-branco)", borderRadius: 16, border: "1px solid var(--cinza-100)" }
+        }, "Nenhuma diretoria cadastrada.")
+      : arvoreFuncionarios.map(d => /*#__PURE__*/React.createElement(NoDiretoriaFuncionarios, {
+          key: d.id,
+          diretoria: d,
+          aberta: !!estadoAberto[`d_${d.id}`],
+          onToggle: () => toggleAberto(`d_${d.id}`),
+          gerenciasAbertas: estadoAberto,
+          onToggleGerencia: toggleAberto,
+          contagens,
+          setFuncSelecionado,
+          setView,
+          somenteLeituraGestor,
+          setConfirmExcluir
+        }))
+  ) : /*#__PURE__*/React.createElement("div", {
     style: {
       background: "var(--cor-branco)",
       border: "1px solid var(--cinza-100)",
@@ -6473,7 +6453,7 @@ function ListaFuncionarios({
         cursor: "pointer"
       }
     }, "Excluir"))));
-  }))), lista.length === 0 && /*#__PURE__*/React.createElement("div", {
+  }))), !usaVisaoArvore && lista.length === 0 && /*#__PURE__*/React.createElement("div", {
     style: {
       padding: 40,
       textAlign: "center",
@@ -10703,6 +10683,135 @@ function CardGerencia({ gerencia, aberta, onToggle }) {
       gerencia.vendedores.length === 0 && !gerencia.gerente
         ? /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: "var(--cinza-300)", padding: "6px 10px" } }, "Nenhum vendedor nesta gerência.")
         : gerencia.vendedores.map(v => /*#__PURE__*/React.createElement(LinhaPessoa, { key: v.id, pessoa: v, nivel: "vendedor" }))
+    )
+  );
+}
+// Linha de um vendedor dentro da árvore de "Funcionários" (visão de
+// superintendente/diretor) — mesmo layout de dado (Avatar, Semáforo, badge
+// de situação, botões Ver perfil/Excluir) já usado na tabela plana, só que
+// como uma linha compacta dentro do nó de gerência expandido.
+function LinhaFuncionarioArvore({ f, contagens, setFuncSelecionado, setView, somenteLeituraGestor, setConfirmExcluir }) {
+  const al = getAlert(contagens[f.id].esquecimentos);
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex", alignItems: "center", gap: 10,
+      padding: "8px 10px", borderRadius: 10
+    },
+    onMouseEnter: e => e.currentTarget.style.background = "var(--cinza-50)",
+    onMouseLeave: e => e.currentTarget.style.background = "transparent"
+  },
+    /*#__PURE__*/React.createElement(Avatar, { nome: f.nome, id: f.id, size: 28 }),
+    /*#__PURE__*/React.createElement("div", { style: { minWidth: 0, flex: 1 } },
+      /*#__PURE__*/React.createElement("div", {
+        style: { fontSize: 13, fontWeight: 600, color: "var(--cinza-900)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }
+      }, f.nome),
+      /*#__PURE__*/React.createElement("div", {
+        style: { fontSize: 11, color: f.ativo ? "var(--verde-600)" : "var(--cinza-400)" }
+      }, f.ativo ? "● Ativo" : "○ Inativo")
+    ),
+    /*#__PURE__*/React.createElement(Semaforo, { esq: contagens[f.id].esquecimentos }),
+    /*#__PURE__*/React.createElement("span", {
+      style: { fontSize: 11, background: al.bg, color: al.cor, padding: "3px 10px", borderRadius: 20, fontWeight: 600, flexShrink: 0 }
+    }, al.label),
+    /*#__PURE__*/React.createElement("div", { style: { display: "flex", gap: 6, flexShrink: 0 } },
+      /*#__PURE__*/React.createElement("button", {
+        onClick: () => { setFuncSelecionado(f); setView("perfil"); },
+        style: {
+          background: "var(--marca-50)", color: "var(--indigo-500)", border: "none",
+          borderRadius: 8, padding: "6px 12px", fontSize: 12, fontWeight: 600, cursor: "pointer"
+        }
+      }, "Ver perfil"),
+      !somenteLeituraGestor && /*#__PURE__*/React.createElement("button", {
+        onClick: () => setConfirmExcluir(f),
+        style: {
+          background: "var(--vermelho-100)", color: "var(--vermelho-600)", border: "none",
+          borderRadius: 8, padding: "6px 12px", fontSize: 12, fontWeight: 600, cursor: "pointer"
+        }
+      }, "Excluir")
+    )
+  );
+}
+// Nó de gerência dentro da árvore de "Funcionários" — mesmo padrão visual
+// de CardGerencia, mas listando os vendedores já filtrados (busca/setor/
+// situação) via LinhaFuncionarioArvore em vez de LinhaPessoa.
+function CardGerenciaFuncionarios({ gerencia, aberta, onToggle, contagens, setFuncSelecionado, setView, somenteLeituraGestor, setConfirmExcluir }) {
+  const qtd = gerencia.vendedores.length;
+  return /*#__PURE__*/React.createElement("div", {
+    style: { background: "var(--cinza-50)", border: "1px solid var(--cinza-100)", borderRadius: 12, overflow: "hidden" }
+  },
+    /*#__PURE__*/React.createElement("button", {
+      onClick: onToggle,
+      style: {
+        width: "100%", display: "flex", alignItems: "center", gap: 10,
+        padding: "10px 12px", background: "transparent", border: "none",
+        cursor: "pointer", textAlign: "left"
+      }
+    },
+      /*#__PURE__*/React.createElement("span", { style: { fontSize: 12, color: "var(--cinza-400)", transform: aberta ? "rotate(90deg)" : "rotate(0deg)", transition: "transform .15s", flexShrink: 0 } }, "▶"),
+      /*#__PURE__*/React.createElement("div", { style: { flex: 1, minWidth: 0 } },
+        /*#__PURE__*/React.createElement("div", { style: { fontSize: 13, fontWeight: 700, color: "var(--cinza-900)" } }, gerencia.nome)
+      ),
+      /*#__PURE__*/React.createElement("span", {
+        style: { fontSize: 11, fontWeight: 600, color: "var(--cinza-500)", background: "var(--cinza-100)", padding: "2px 8px", borderRadius: 20, flexShrink: 0 }
+      }, qtd, " ", qtd === 1 ? "vendedor" : "vendedores")
+    ),
+    aberta && /*#__PURE__*/React.createElement("div", {
+      style: { padding: "0 10px 10px 34px", display: "flex", flexDirection: "column", gap: 2 }
+    },
+      gerencia.vendedores.length === 0
+        ? /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: "var(--cinza-300)", padding: "6px 10px" } }, "Nenhum vendedor encontrado nesta gerência.")
+        : gerencia.vendedores.map(f => /*#__PURE__*/React.createElement(LinhaFuncionarioArvore, {
+            key: f.id, f, contagens, setFuncSelecionado, setView, somenteLeituraGestor, setConfirmExcluir
+          }))
+    )
+  );
+}
+// Nó de diretoria dentro da árvore de "Funcionários" — mesmo padrão visual
+// de NoDiretoria, contendo CardGerenciaFuncionarios por gerência mais um
+// grupo "Sem gerência" para quem reporta direto à diretoria.
+function NoDiretoriaFuncionarios({ diretoria, aberta, onToggle, gerenciasAbertas, onToggleGerencia, contagens, setFuncSelecionado, setView, somenteLeituraGestor, setConfirmExcluir }) {
+  const totalGerencias = diretoria.gerencias.length;
+  return /*#__PURE__*/React.createElement("div", {
+    style: { background: "var(--cor-branco)", border: "1px solid var(--cinza-100)", borderRadius: 14, overflow: "hidden", boxShadow: "0 1px 3px var(--sombra-leve)" }
+  },
+    /*#__PURE__*/React.createElement("button", {
+      onClick: onToggle,
+      style: {
+        width: "100%", display: "flex", alignItems: "center", gap: 12,
+        padding: "14px 16px", background: "transparent", border: "none",
+        cursor: "pointer", textAlign: "left"
+      }
+    },
+      /*#__PURE__*/React.createElement("span", { style: { fontSize: 13, color: "var(--cinza-400)", transform: aberta ? "rotate(90deg)" : "rotate(0deg)", transition: "transform .15s", flexShrink: 0 } }, "▶"),
+      /*#__PURE__*/React.createElement("div", { style: { flex: 1, minWidth: 0 } },
+        /*#__PURE__*/React.createElement("div", { style: { fontSize: 15, fontWeight: 700, color: "var(--cinza-900)" } }, diretoria.nome),
+        /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: "var(--cinza-400)", marginTop: 2 } },
+          totalGerencias, " ", totalGerencias === 1 ? "gerência" : "gerências")
+      ),
+      /*#__PURE__*/React.createElement("span", {
+        style: { fontSize: 12, fontWeight: 700, color: "var(--marca-600)", background: "var(--marca-50)", padding: "4px 10px", borderRadius: 20, flexShrink: 0 }
+      }, diretoria.totalPessoas, " ", diretoria.totalPessoas === 1 ? "pessoa" : "pessoas")
+    ),
+    aberta && /*#__PURE__*/React.createElement("div", {
+      style: { padding: "0 16px 16px 16px", display: "flex", flexDirection: "column", gap: 8 }
+    },
+      diretoria.gerencias.map(g => /*#__PURE__*/React.createElement(CardGerenciaFuncionarios, {
+        key: g.id, gerencia: g,
+        aberta: !!gerenciasAbertas[`g_${g.id}`],
+        onToggle: () => onToggleGerencia(`g_${g.id}`),
+        contagens, setFuncSelecionado, setView, somenteLeituraGestor, setConfirmExcluir
+      })),
+      diretoria.semGerencia.length > 0 && /*#__PURE__*/React.createElement("div", {
+        style: { background: "var(--cinza-50)", border: "1px dashed var(--cinza-200)", borderRadius: 12, padding: "10px 12px" }
+      },
+        /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, fontWeight: 600, color: "var(--cinza-500)", marginBottom: 6 } }, "Sem gerência — reporta direto à diretoria"),
+        diretoria.semGerencia.map(f => /*#__PURE__*/React.createElement(LinhaFuncionarioArvore, {
+          key: f.id, f, contagens, setFuncSelecionado, setView, somenteLeituraGestor, setConfirmExcluir
+        }))
+      ),
+      diretoria.gerencias.length === 0 && diretoria.semGerencia.length === 0 && /*#__PURE__*/React.createElement("div", {
+        style: { fontSize: 12, color: "var(--cinza-300)", padding: "6px 4px" }
+      }, "Nenhuma gerência cadastrada nesta diretoria.")
     )
   );
 }
