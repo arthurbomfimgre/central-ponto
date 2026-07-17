@@ -7327,7 +7327,7 @@ async function aplicarImportacaoHierarquia(plano, banco, onProgresso) {
   // ── 3) Cria funcionários novos ───────────────────────────────────────────
   progresso(`Criando ${plano.funcionariosNovos.length} funcionário(s) novo(s)…`);
   for (const novo of plano.funcionariosNovos) {
-    const { _superintendenciaNome, _diretoriaNome, _gerenciaNome, ...campos } = novo;
+    const { _superintendenciaId, _diretoriaNome, _gerenciaNome, ...campos } = novo;
     const ids = resolverIds(novo);
     const { error } = await supa.from("funcionarios_comercial").insert({ ...campos, ...ids });
     if (error) throw new Error(`Falha ao criar funcionário "${novo.nome_completo}" (matrícula ${novo.matricula}): ${extrairMensagemErro(error)}`);
