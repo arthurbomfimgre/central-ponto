@@ -7232,6 +7232,10 @@ function analisarImportacaoHierarquia(linhasExcel, banco) {
       funcionariosNovos.push({
         ...camposBase,
         apelido: l.apelido, email: l.email, cpf: l.cpf, cargo_origem: l.cargoOrigem,
+        // 'modalidade' não vem do Excel (não existe no mapa de colunas do
+        // importador) mas a coluna é NOT NULL no banco — sem esse default,
+        // todo funcionário novo falha no insert com erro de constraint.
+        modalidade: "presencial",
         ...refs
       });
     }
