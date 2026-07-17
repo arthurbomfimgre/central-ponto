@@ -10699,25 +10699,18 @@ function CardGerencia({ gerencia, aberta, onToggle }) {
 // quadrado com borda, preenche com var(--marca-gradiente) e ✓ branco quando
 // marcado, fundo var(--marca-50) no hover. `indeterminado` desenha um traço
 // no lugar do ✓ (usado no checkbox "pai" de diretoria quando só parte das
-// gerências está marcada).
-function CheckboxMarca({ checked, indeterminado, onChange, size = 18 }) {
-  const [hover, setHover] = useState(false);
+// gerências está marcada). Puramente visual — o clique é tratado pelo
+// container pai (label/div), para não duplicar o toggle via bubbling.
+function CheckboxMarca({ checked, indeterminado, size = 18 }) {
   const marcado = checked || indeterminado;
-  return /*#__PURE__*/React.createElement("button", {
-    type: "button",
-    onClick: onChange,
-    onMouseEnter: () => setHover(true),
-    onMouseLeave: () => setHover(false),
-    "aria-pressed": checked,
+  return /*#__PURE__*/React.createElement("span", {
     style: {
       width: size, height: size, flexShrink: 0,
-      border: marcado ? "none" : `1px solid ${hover ? "var(--marca-400)" : "var(--cinza-300)"}`,
+      border: marcado ? "none" : "1px solid var(--cinza-300)",
       borderRadius: 6,
-      background: marcado ? "var(--marca-gradiente)" : hover ? "var(--marca-50)" : "var(--cor-branco)",
+      background: marcado ? "var(--marca-gradiente)" : "var(--cor-branco)",
       color: "var(--cor-branco)",
-      cursor: "pointer",
       display: "flex", alignItems: "center", justifyContent: "center",
-      padding: 0,
       fontSize: size * 0.7,
       fontWeight: 700,
       lineHeight: 1,
@@ -10794,8 +10787,7 @@ function SeletorEscopoRelatorio({ gerencias, diretorias, selecionadas, setSeleci
           /*#__PURE__*/React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer", marginBottom: 6 }, onClick: () => toggleDiretoria(d) },
             /*#__PURE__*/React.createElement(CheckboxMarca, {
               checked: todasMarcadas,
-              indeterminado: algumaMarcada && !todasMarcadas,
-              onChange: () => toggleDiretoria(d)
+              indeterminado: algumaMarcada && !todasMarcadas
             }),
             /*#__PURE__*/React.createElement("span", { style: { fontSize: 13, fontWeight: 700, color: "var(--cinza-900)" } }, d.nome)
           ),
@@ -10804,7 +10796,6 @@ function SeletorEscopoRelatorio({ gerencias, diretorias, selecionadas, setSeleci
               /*#__PURE__*/React.createElement("div", { key: g.id, style: { display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }, onClick: () => toggleGerencia(g.id) },
                 /*#__PURE__*/React.createElement(CheckboxMarca, {
                   checked: selecionadas.has(g.id),
-                  onChange: () => toggleGerencia(g.id),
                   size: 16
                 }),
                 /*#__PURE__*/React.createElement("span", { style: { fontSize: 12.5, color: "var(--cinza-600)" } }, g.nome)
