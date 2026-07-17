@@ -7147,7 +7147,7 @@ function analisarImportacaoHierarquia(linhasExcel, banco) {
     const sup = resolverSuperintendencia(l);
     const chave = `${sup.id}::${l.diretoriaNome.toUpperCase()}`;
     if (!dirPorChave.has(chave) && !diretoriasNovas.has(chave)) {
-      diretoriasNovas.set(chave, { nome: l.diretoriaNome, responsavel_nome: l.diretorNome, superintendencia_id: sup.id });
+      diretoriasNovas.set(chave, { chave, nome: l.diretoriaNome, responsavel_nome: l.diretorNome, superintendencia_id: sup.id });
     }
   });
 
@@ -7170,6 +7170,7 @@ function analisarImportacaoHierarquia(linhasExcel, banco) {
     const chaveLogica = `${sup.id}::${l.diretoriaNome.toUpperCase()}::${l.gerenciaNome.toUpperCase()}`;
     if (!gerenciasNovas.has(chaveLogica)) {
       gerenciasNovas.set(chaveLogica, {
+        chave: chaveLogica,
         nome: l.gerenciaNome,
         responsavel_nome: l.gerenteNome,
         diretoriaNomeRef: l.diretoriaNome,
@@ -7275,6 +7276,52 @@ function analisarImportacaoHierarquia(linhasExcel, banco) {
   };
 }
 
+// Aplica as escolhas do usuário na tela de resumo (checkboxes desmarcados
+// para diretorias/gerências novas que ele não quer criar — ex.: erro de
+// digitação na planilha, como "CARCANJO" em vez do nome correto). Remove do
+// plano a diretoria/gerência rejeitada e qualquer funcionário (novo ou
+// atualizado) que dependa dela, devolvendo um novo objeto de plano — não
+// modifica o original, para a UI poder re-filtrar se o usuário mudar de
+// ideia antes de confirmar.
+// diretoriasRejeitadas / gerenciasRejeitadas: Set das `chave` (ver campo
+// `chave` em diretoriasNovas/gerenciasNovas) que o usuário desmarcou.
+function filtrarPlanoPorSelecao(plano, diretoriasRejeitadas, gerenciasRejeitadas) {
+  if (diretoriasRejeitadas.size === 0 && gerenciasRejeitadas.size === 0) return plano;
+
+  const dirNomesRejeitados = new Set(
+    plano.diretoriasNovas.filter(d => diretoriasRejeitadas.has(d.chave)).map(d => d.nome.toUpperCase())
+  );
+  // Uma gerência é excluída se foi desmarcada diretamente OU se pertence a
+  // uma diretoria que foi rejeitada (não faz sentido criar a gerência sem a
+  // diretoria que ela referencia).
+  const gerenciasNovas = plano.gerenciasNovas.filter(g =>
+    !gerenciasRejeitadas.has(g.chave) && !dirNomesRejeitados.has(g.diretoriaNomeRef.toUpperCase())
+  );
+  const gerNomesRejeitados = new Set(
+    plano.gerenciasNovas
+      .filter(g => gerenciasRejeitadas.has(g.chave) || dirNomesRejeitados.has(g.diretoriaNomeRef.toUpperCase()))
+      .map(g => `${g.diretoriaNomeRef.toUpperCase()}::${g.nome.toUpperCase()}`)
+  );
+
+  // Uma pessoa (nova ou atualizada) fica de fora desta rodada se sua
+  // diretoria ou gerência de destino foi rejeitada. Não é erro — apenas não
+  // é tocada, mantendo o estado atual dela no banco (se já existir).
+  const dependeDeRejeitado = item => {
+    if (item._diretoriaNome && dirNomesRejeitados.has(item._diretoriaNome.toUpperCase())) return true;
+    if (item._diretoriaNome && item._gerenciaNome &&
+        gerNomesRejeitados.has(`${item._diretoriaNome.toUpperCase()}::${item._gerenciaNome.toUpperCase()}`)) return true;
+    return false;
+  };
+
+  return {
+    ...plano,
+    diretoriasNovas: plano.diretoriasNovas.filter(d => !diretoriasRejeitadas.has(d.chave)),
+    gerenciasNovas,
+    funcionariosNovos: plano.funcionariosNovos.filter(f => !dependeDeRejeitado(f)),
+    funcionariosAtualizados: plano.funcionariosAtualizados.filter(f => !dependeDeRejeitado(f))
+  };
+}
+
 // Aplica um plano já analisado (ver analisarImportacaoHierarquia) no
 // Supabase. Ordem importa: diretorias antes de gerências (gerência precisa
 // do id real da diretoria), e ambas antes dos funcionários (que precisam
@@ -7377,12 +7424,19 @@ function ModalImportarHierarquia({ onClose, onConcluido }) {
   const [etapaAtual, setEtapaAtual] = useState("");
   const [erro, setErro] = useState("");
   const [concluido, setConcluido] = useState(null);
+  // Chaves de diretorias/gerências novas que o usuário desmarcou na tela de
+  // resumo (não devem ser criadas — normalmente erro de digitação na
+  // planilha, ex.: "CARCANJO" em vez do nome correto da gerência).
+  const [diretoriasRejeitadas, setDiretoriasRejeitadas] = useState(() => new Set());
+  const [gerenciasRejeitadas, setGerenciasRejeitadas] = useState(() => new Set());
 
   async function selecionarArquivo(file) {
     setArquivo(file);
     setPlano(null);
     setErro("");
     setConcluido(null);
+    setDiretoriasRejeitadas(new Set());
+    setGerenciasRejeitadas(new Set());
     if (!file) return;
     setProcessandoArquivo(true);
     setCarregandoBanco(true);
@@ -7420,13 +7474,14 @@ function ModalImportarHierarquia({ onClose, onConcluido }) {
     setAplicando(true);
     setErro("");
     try {
-      await aplicarImportacaoHierarquia(plano, banco, setEtapaAtual);
+      const planoFiltrado = filtrarPlanoPorSelecao(plano, diretoriasRejeitadas, gerenciasRejeitadas);
+      await aplicarImportacaoHierarquia(planoFiltrado, banco, setEtapaAtual);
       setConcluido({
-        novos: plano.funcionariosNovos.length,
-        atualizados: plano.funcionariosAtualizados.length,
-        inativados: plano.funcionariosInativados.length,
-        diretoriasCriadas: plano.diretoriasNovas.length,
-        gerenciasCriadas: plano.gerenciasNovas.length
+        novos: planoFiltrado.funcionariosNovos.length,
+        atualizados: planoFiltrado.funcionariosAtualizados.length,
+        inativados: planoFiltrado.funcionariosInativados.length,
+        diretoriasCriadas: planoFiltrado.diretoriasNovas.length,
+        gerenciasCriadas: planoFiltrado.gerenciasNovas.length
       });
       setPlano(null);
       setArquivo(null);
@@ -7482,55 +7537,101 @@ function ModalImportarHierarquia({ onClose, onConcluido }) {
       style: { marginTop: 16, background: "var(--vermelho-100)", color: "var(--vermelho-800)", borderRadius: 10, padding: "10px 14px", fontSize: 13, fontWeight: 600 }
     }, "⚠️ ", erro),
 
-    plano && !aplicando && /*#__PURE__*/React.createElement("div", { style: { marginTop: 4, display: "flex", flexDirection: "column", gap: 16 } },
-      /*#__PURE__*/React.createElement("p", { style: { fontSize: 13, color: "var(--cinza-700)" } },
-        /*#__PURE__*/React.createElement("strong", null, plano.totalLinhasPlanilha), " linha(s) na planilha. Resumo do que será feito ao confirmar:"),
+    plano && !aplicando && (() => {
+      // Recalcula o plano com a seleção atual do usuário a cada render —
+      // os contadores e as pessoas afetadas devem refletir imediatamente
+      // quando ele desmarca uma diretoria/gerência, antes mesmo de confirmar.
+      const planoFiltrado = filtrarPlanoPorSelecao(plano, diretoriasRejeitadas, gerenciasRejeitadas);
+      function alternarDiretoria(chave) {
+        setDiretoriasRejeitadas(prev => {
+          const novo = new Set(prev);
+          if (novo.has(chave)) novo.delete(chave); else novo.add(chave);
+          return novo;
+        });
+      }
+      function alternarGerencia(chave) {
+        setGerenciasRejeitadas(prev => {
+          const novo = new Set(prev);
+          if (novo.has(chave)) novo.delete(chave); else novo.add(chave);
+          return novo;
+        });
+      }
+      return /*#__PURE__*/React.createElement("div", { style: { marginTop: 4, display: "flex", flexDirection: "column", gap: 16 } },
+        /*#__PURE__*/React.createElement("p", { style: { fontSize: 13, color: "var(--cinza-700)" } },
+          /*#__PURE__*/React.createElement("strong", null, plano.totalLinhasPlanilha), " linha(s) na planilha. Resumo do que será feito ao confirmar:"),
 
-      /*#__PURE__*/React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 } },
-        linhaResumo("Funcionários novos", plano.funcionariosNovos.length, "verde"),
-        linhaResumo("Funcionários atualizados", plano.funcionariosAtualizados.length, "azul"),
-        linhaResumo("Funcionários inativados", plano.funcionariosInativados.length, "amber"),
-        linhaResumo("Diretorias novas", plano.diretoriasNovas.length, "roxo"),
-        linhaResumo("Gerências novas", plano.gerenciasNovas.length, "roxo"),
-        linhaResumo("Linhas com erro (ignoradas)", plano.erros.length, "vermelho")
-      ),
+        /*#__PURE__*/React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 } },
+          linhaResumo("Funcionários novos", planoFiltrado.funcionariosNovos.length, "verde"),
+          linhaResumo("Funcionários atualizados", planoFiltrado.funcionariosAtualizados.length, "azul"),
+          linhaResumo("Funcionários inativados", planoFiltrado.funcionariosInativados.length, "amber"),
+          linhaResumo("Diretorias novas", planoFiltrado.diretoriasNovas.length, "roxo"),
+          linhaResumo("Gerências novas", planoFiltrado.gerenciasNovas.length, "roxo"),
+          linhaResumo("Linhas com erro (ignoradas)", plano.erros.length, "vermelho")
+        ),
 
-      plano.diretoriasNovas.length > 0 && /*#__PURE__*/React.createElement("div", null,
-        /*#__PURE__*/React.createElement("p", { style: { fontSize: 12.5, fontWeight: 700, color: "var(--cinza-600)", marginBottom: 6 } }, "Diretorias que serão criadas:"),
-        /*#__PURE__*/React.createElement("ul", { style: { fontSize: 12.5, color: "var(--cinza-600)", paddingLeft: 18, display: "flex", flexDirection: "column", gap: 2 } },
-          plano.diretoriasNovas.map((d, i) => /*#__PURE__*/React.createElement("li", { key: i }, d.nome, d.responsavel_nome ? ` — ${d.responsavel_nome}` : "")))
-      ),
+        plano.diretoriasNovas.length > 0 && /*#__PURE__*/React.createElement("div", null,
+          /*#__PURE__*/React.createElement("p", { style: { fontSize: 12.5, fontWeight: 700, color: "var(--cinza-600)", marginBottom: 6 } },
+            "Diretorias que serão criadas — desmarque se for erro de digitação:"),
+          /*#__PURE__*/React.createElement("ul", { style: { listStyle: "none", fontSize: 12.5, color: "var(--cinza-600)", paddingLeft: 0, display: "flex", flexDirection: "column", gap: 4 } },
+            plano.diretoriasNovas.map((d, i) => {
+              const rejeitada = diretoriasRejeitadas.has(d.chave);
+              return /*#__PURE__*/React.createElement("li", { key: i, style: { display: "flex", alignItems: "center", gap: 8, opacity: rejeitada ? 0.5 : 1 } },
+                /*#__PURE__*/React.createElement("input", {
+                  type: "checkbox", checked: !rejeitada,
+                  onChange: () => alternarDiretoria(d.chave)
+                }),
+                /*#__PURE__*/React.createElement("span", { style: rejeitada ? { textDecoration: "line-through" } : null },
+                  d.nome, d.responsavel_nome ? ` — ${d.responsavel_nome}` : "")
+              );
+            }))
+        ),
 
-      plano.gerenciasNovas.length > 0 && /*#__PURE__*/React.createElement("div", null,
-        /*#__PURE__*/React.createElement("p", { style: { fontSize: 12.5, fontWeight: 700, color: "var(--cinza-600)", marginBottom: 6 } }, "Gerências que serão criadas:"),
-        /*#__PURE__*/React.createElement("ul", { style: { fontSize: 12.5, color: "var(--cinza-600)", paddingLeft: 18, display: "flex", flexDirection: "column", gap: 2, maxHeight: 140, overflow: "auto" } },
-          plano.gerenciasNovas.map((g, i) => /*#__PURE__*/React.createElement("li", { key: i }, g.nome, " (", g.diretoriaNomeRef, ")", g.responsavel_nome ? ` — ${g.responsavel_nome}` : "")))
-      ),
+        plano.gerenciasNovas.length > 0 && /*#__PURE__*/React.createElement("div", null,
+          /*#__PURE__*/React.createElement("p", { style: { fontSize: 12.5, fontWeight: 700, color: "var(--cinza-600)", marginBottom: 6 } },
+            "Gerências que serão criadas — desmarque se for erro de digitação:"),
+          /*#__PURE__*/React.createElement("ul", { style: { listStyle: "none", fontSize: 12.5, color: "var(--cinza-600)", paddingLeft: 0, display: "flex", flexDirection: "column", gap: 4, maxHeight: 160, overflow: "auto" } },
+            plano.gerenciasNovas.map((g, i) => {
+              // Se a diretoria-mãe foi desmarcada, a gerência já não seria
+              // criada de qualquer forma — mostra desabilitada, não editável.
+              const dirRejeitada = plano.diretoriasNovas.some(d => diretoriasRejeitadas.has(d.chave) && d.nome.toUpperCase() === g.diretoriaNomeRef.toUpperCase());
+              const rejeitada = dirRejeitada || gerenciasRejeitadas.has(g.chave);
+              return /*#__PURE__*/React.createElement("li", { key: i, style: { display: "flex", alignItems: "center", gap: 8, opacity: rejeitada ? 0.5 : 1 } },
+                /*#__PURE__*/React.createElement("input", {
+                  type: "checkbox", checked: !rejeitada, disabled: dirRejeitada,
+                  onChange: () => alternarGerencia(g.chave)
+                }),
+                /*#__PURE__*/React.createElement("span", { style: rejeitada ? { textDecoration: "line-through" } : null },
+                  g.nome, " (", g.diretoriaNomeRef, ")", g.responsavel_nome ? ` — ${g.responsavel_nome}` : "",
+                  dirRejeitada ? " — diretoria não será criada" : "")
+              );
+            }))
+        ),
 
-      plano.erros.length > 0 && /*#__PURE__*/React.createElement("div", null,
-        /*#__PURE__*/React.createElement("p", { style: { fontSize: 12.5, fontWeight: 700, color: "var(--vermelho-700)", marginBottom: 6 } }, "Linhas ignoradas (não serão importadas):"),
-        /*#__PURE__*/React.createElement("ul", { style: { fontSize: 12, color: "var(--vermelho-700)", paddingLeft: 18, display: "flex", flexDirection: "column", gap: 2, maxHeight: 160, overflow: "auto" } },
-          plano.erros.map((e, i) => /*#__PURE__*/React.createElement("li", { key: i },
-            "Linha ", e.linha, e.nome ? ` (${e.nome}${e.matricula ? ", matrícula " + e.matricula : ""})` : "", ": ", e.motivo)))
-      ),
+        plano.erros.length > 0 && /*#__PURE__*/React.createElement("div", null,
+          /*#__PURE__*/React.createElement("p", { style: { fontSize: 12.5, fontWeight: 700, color: "var(--vermelho-700)", marginBottom: 6 } }, "Linhas ignoradas (não serão importadas):"),
+          /*#__PURE__*/React.createElement("ul", { style: { fontSize: 12, color: "var(--vermelho-700)", paddingLeft: 18, display: "flex", flexDirection: "column", gap: 2, maxHeight: 160, overflow: "auto" } },
+            plano.erros.map((e, i) => /*#__PURE__*/React.createElement("li", { key: i },
+              "Linha ", e.linha, e.nome ? ` (${e.nome}${e.matricula ? ", matrícula " + e.matricula : ""})` : "", ": ", e.motivo)))
+        ),
 
-      /*#__PURE__*/React.createElement("div", { style: { display: "flex", gap: 10, marginTop: 4 } },
-        /*#__PURE__*/React.createElement("button", {
-          onClick: confirmarImportacao,
-          style: {
-            background: "var(--marca-gradiente)", color: "var(--cor-branco)", border: "none",
-            borderRadius: 10, padding: "10px 20px", fontSize: 13, fontWeight: 700, cursor: "pointer"
-          }
-        }, "Confirmar importação"),
-        /*#__PURE__*/React.createElement("button", {
-          onClick: () => { setPlano(null); setArquivo(null); setBanco(null); },
-          style: {
-            background: "var(--cinza-100)", color: "var(--cinza-600)", border: "none",
-            borderRadius: 10, padding: "10px 20px", fontSize: 13, fontWeight: 600, cursor: "pointer"
-          }
-        }, "Cancelar")
-      )
-    ),
+        /*#__PURE__*/React.createElement("div", { style: { display: "flex", gap: 10, marginTop: 4 } },
+          /*#__PURE__*/React.createElement("button", {
+            onClick: confirmarImportacao,
+            style: {
+              background: "var(--marca-gradiente)", color: "var(--cor-branco)", border: "none",
+              borderRadius: 10, padding: "10px 20px", fontSize: 13, fontWeight: 700, cursor: "pointer"
+            }
+          }, "Confirmar importação"),
+          /*#__PURE__*/React.createElement("button", {
+            onClick: () => { setPlano(null); setArquivo(null); setBanco(null); },
+            style: {
+              background: "var(--cinza-100)", color: "var(--cinza-600)", border: "none",
+              borderRadius: 10, padding: "10px 20px", fontSize: 13, fontWeight: 600, cursor: "pointer"
+            }
+          }, "Cancelar")
+        )
+      );
+    })(),
 
     aplicando && /*#__PURE__*/React.createElement("div", { style: { marginTop: 16, textAlign: "center" } },
       /*#__PURE__*/React.createElement("p", { style: { fontSize: 13, color: "var(--cinza-500)" } }, "⏳ ", etapaAtual || "Aplicando…"),
