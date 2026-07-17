@@ -7239,8 +7239,17 @@ function analisarImportacaoHierarquia(linhasExcel, banco) {
 
   // Quem sumiu da planilha (existia ativo no banco, matrícula não apareceu
   // desta vez) — marca inativo, nunca deleta.
+  // IMPORTANTE: a comparação só pode valer dentro do escopo das
+  // superintendências que aparecem nesta planilha. Uma importação traz
+  // tipicamente só uma superintendência (ex.: a planilha da EAGLES não
+  // menciona ninguém da LOTUS) — sem essa restrição, todo mundo de fora do
+  // escopo importado pareceria ter "sumido" e seria inativado por engano.
+  const superintendenciaIdsNaPlanilha = new Set(
+    linhasComSup.map(l => resolverSuperintendencia(l)).filter(Boolean).map(s => s.id)
+  );
   const funcionariosInativados = banco.funcionariosTodos.filter(f =>
     (f.situacao || "ATIVO").toUpperCase() === "ATIVO" &&
+    superintendenciaIdsNaPlanilha.has(f.superintendencia_id) &&
     !matriculasNaPlanilha.has(String(f.matricula).trim())
   ).filter(f => {
     // Se o funcionário foi "recasado" por e-mail em alguma linha da
