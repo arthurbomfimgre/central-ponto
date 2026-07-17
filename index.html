@@ -10695,6 +10695,36 @@ function CardGerencia({ gerencia, aberta, onToggle }) {
 // Conjunto vazio de `selecionadas` = sem recorte (mostra tudo); a UI trata
 // esse estado como "nenhuma marcada" para não confundir o usuário com tudo
 // pré-marcado silenciosamente.
+// Checkbox customizado no mesmo estilo visual do calendário (SeletorData):
+// quadrado com borda, preenche com var(--marca-gradiente) e ✓ branco quando
+// marcado, fundo var(--marca-50) no hover. `indeterminado` desenha um traço
+// no lugar do ✓ (usado no checkbox "pai" de diretoria quando só parte das
+// gerências está marcada).
+function CheckboxMarca({ checked, indeterminado, onChange, size = 18 }) {
+  const [hover, setHover] = useState(false);
+  const marcado = checked || indeterminado;
+  return /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    onClick: onChange,
+    onMouseEnter: () => setHover(true),
+    onMouseLeave: () => setHover(false),
+    "aria-pressed": checked,
+    style: {
+      width: size, height: size, flexShrink: 0,
+      border: marcado ? "none" : `1px solid ${hover ? "var(--marca-400)" : "var(--cinza-300)"}`,
+      borderRadius: 6,
+      background: marcado ? "var(--marca-gradiente)" : hover ? "var(--marca-50)" : "var(--cor-branco)",
+      color: "var(--cor-branco)",
+      cursor: "pointer",
+      display: "flex", alignItems: "center", justifyContent: "center",
+      padding: 0,
+      fontSize: size * 0.7,
+      fontWeight: 700,
+      lineHeight: 1,
+      transition: "background .12s, border-color .12s"
+    }
+  }, indeterminado && !checked ? "–" : checked ? "✓" : "");
+}
 function SeletorEscopoRelatorio({ gerencias, diretorias, selecionadas, setSelecionadas }) {
   const [aberto, setAberto] = useState(false);
   const gerenciasPorDiretoria = useMemo(() => {
@@ -10761,24 +10791,21 @@ function SeletorEscopoRelatorio({ gerencias, diretorias, selecionadas, setSeleci
           key: d.id,
           style: { background: "var(--cinza-50)", border: "1px solid var(--cinza-100)", borderRadius: 12, padding: "10px 12px" }
         },
-          /*#__PURE__*/React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer", marginBottom: 6 } },
-            /*#__PURE__*/React.createElement("input", {
-              type: "checkbox",
+          /*#__PURE__*/React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer", marginBottom: 6 }, onClick: () => toggleDiretoria(d) },
+            /*#__PURE__*/React.createElement(CheckboxMarca, {
               checked: todasMarcadas,
-              ref: el => { if (el) el.indeterminate = algumaMarcada && !todasMarcadas; },
-              onChange: () => toggleDiretoria(d),
-              style: { width: 15, height: 15, cursor: "pointer" }
+              indeterminado: algumaMarcada && !todasMarcadas,
+              onChange: () => toggleDiretoria(d)
             }),
             /*#__PURE__*/React.createElement("span", { style: { fontSize: 13, fontWeight: 700, color: "var(--cinza-900)" } }, d.nome)
           ),
-          /*#__PURE__*/React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: "6px 16px", paddingLeft: 23 } },
+          /*#__PURE__*/React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: "8px 16px", paddingLeft: 23 } },
             gerenciasDaDir.slice().sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR")).map(g =>
-              /*#__PURE__*/React.createElement("label", { key: g.id, style: { display: "flex", alignItems: "center", gap: 6, cursor: "pointer" } },
-                /*#__PURE__*/React.createElement("input", {
-                  type: "checkbox",
+              /*#__PURE__*/React.createElement("div", { key: g.id, style: { display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }, onClick: () => toggleGerencia(g.id) },
+                /*#__PURE__*/React.createElement(CheckboxMarca, {
                   checked: selecionadas.has(g.id),
                   onChange: () => toggleGerencia(g.id),
-                  style: { width: 14, height: 14, cursor: "pointer" }
+                  size: 16
                 }),
                 /*#__PURE__*/React.createElement("span", { style: { fontSize: 12.5, color: "var(--cinza-600)" } }, g.nome)
               )
