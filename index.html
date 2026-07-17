@@ -6986,6 +6986,560 @@ function ModalImportarExcel({ funcionarios, setFuncionarios, onClose }) {
   );
 }
 
+// ─── IMPORTADOR DE HIERARQUIA COMERCIAL ───────────────────────────────────────
+// Lê uma planilha de estrutura comercial (modelo "comer5.xlsx") e sincroniza
+// superintendências, diretorias, gerências e funcionarios_comercial no
+// Supabase. Todo o motor de análise (função pura, sem efeitos colaterais)
+// fica separado do modal para poder ser testado/entendido isoladamente: ele
+// recebe as linhas já lidas do Excel + o estado atual carregado do banco e
+// devolve um "plano" com tudo que seria criado/atualizado/inativado, sem
+// tocar em nada. O modal só aplica esse plano quando o usuário confirma.
+
+const MAPA_COLUNAS_IMPORT_HIERARQUIA = {
+  matricula: "Matricula",
+  nomeCompleto: "Colaborador",
+  apelido: "Apelido",
+  cargo: "Cargo",
+  cpf: "CPF",
+  superintendencia: "Superintendencia",
+  superintendenteNome: "Superintendente",
+  diretoria: "Diretoria",
+  diretorNome: "Diretor(a)",
+  gerencia: "Gerencia",
+  gerenteNome: "Gerente",
+  situacao: "Situacao",
+  vinculo: "Vinculo",
+  email: "e-mail Profissional",
+  nivelComissao: "Nivel Comissao"
+};
+
+// Cargo (texto livre da planilha) -> nivel do schema. Quando o Cargo vier
+// vazio (acontece — ver caso real matrícula 30009), cai para inferência via
+// "Nivel Comissao", que também identifica o mesmo conjunto de papéis.
+function inferirNivelHierarquia(cargoBruto, nivelComissaoBruto) {
+  const cargo = String(cargoBruto || "").trim().toUpperCase();
+  if (cargo.includes("SUPERINTENDENTE")) return "superintendente";
+  if (cargo.includes("DIRETOR")) return "diretor";
+  if (cargo.includes("GERENTE")) return "gerente";
+  if (cargo.includes("VENDEDOR")) return "vendedor";
+  const nivelComissao = String(nivelComissaoBruto || "").trim().toUpperCase();
+  if (nivelComissao === "SUPERINTENDENCIA") return "superintendente";
+  if (nivelComissao === "DIRETORIA") return "diretor";
+  if (nivelComissao === "GERENCIA") return "gerente";
+  if (nivelComissao.startsWith("VENDAS") || nivelComissao.startsWith("HOME_PORTO")) return "vendedor";
+  return null; // desconhecido — linha entra na lista de erros, não é importada
+}
+
+function normalizarTextoHierarquia(v) {
+  const s = String(v ?? "").trim();
+  if (!s || s === "-") return "";
+  return s;
+}
+
+// Monta o plano de sincronização. Não faz nenhuma chamada de rede.
+// Parâmetros:
+//  - linhasExcel: saída crua de lerArquivoExcel() (um objeto por linha)
+//  - banco: { superintendencias, diretorias, gerencias, funcionariosTodos }
+//    — funcionariosTodos precisa incluir INATIVOS também, para o diff de
+//    inativação não reprocessar quem já está inativo.
+function analisarImportacaoHierarquia(linhasExcel, banco) {
+  const erros = []; // { linha, motivo }
+  const linhasValidas = [];
+
+  // ── 1) Parse + validação linha a linha ──────────────────────────────────
+  linhasExcel.forEach((linha, idx) => {
+    const numeroLinha = idx + 2; // +2: cabeçalho ocupa a linha 1 do Excel
+    const matricula = normalizarTextoHierarquia(linha[MAPA_COLUNAS_IMPORT_HIERARQUIA.matricula]);
+    const nomeCompleto = normalizarTextoHierarquia(linha[MAPA_COLUNAS_IMPORT_HIERARQUIA.nomeCompleto]);
+    if (!matricula || !nomeCompleto) {
+      erros.push({ linha: numeroLinha, motivo: "Matrícula ou nome do colaborador ausente." });
+      return;
+    }
+    const nivel = inferirNivelHierarquia(
+      linha[MAPA_COLUNAS_IMPORT_HIERARQUIA.cargo],
+      linha[MAPA_COLUNAS_IMPORT_HIERARQUIA.nivelComissao]
+    );
+    if (!nivel) {
+      erros.push({ linha: numeroLinha, matricula, nome: nomeCompleto, motivo: "Não foi possível identificar o nível (cargo/nível de comissão desconhecido)." });
+      return;
+    }
+    const superintendenciaNome = normalizarTextoHierarquia(linha[MAPA_COLUNAS_IMPORT_HIERARQUIA.superintendencia]);
+    const diretoriaNome = normalizarTextoHierarquia(linha[MAPA_COLUNAS_IMPORT_HIERARQUIA.diretoria]);
+    const gerenciaNome = normalizarTextoHierarquia(linha[MAPA_COLUNAS_IMPORT_HIERARQUIA.gerencia]);
+    const ehSuperintendente = nivel === "superintendente";
+
+    // A própria superintendente vem com Diretoria/Gerencia = "-": é
+    // atualização do próprio registro dela, sem exigir vínculo abaixo.
+    if (!ehSuperintendente && !diretoriaNome) {
+      erros.push({ linha: numeroLinha, matricula, nome: nomeCompleto, motivo: "Diretoria ausente para um registro que não é de superintendente." });
+      return;
+    }
+    if (!superintendenciaNome) {
+      erros.push({ linha: numeroLinha, matricula, nome: nomeCompleto, motivo: "Superintendência ausente." });
+      return;
+    }
+
+    linhasValidas.push({
+      numeroLinha,
+      matricula,
+      nomeCompleto: nomeCompleto.toUpperCase(),
+      apelido: normalizarTextoHierarquia(linha[MAPA_COLUNAS_IMPORT_HIERARQUIA.apelido]).toUpperCase() || null,
+      cargoOrigem: normalizarTextoHierarquia(linha[MAPA_COLUNAS_IMPORT_HIERARQUIA.cargo]) || null,
+      cpf: normalizarTextoHierarquia(linha[MAPA_COLUNAS_IMPORT_HIERARQUIA.cpf]) || null,
+      nivel,
+      superintendenciaNome,
+      superintendenteNome: normalizarTextoHierarquia(linha[MAPA_COLUNAS_IMPORT_HIERARQUIA.superintendenteNome]) || null,
+      diretoriaNome: ehSuperintendente ? "" : diretoriaNome,
+      diretorNome: normalizarTextoHierarquia(linha[MAPA_COLUNAS_IMPORT_HIERARQUIA.diretorNome]) || null,
+      // Gerência é opcional mesmo para não-superintendentes: existe o caso
+      // de vendedor vinculado direto à diretoria (gerencia_id nulo).
+      gerenciaNome: ehSuperintendente ? "" : gerenciaNome,
+      gerenteNome: normalizarTextoHierarquia(linha[MAPA_COLUNAS_IMPORT_HIERARQUIA.gerenteNome]) || null,
+      situacao: (normalizarTextoHierarquia(linha[MAPA_COLUNAS_IMPORT_HIERARQUIA.situacao]).toUpperCase() || "ATIVO"),
+      vinculo: normalizarTextoHierarquia(linha[MAPA_COLUNAS_IMPORT_HIERARQUIA.vinculo]).toUpperCase() || null,
+      email: normalizarTextoHierarquia(linha[MAPA_COLUNAS_IMPORT_HIERARQUIA.email]).toLowerCase() || null
+    });
+  });
+
+  // ── 2) Sincronização de superintendências (só validação de existência —
+  //      criação de superintendência nova não faz parte deste importador,
+  //      já que o volume é baixo e o risco de nome divergente é alto) ─────
+  // A coluna "Superintendencia" da planilha às vezes é um identificador
+  // interno de origem (ex.: "COMERCIAL 2") diferente do nome cadastrado no
+  // banco (ex.: "LOTUS") — então, quando o nome não bate diretamente,
+  // tenta casar pelo nome do responsável (Superintendente), que é estável.
+  const supPorNome = new Map(banco.superintendencias.map(s => [s.nome.trim().toUpperCase(), s]));
+  const supPorResponsavel = new Map(
+    banco.superintendencias.filter(s => s.responsavel_nome).map(s => [s.responsavel_nome.trim().toUpperCase(), s])
+  );
+  function resolverSuperintendencia(l) {
+    const porNome = supPorNome.get(l.superintendenciaNome.toUpperCase());
+    if (porNome) return porNome;
+    if (l.superintendenteNome) return supPorResponsavel.get(l.superintendenteNome.toUpperCase()) || null;
+    return null;
+  }
+  const superintendenciasNaoEncontradas = new Set();
+  linhasValidas.forEach(l => {
+    if (!resolverSuperintendencia(l)) {
+      superintendenciasNaoEncontradas.add(l.superintendenciaNome);
+    }
+  });
+  // Remove do plano quem depende de uma superintendência inexistente —
+  // não há como prosseguir com segurança para essas linhas.
+  const linhasSemSup = [];
+  const linhasComSup = [];
+  linhasValidas.forEach(l => {
+    if (superintendenciasNaoEncontradas.has(l.superintendenciaNome)) {
+      linhasSemSup.push(l);
+      erros.push({ linha: l.numeroLinha, matricula: l.matricula, nome: l.nomeCompleto, motivo: `Superintendência "${l.superintendenciaNome}" não encontrada no sistema — nenhuma superintendência é criada automaticamente por este importador.` });
+    } else {
+      linhasComSup.push(l);
+    }
+  });
+
+  // ── 3) Diretorias: existentes vs. novas (por superintendência + nome, já
+  //      trim()ados) ───────────────────────────────────────────────────────
+  const dirPorChave = new Map(); // "supId::NOME" -> diretoria existente
+  banco.diretorias.forEach(d => dirPorChave.set(`${d.superintendencia_id}::${d.nome.trim().toUpperCase()}`, d));
+  const diretoriasNovas = new Map(); // mesma chave -> { nome, responsavel_nome, superintendencia_id }
+  linhasComSup.forEach(l => {
+    if (!l.diretoriaNome) return; // superintendente, sem diretoria
+    const sup = resolverSuperintendencia(l);
+    const chave = `${sup.id}::${l.diretoriaNome.toUpperCase()}`;
+    if (!dirPorChave.has(chave) && !diretoriasNovas.has(chave)) {
+      diretoriasNovas.set(chave, { nome: l.diretoriaNome, responsavel_nome: l.diretorNome, superintendencia_id: sup.id });
+    }
+  });
+
+  // ── 4) Gerências: mesma lógica, chave por diretoria + nome ──────────────
+  const gerPorChave = new Map(); // "dirId::NOME" -> gerência existente
+  banco.gerencias.forEach(g => gerPorChave.set(`${g.diretoria_id}::${g.nome.trim().toUpperCase()}`, g));
+  const gerenciasNovas = new Map();
+  linhasComSup.forEach(l => {
+    if (!l.diretoriaNome || !l.gerenciaNome) return;
+    const sup = resolverSuperintendencia(l);
+    const dirChave = `${sup.id}::${l.diretoriaNome.toUpperCase()}`;
+    const dirExistente = dirPorChave.get(dirChave);
+    // Se a diretoria também é nova neste mesmo plano, ainda não tem id real
+    // — a gerência nova associada a ela só pode ser criada depois que a
+    // diretoria for criada e o id real for conhecido (resolvido na hora de
+    // aplicar, não aqui na análise).
+    const gerChaveBusca = dirExistente ? `${dirExistente.id}::${l.gerenciaNome.toUpperCase()}` : null;
+    if (gerChaveBusca && gerPorChave.has(gerChaveBusca)) return; // já existe
+    // Chave "lógica" (por nome de diretoria, não id) para deduplicar no plano
+    const chaveLogica = `${sup.id}::${l.diretoriaNome.toUpperCase()}::${l.gerenciaNome.toUpperCase()}`;
+    if (!gerenciasNovas.has(chaveLogica)) {
+      gerenciasNovas.set(chaveLogica, {
+        nome: l.gerenciaNome,
+        responsavel_nome: l.gerenteNome,
+        diretoriaNomeRef: l.diretoriaNome,
+        superintendenciaIdRef: sup.id
+      });
+    }
+  });
+
+  // ── 5) Funcionários: casamento por matrícula, com fallback por e-mail ───
+  const funcPorMatricula = new Map(banco.funcionariosTodos.map(f => [String(f.matricula).trim(), f]));
+  const funcPorEmail = new Map(
+    banco.funcionariosTodos.filter(f => f.email).map(f => [f.email.trim().toLowerCase(), f])
+  );
+
+  const funcionariosNovos = [];
+  const funcionariosAtualizados = []; // { id, campos: {...} }
+  const matriculasNaPlanilha = new Set();
+
+  linhasComSup.forEach(l => {
+    matriculasNaPlanilha.add(l.matricula);
+    let existente = funcPorMatricula.get(l.matricula);
+    if (!existente && l.email) existente = funcPorEmail.get(l.email);
+
+    const camposBase = {
+      matricula: l.matricula,
+      nome_completo: l.nomeCompleto,
+      apelido: l.apelido,
+      email: l.email,
+      cpf: l.cpf,
+      cargo_origem: l.cargoOrigem,
+      nivel: l.nivel,
+      vinculo: l.vinculo,
+      situacao: "ATIVO"
+      // gerencia_id / diretoria_id / superintendencia_id são resolvidos na
+      // hora de aplicar (dependem de diretorias/gerências recém-criadas).
+    };
+    // Remove campos vazios (null) — regra 5: nunca apaga um campo existente
+    // por causa de célula vazia na planilha, então numa ATUALIZAÇÃO só
+    // entram os campos realmente preenchidos.
+    const camposPreenchidos = {};
+    Object.entries(camposBase).forEach(([k, v]) => { if (v !== null && v !== "") camposPreenchidos[k] = v; });
+
+    const sup = resolverSuperintendencia(l);
+    const refs = {
+      _superintendenciaId: sup ? sup.id : null,
+      _diretoriaNome: l.diretoriaNome || null,
+      _gerenciaNome: l.gerenciaNome || null
+    };
+
+    if (existente) {
+      funcionariosAtualizados.push({
+        id: existente.id,
+        matriculaAnterior: existente.matricula,
+        matriculaMudou: String(existente.matricula).trim() !== l.matricula,
+        nome: l.nomeCompleto,
+        campos: existente.situacao !== "ATIVO" ? { ...camposPreenchidos, situacao: "ATIVO" } : camposPreenchidos,
+        ...refs
+      });
+    } else {
+      funcionariosNovos.push({
+        ...camposBase,
+        apelido: l.apelido, email: l.email, cpf: l.cpf, cargo_origem: l.cargoOrigem,
+        ...refs
+      });
+    }
+  });
+
+  // Quem sumiu da planilha (existia ativo no banco, matrícula não apareceu
+  // desta vez) — marca inativo, nunca deleta.
+  const funcionariosInativados = banco.funcionariosTodos.filter(f =>
+    (f.situacao || "ATIVO").toUpperCase() === "ATIVO" &&
+    !matriculasNaPlanilha.has(String(f.matricula).trim())
+  ).filter(f => {
+    // Se o funcionário foi "recasado" por e-mail em alguma linha da
+    // planilha (matrícula mudou), ele não deve ser tratado como inativado
+    // — já foi contemplado como atualização acima.
+    const foiRecasadoPorEmail = funcionariosAtualizados.some(a => a.id === f.id);
+    return !foiRecasadoPorEmail;
+  });
+
+  return {
+    erros,
+    totalLinhasPlanilha: linhasExcel.length,
+    superintendenciasNaoEncontradas: [...superintendenciasNaoEncontradas],
+    diretoriasNovas: [...diretoriasNovas.values()],
+    gerenciasNovas: [...gerenciasNovas.values()],
+    funcionariosNovos,
+    funcionariosAtualizados,
+    funcionariosInativados
+  };
+}
+
+// Aplica um plano já analisado (ver analisarImportacaoHierarquia) no
+// Supabase. Ordem importa: diretorias antes de gerências (gerência precisa
+// do id real da diretoria), e ambas antes dos funcionários (que precisam
+// dos ids de gerência/diretoria/superintendência para gravar as FKs).
+// onProgresso(etapa) é opcional, só para feedback textual no modal.
+async function aplicarImportacaoHierarquia(plano, banco, onProgresso) {
+  const progresso = onProgresso || (() => {});
+
+  // ── 1) Cria diretorias novas ─────────────────────────────────────────────
+  progresso("Criando diretorias novas…");
+  const dirPorChave = new Map(); // "supId::NOME" -> registro (existente ou recém-criado)
+  banco.diretorias.forEach(d => dirPorChave.set(`${d.superintendencia_id}::${d.nome.trim().toUpperCase()}`, d));
+  for (const nova of plano.diretoriasNovas) {
+    const { data, error } = await supa.from("diretorias")
+      .insert({ nome: nova.nome, responsavel_nome: nova.responsavel_nome, superintendencia_id: nova.superintendencia_id })
+      .select().single();
+    if (error) throw new Error(`Falha ao criar diretoria "${nova.nome}": ${extrairMensagemErro(error)}`);
+    dirPorChave.set(`${nova.superintendencia_id}::${nova.nome.trim().toUpperCase()}`, data);
+  }
+
+  // ── 2) Cria gerências novas (usando ids reais de diretoria, inclusive as
+  //      recém-criadas no passo anterior) ─────────────────────────────────
+  progresso("Criando gerências novas…");
+  const gerPorChave = new Map(); // "dirId::NOME" -> registro
+  banco.gerencias.forEach(g => gerPorChave.set(`${g.diretoria_id}::${g.nome.trim().toUpperCase()}`, g));
+  for (const nova of plano.gerenciasNovas) {
+    const dir = dirPorChave.get(`${nova.superintendenciaIdRef}::${nova.diretoriaNomeRef.toUpperCase()}`);
+    if (!dir) throw new Error(`Diretoria "${nova.diretoriaNomeRef}" não encontrada ao criar gerência "${nova.nome}".`);
+    const { data, error } = await supa.from("gerencias")
+      .insert({ nome: nova.nome, responsavel_nome: nova.responsavel_nome, diretoria_id: dir.id })
+      .select().single();
+    if (error) throw new Error(`Falha ao criar gerência "${nova.nome}": ${extrairMensagemErro(error)}`);
+    gerPorChave.set(`${dir.id}::${nova.nome.trim().toUpperCase()}`, data);
+  }
+
+  // Resolve superintendencia_id/diretoria_id/gerencia_id de um item de
+  // funcionário (novo ou atualizado). O id de superintendência já vem
+  // resolvido desde a fase de análise (inclusive via fallback por
+  // responsável); aqui só resta achar diretoria/gerência pelo nome + esse id.
+  function resolverIds(item) {
+    const supId = item._superintendenciaId;
+    const ids = { superintendencia_id: supId, diretoria_id: null, gerencia_id: null };
+    if (item._diretoriaNome && supId != null) {
+      const dir = dirPorChave.get(`${supId}::${item._diretoriaNome.toUpperCase()}`);
+      ids.diretoria_id = dir ? dir.id : null;
+      if (item._gerenciaNome && dir) {
+        const ger = gerPorChave.get(`${dir.id}::${item._gerenciaNome.toUpperCase()}`);
+        ids.gerencia_id = ger ? ger.id : null;
+      }
+    }
+    return ids;
+  }
+
+  // ── 3) Cria funcionários novos ───────────────────────────────────────────
+  progresso(`Criando ${plano.funcionariosNovos.length} funcionário(s) novo(s)…`);
+  for (const novo of plano.funcionariosNovos) {
+    const { _superintendenciaNome, _diretoriaNome, _gerenciaNome, ...campos } = novo;
+    const ids = resolverIds(novo);
+    const { error } = await supa.from("funcionarios_comercial").insert({ ...campos, ...ids });
+    if (error) throw new Error(`Falha ao criar funcionário "${novo.nome_completo}" (matrícula ${novo.matricula}): ${extrairMensagemErro(error)}`);
+  }
+
+  // ── 4) Atualiza funcionários existentes ─────────────────────────────────
+  progresso(`Atualizando ${plano.funcionariosAtualizados.length} funcionário(s)…`);
+  for (const at of plano.funcionariosAtualizados) {
+    const ids = resolverIds(at);
+    // Só sobrescreve os ids de hierarquia quando eles puderam ser resolvidos
+    // — evita zerar um vínculo válido por causa de um nome momentaneamente
+    // não encontrado (o que não deveria ocorrer, já que diretorias/
+    // gerências novas são criadas antes deste passo).
+    const idsResolvidos = {};
+    if (ids.superintendencia_id != null) idsResolvidos.superintendencia_id = ids.superintendencia_id;
+    if (at._diretoriaNome) { if (ids.diretoria_id != null) idsResolvidos.diretoria_id = ids.diretoria_id; }
+    if (at._gerenciaNome) { if (ids.gerencia_id != null) idsResolvidos.gerencia_id = ids.gerencia_id; }
+    const { error } = await supa.from("funcionarios_comercial")
+      .update({ ...at.campos, ...idsResolvidos })
+      .eq("id", at.id);
+    if (error) throw new Error(`Falha ao atualizar funcionário "${at.nome}": ${extrairMensagemErro(error)}`);
+  }
+
+  // ── 5) Inativa quem sumiu da planilha ────────────────────────────────────
+  progresso(`Inativando ${plano.funcionariosInativados.length} funcionário(s)…`);
+  for (const inativo of plano.funcionariosInativados) {
+    const { error } = await supa.from("funcionarios_comercial")
+      .update({ situacao: "INATIVO" })
+      .eq("id", inativo.id);
+    if (error) throw new Error(`Falha ao inativar funcionário "${inativo.nome_completo}": ${extrairMensagemErro(error)}`);
+  }
+
+  progresso("Concluído.");
+}
+
+function ModalImportarHierarquia({ onClose, onConcluido }) {
+  const [arquivo, setArquivo] = useState(null);
+  const [carregandoBanco, setCarregandoBanco] = useState(false);
+  const [processandoArquivo, setProcessandoArquivo] = useState(false);
+  const [plano, setPlano] = useState(null);
+  const [banco, setBanco] = useState(null);
+  const [aplicando, setAplicando] = useState(false);
+  const [etapaAtual, setEtapaAtual] = useState("");
+  const [erro, setErro] = useState("");
+  const [concluido, setConcluido] = useState(null);
+
+  async function selecionarArquivo(file) {
+    setArquivo(file);
+    setPlano(null);
+    setErro("");
+    setConcluido(null);
+    if (!file) return;
+    setProcessandoArquivo(true);
+    setCarregandoBanco(true);
+    try {
+      const [linhas, supRes, dirRes, gerRes, funcRes] = await Promise.all([
+        lerArquivoExcel(file),
+        supa.from("superintendencias").select("*"),
+        supa.from("diretorias").select("*"),
+        supa.from("gerencias").select("*"),
+        // Inclui inativos de propósito — necessário para o diff de
+        // inativação não reprocessar quem já está inativo.
+        supa.from("funcionarios_comercial").select("*")
+      ]);
+      const erroBanco = supRes.error || dirRes.error || gerRes.error || funcRes.error;
+      if (erroBanco) throw erroBanco;
+      const bancoCarregado = {
+        superintendencias: supRes.data || [],
+        diretorias: dirRes.data || [],
+        gerencias: gerRes.data || [],
+        funcionariosTodos: funcRes.data || []
+      };
+      setBanco(bancoCarregado);
+      const resultado = analisarImportacaoHierarquia(linhas, bancoCarregado);
+      setPlano(resultado);
+    } catch (err) {
+      setErro(extrairMensagemErro(err));
+    } finally {
+      setProcessandoArquivo(false);
+      setCarregandoBanco(false);
+    }
+  }
+
+  async function confirmarImportacao() {
+    if (!plano || !banco) return;
+    setAplicando(true);
+    setErro("");
+    try {
+      await aplicarImportacaoHierarquia(plano, banco, setEtapaAtual);
+      setConcluido({
+        novos: plano.funcionariosNovos.length,
+        atualizados: plano.funcionariosAtualizados.length,
+        inativados: plano.funcionariosInativados.length,
+        diretoriasCriadas: plano.diretoriasNovas.length,
+        gerenciasCriadas: plano.gerenciasNovas.length
+      });
+      setPlano(null);
+      setArquivo(null);
+      onConcluido && onConcluido();
+    } catch (err) {
+      setErro(extrairMensagemErro(err));
+    } finally {
+      setAplicando(false);
+      setEtapaAtual("");
+    }
+  }
+
+  const carregando = processandoArquivo || carregandoBanco;
+  const linhaResumo = (rotulo, valor, cor) => /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex", justifyContent: "space-between", alignItems: "center",
+      padding: "9px 14px", borderRadius: 10, background: `var(--${cor}-50)`,
+      fontSize: 13
+    }
+  },
+    /*#__PURE__*/React.createElement("span", { style: { color: `var(--${cor}-700)`, fontWeight: 600 } }, rotulo),
+    /*#__PURE__*/React.createElement("span", { style: { color: `var(--${cor}-700)`, fontWeight: 800, fontSize: 15 } }, valor)
+  );
+
+  return /*#__PURE__*/React.createElement(Modal, {
+    title: "📥 Importar hierarquia comercial",
+    onClose: aplicando ? () => {} : onClose,
+    maxWidth: 640
+  },
+    !plano && !concluido && /*#__PURE__*/React.createElement(React.Fragment, null,
+      /*#__PURE__*/React.createElement("p", { style: { fontSize: 13, color: "var(--cinza-500)", marginBottom: 18 } },
+        "Selecione a planilha de estrutura comercial (modelo Matricula/Colaborador/Superintendencia/Diretoria/Gerencia). O sistema compara com o estado atual e mostra um resumo antes de aplicar qualquer alteração."),
+      /*#__PURE__*/React.createElement("label", {
+        style: {
+          display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+          gap: 8, border: "2px dashed var(--cinza-200)", borderRadius: 12, padding: "28px 16px",
+          cursor: carregando ? "default" : "pointer", textAlign: "center"
+        }
+      },
+        /*#__PURE__*/React.createElement("span", { style: { fontSize: 26 } }, "📄"),
+        /*#__PURE__*/React.createElement("span", { style: { fontSize: 13, fontWeight: 600, color: "var(--cinza-700)" } },
+          arquivo ? arquivo.name : "Clique para selecionar um arquivo .xlsx"),
+        /*#__PURE__*/React.createElement("input", {
+          type: "file", accept: ".xlsx,.xls", disabled: carregando,
+          style: { display: "none" },
+          onChange: e => selecionarArquivo(e.target.files?.[0] || null)
+        })
+      ),
+      carregando && /*#__PURE__*/React.createElement("p", { style: { fontSize: 12, color: "var(--cinza-400)", marginTop: 14, textAlign: "center" } }, "Lendo planilha e estado atual…")
+    ),
+
+    erro && /*#__PURE__*/React.createElement("div", {
+      style: { marginTop: 16, background: "var(--vermelho-100)", color: "var(--vermelho-800)", borderRadius: 10, padding: "10px 14px", fontSize: 13, fontWeight: 600 }
+    }, "⚠️ ", erro),
+
+    plano && !aplicando && /*#__PURE__*/React.createElement("div", { style: { marginTop: 4, display: "flex", flexDirection: "column", gap: 16 } },
+      /*#__PURE__*/React.createElement("p", { style: { fontSize: 13, color: "var(--cinza-700)" } },
+        /*#__PURE__*/React.createElement("strong", null, plano.totalLinhasPlanilha), " linha(s) na planilha. Resumo do que será feito ao confirmar:"),
+
+      /*#__PURE__*/React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 } },
+        linhaResumo("Funcionários novos", plano.funcionariosNovos.length, "verde"),
+        linhaResumo("Funcionários atualizados", plano.funcionariosAtualizados.length, "azul"),
+        linhaResumo("Funcionários inativados", plano.funcionariosInativados.length, "amber"),
+        linhaResumo("Diretorias novas", plano.diretoriasNovas.length, "roxo"),
+        linhaResumo("Gerências novas", plano.gerenciasNovas.length, "roxo"),
+        linhaResumo("Linhas com erro (ignoradas)", plano.erros.length, "vermelho")
+      ),
+
+      plano.diretoriasNovas.length > 0 && /*#__PURE__*/React.createElement("div", null,
+        /*#__PURE__*/React.createElement("p", { style: { fontSize: 12.5, fontWeight: 700, color: "var(--cinza-600)", marginBottom: 6 } }, "Diretorias que serão criadas:"),
+        /*#__PURE__*/React.createElement("ul", { style: { fontSize: 12.5, color: "var(--cinza-600)", paddingLeft: 18, display: "flex", flexDirection: "column", gap: 2 } },
+          plano.diretoriasNovas.map((d, i) => /*#__PURE__*/React.createElement("li", { key: i }, d.nome, d.responsavel_nome ? ` — ${d.responsavel_nome}` : "")))
+      ),
+
+      plano.gerenciasNovas.length > 0 && /*#__PURE__*/React.createElement("div", null,
+        /*#__PURE__*/React.createElement("p", { style: { fontSize: 12.5, fontWeight: 700, color: "var(--cinza-600)", marginBottom: 6 } }, "Gerências que serão criadas:"),
+        /*#__PURE__*/React.createElement("ul", { style: { fontSize: 12.5, color: "var(--cinza-600)", paddingLeft: 18, display: "flex", flexDirection: "column", gap: 2, maxHeight: 140, overflow: "auto" } },
+          plano.gerenciasNovas.map((g, i) => /*#__PURE__*/React.createElement("li", { key: i }, g.nome, " (", g.diretoriaNomeRef, ")", g.responsavel_nome ? ` — ${g.responsavel_nome}` : "")))
+      ),
+
+      plano.erros.length > 0 && /*#__PURE__*/React.createElement("div", null,
+        /*#__PURE__*/React.createElement("p", { style: { fontSize: 12.5, fontWeight: 700, color: "var(--vermelho-700)", marginBottom: 6 } }, "Linhas ignoradas (não serão importadas):"),
+        /*#__PURE__*/React.createElement("ul", { style: { fontSize: 12, color: "var(--vermelho-700)", paddingLeft: 18, display: "flex", flexDirection: "column", gap: 2, maxHeight: 160, overflow: "auto" } },
+          plano.erros.map((e, i) => /*#__PURE__*/React.createElement("li", { key: i },
+            "Linha ", e.linha, e.nome ? ` (${e.nome}${e.matricula ? ", matrícula " + e.matricula : ""})` : "", ": ", e.motivo)))
+      ),
+
+      /*#__PURE__*/React.createElement("div", { style: { display: "flex", gap: 10, marginTop: 4 } },
+        /*#__PURE__*/React.createElement("button", {
+          onClick: confirmarImportacao,
+          style: {
+            background: "var(--marca-gradiente)", color: "var(--cor-branco)", border: "none",
+            borderRadius: 10, padding: "10px 20px", fontSize: 13, fontWeight: 700, cursor: "pointer"
+          }
+        }, "Confirmar importação"),
+        /*#__PURE__*/React.createElement("button", {
+          onClick: () => { setPlano(null); setArquivo(null); setBanco(null); },
+          style: {
+            background: "var(--cinza-100)", color: "var(--cinza-600)", border: "none",
+            borderRadius: 10, padding: "10px 20px", fontSize: 13, fontWeight: 600, cursor: "pointer"
+          }
+        }, "Cancelar")
+      )
+    ),
+
+    aplicando && /*#__PURE__*/React.createElement("div", { style: { marginTop: 16, textAlign: "center" } },
+      /*#__PURE__*/React.createElement("p", { style: { fontSize: 13, color: "var(--cinza-500)" } }, "⏳ ", etapaAtual || "Aplicando…"),
+      /*#__PURE__*/React.createElement("p", { style: { fontSize: 11.5, color: "var(--cinza-400)", marginTop: 6 } }, "Não feche esta janela.")
+    ),
+
+    concluido && /*#__PURE__*/React.createElement("div", { style: { marginTop: 16, display: "flex", flexDirection: "column", gap: 14 } },
+      /*#__PURE__*/React.createElement("div", {
+        style: { background: "var(--verde-100)", color: "var(--verde-800)", borderRadius: 10, padding: "12px 16px", fontSize: 13, fontWeight: 600 }
+      }, "✓ Importação concluída: ", concluido.novos, " novo(s), ", concluido.atualizados, " atualizado(s), ",
+        concluido.inativados, " inativado(s), ", concluido.diretoriasCriadas, " diretoria(s) nova(s), ", concluido.gerenciasCriadas, " gerência(s) nova(s)."),
+      /*#__PURE__*/React.createElement("button", {
+        onClick: onClose,
+        style: {
+          background: "var(--marca-gradiente)", color: "var(--cor-branco)", border: "none",
+          borderRadius: 10, padding: "10px 20px", fontSize: 13, fontWeight: 700, cursor: "pointer", alignSelf: "flex-start"
+        }
+      }, "Fechar")
+    )
+  );
+}
+
 // ─── PERFIL DO FUNCIONÁRIO ────────────────────────────────────────────────────
 function PerfilFuncionario({
   func,
@@ -11057,6 +11611,7 @@ function ArvoreHierarquia() {
   const toggle = chave => setAberto(prev => ({ ...prev, [chave]: !prev[chave] }));
   const [criandoUsuarios, setCriandoUsuarios] = useState(false);
   const [resumoUsuarios, setResumoUsuarios] = useState(null);
+  const [modalImportar, setModalImportar] = useState(false);
 
   const semLoginCount = useMemo(
     () => funcionarios.filter(f => !f.auth_user_id).length,
@@ -11145,12 +11700,26 @@ function ArvoreHierarquia() {
   }
 
   return /*#__PURE__*/React.createElement("div", { style: { padding: "24px 28px", maxWidth: 980, margin: "0 auto", display: "flex", flexDirection: "column", gap: 18 } },
-    /*#__PURE__*/React.createElement("div", null,
-      /*#__PURE__*/React.createElement("h1", { style: { fontSize: 22, fontWeight: 800, color: "var(--cinza-900)", marginBottom: 4 } }, "Hierarquia Comercial"),
-      /*#__PURE__*/React.createElement("p", { style: { fontSize: 13, color: "var(--cinza-400)" } },
-        totais.total, " funcionários · ", totais.superintendencias, " superintendências · ",
-        totais.diretorias, " diretorias · ", totais.gerencias, " gerências · ", totais.vendedores, " vendedores")
+    /*#__PURE__*/React.createElement("div", { style: { display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, flexWrap: "wrap" } },
+      /*#__PURE__*/React.createElement("div", null,
+        /*#__PURE__*/React.createElement("h1", { style: { fontSize: 22, fontWeight: 800, color: "var(--cinza-900)", marginBottom: 4 } }, "Hierarquia Comercial"),
+        /*#__PURE__*/React.createElement("p", { style: { fontSize: 13, color: "var(--cinza-400)" } },
+          totais.total, " funcionários · ", totais.superintendencias, " superintendências · ",
+          totais.diretorias, " diretorias · ", totais.gerencias, " gerências · ", totais.vendedores, " vendedores")
+      ),
+      /*#__PURE__*/React.createElement("button", {
+        onClick: () => setModalImportar(true),
+        style: {
+          padding: "9px 16px", borderRadius: 10, border: "none",
+          background: "var(--marca-gradiente)", color: "var(--cor-branco)",
+          fontSize: 12.5, fontWeight: 700, cursor: "pointer", flexShrink: 0
+        }
+      }, "📥 Importar planilha")
     ),
+    modalImportar && /*#__PURE__*/React.createElement(ModalImportarHierarquia, {
+      onClose: () => setModalImportar(false),
+      onConcluido: () => window.location.reload()
+    }),
     /*#__PURE__*/React.createElement("input", {
       value: busca,
       onChange: e => setBusca(e.target.value),
