@@ -5988,20 +5988,22 @@ function ListaFuncionarios({
   // fallback pelo diretoria_id (mesma regra da [PENDÊNCIA 2] antiga).
   const arvoreFuncionarios = useMemo(() => {
     if (!usaVisaoArvore) return [];
+    const ehAtivo = f => f.ativo !== false;
     const diretoriasBase = usuario?.nivel === "diretor"
       ? diretoriasComercial.filter(d => d.id === usuario.diretoria_id)
       : diretoriasComercial.filter(d => d.superintendencia_id === usuario?.superintendencia_id);
     return diretoriasBase.slice().sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR")).map(d => {
       const gerenciasDaDir = gerenciasComercial.filter(g => g.diretoria_id === d.id)
         .slice().sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
-      const gerenciasMontadas = gerenciasDaDir.map(g => ({
-        ...g,
-        vendedores: lista.filter(f => f.gerencia_id === g.id)
-      }));
+      const gerenciasMontadas = gerenciasDaDir.map(g => {
+        const vendedores = lista.filter(f => f.gerencia_id === g.id);
+        return { ...g, vendedores, totalAtivos: vendedores.filter(ehAtivo).length, totalInativos: vendedores.filter(f => !ehAtivo(f)).length };
+      });
       const idsGerenciasDaDir = new Set(gerenciasDaDir.map(g => g.id));
       const semGerencia = lista.filter(f => f.diretoria_id === d.id && !idsGerenciasDaDir.has(f.gerencia_id) && f.gerencia_id == null);
-      const totalPessoas = gerenciasMontadas.reduce((acc, g) => acc + g.vendedores.length, 0) + semGerencia.length;
-      return { ...d, gerencias: gerenciasMontadas, semGerencia, totalPessoas };
+      const totalAtivos = gerenciasMontadas.reduce((acc, g) => acc + g.totalAtivos, 0) + semGerencia.filter(ehAtivo).length;
+      const totalInativos = gerenciasMontadas.reduce((acc, g) => acc + g.totalInativos, 0) + semGerencia.filter(f => !ehAtivo(f)).length;
+      return { ...d, gerencias: gerenciasMontadas, semGerencia, totalAtivos, totalInativos };
     });
   }, [usaVisaoArvore, usuario, diretoriasComercial, gerenciasComercial, lista]);
   async function adicionar() {
@@ -6318,7 +6320,7 @@ function ListaFuncionarios({
       background: "var(--cinza-50)",
       borderBottom: "1px solid var(--cinza-100)"
     }
-  }, ["Funcionário", "Matrícula", "Setor", "Cargo", "Esq.", "Situação", "Ações"].map(h => /*#__PURE__*/React.createElement("th", {
+  }, ["Funcionário", "Matrícula", "Vínculo", "Setor", "Cargo", "Esq.", "Situação", "Ações"].map(h => /*#__PURE__*/React.createElement("th", {
     key: h,
     style: {
       padding: "12px 16px",
@@ -6372,6 +6374,17 @@ function ListaFuncionarios({
         fontFamily: "monospace"
       }
     }, f.matricula), /*#__PURE__*/React.createElement("td", {
+      style: {
+        padding: "12px 16px",
+        fontSize: 11,
+        color: "var(--cinza-500)"
+      }
+    }, f.vinculo ? /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 10, fontWeight: 700, color: "var(--cinza-500)", background: "var(--cinza-100)",
+        padding: "2px 8px", borderRadius: 20
+      }
+    }, f.vinculo) : "—"), /*#__PURE__*/React.createElement("td", {
       style: {
         padding: "12px 16px",
         fontSize: 12,
@@ -11177,7 +11190,10 @@ function useArvoreComercialData(sessaoPronta = true) {
           superintendencias: supRes.data || [],
           diretorias: dirRes.data || [],
           gerencias: gerRes.data || [],
-          funcionarios: (funcRes.data || []).filter(f => (f.situacao || "ATIVO").toUpperCase() === "ATIVO")
+          // Antes filtrava só ATIVO aqui; agora traz todos e quem consome
+          // (montarArvore) é responsável por separar ativos/inativos, já
+          // que a árvore passou a exibir as duas contagens lado a lado.
+          funcionarios: funcRes.data || []
         });
       } catch (e) {
         if (!ativo) return;
@@ -11192,7 +11208,17 @@ function useArvoreComercialData(sessaoPronta = true) {
 // ter, além de suas gerências normais, um "grupo" de vendedores vinculados
 // diretamente a ela (gerencia_id nulo — ex.: Edilene Aquino Soares → Simone
 // Anjos), exibido com o rótulo "-" em vez de um card de gerência.
+// Formata a contagem de pessoas de um nó da árvore (gerência/diretoria/
+// superintendência) separando ativos e inativos — ex.: "360 ativos · 14
+// inativos". Omite a parte de inativos quando não há nenhum, para não
+// poluir visualmente os nós que não têm ninguém inativo.
+function textoAtivosInativos(ativos, inativos) {
+  const txtAtivos = `${ativos} ${ativos === 1 ? "ativo" : "ativos"}`;
+  if (!inativos) return txtAtivos;
+  return `${txtAtivos} · ${inativos} ${inativos === 1 ? "inativo" : "inativos"}`;
+}
 function montarArvore({ superintendencias, diretorias, gerencias, funcionarios }) {
+  const ehAtivo = f => (f.situacao || "ATIVO").toUpperCase() === "ATIVO";
   const porGerencia = new Map();
   const diretosNaDiretoria = new Map(); // diretoria_id -> [vendedores sem gerência]
   const gerentesPorGerencia = new Map();
@@ -11209,11 +11235,17 @@ function montarArvore({ superintendencias, diretorias, gerencias, funcionarios }
         diretosNaDiretoria.get(f.diretoria_id).push(f);
       }
     } else if (f.nivel === "gerente" && f.gerencia_id != null) {
-      gerentesPorGerencia.set(f.gerencia_id, f);
+      // Guarda todos (ativos e inativos) — se o gerente ativo mais recente
+      // não existir, cai no inativo mais recente para exibição; ambos
+      // contam para os totais separadamente logo abaixo.
+      const atual = gerentesPorGerencia.get(f.gerencia_id);
+      if (!atual || (ehAtivo(f) && !ehAtivo(atual))) gerentesPorGerencia.set(f.gerencia_id, f);
     } else if (f.nivel === "diretor" && f.diretoria_id != null) {
-      diretoresPorDiretoria.set(f.diretoria_id, f);
+      const atual = diretoresPorDiretoria.get(f.diretoria_id);
+      if (!atual || (ehAtivo(f) && !ehAtivo(atual))) diretoresPorDiretoria.set(f.diretoria_id, f);
     } else if (f.nivel === "superintendente" && f.superintendencia_id != null) {
-      superintendentesPorSuperintendencia.set(f.superintendencia_id, f);
+      const atual = superintendentesPorSuperintendencia.get(f.superintendencia_id);
+      if (!atual || (ehAtivo(f) && !ehAtivo(atual))) superintendentesPorSuperintendencia.set(f.superintendencia_id, f);
     }
   }
 
@@ -11234,27 +11266,42 @@ function montarArvore({ superintendencias, diretorias, gerencias, funcionarios }
     const diretoriasDaSup = (diretoriasPorSuperintendencia.get(s.id) || []).slice().sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
     const diretoriasMontadas = diretoriasDaSup.map(d => {
       const gerenciasDaDir = (gerenciasPorDiretoria.get(d.id) || []).slice().sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
-      const gerenciasMontadas = gerenciasDaDir.map(g => ({
-        ...g,
-        gerente: gerentesPorGerencia.get(g.id) || null,
-        vendedores: (porGerencia.get(g.id) || []).slice().sort(ordenarNome)
-      }));
+      const gerenciasMontadas = gerenciasDaDir.map(g => {
+        const vendedores = (porGerencia.get(g.id) || []).slice().sort(ordenarNome);
+        const gerente = gerentesPorGerencia.get(g.id) || null;
+        const vendedoresAtivos = vendedores.filter(ehAtivo).length;
+        const gerenteAtivo = gerente ? ehAtivo(gerente) : false;
+        return {
+          ...g,
+          gerente,
+          vendedores,
+          totalAtivos: vendedoresAtivos + (gerenteAtivo ? 1 : 0),
+          totalInativos: (vendedores.length - vendedoresAtivos) + (gerente && !gerenteAtivo ? 1 : 0)
+        };
+      });
       const semGerencia = (diretosNaDiretoria.get(d.id) || []).slice().sort(ordenarNome);
-      let totalDir = gerenciasMontadas.reduce((acc, g) => acc + g.vendedores.length + (g.gerente ? 1 : 0), 0) + semGerencia.length;
+      const semGerenciaAtivos = semGerencia.filter(ehAtivo).length;
+      const diretor = diretoresPorDiretoria.get(d.id) || null;
+      const diretorAtivo = diretor ? ehAtivo(diretor) : false;
+      const totalAtivosDir = gerenciasMontadas.reduce((acc, g) => acc + g.totalAtivos, 0) + semGerenciaAtivos + (diretorAtivo ? 1 : 0);
+      const totalInativosDir = gerenciasMontadas.reduce((acc, g) => acc + g.totalInativos, 0) + (semGerencia.length - semGerenciaAtivos) + (diretor && !diretorAtivo ? 1 : 0);
       return {
         ...d,
-        diretor: diretoresPorDiretoria.get(d.id) || null,
+        diretor,
         gerencias: gerenciasMontadas,
         semGerencia,
-        totalPessoas: totalDir + 1 // +1 pelo próprio diretor, se existir (aprox.)
+        totalAtivos: totalAtivosDir,
+        totalInativos: totalInativosDir
       };
     });
-    const totalSup = diretoriasMontadas.reduce((acc, d) => acc + d.totalPessoas, 0);
+    const totalAtivosSup = diretoriasMontadas.reduce((acc, d) => acc + d.totalAtivos, 0);
+    const totalInativosSup = diretoriasMontadas.reduce((acc, d) => acc + d.totalInativos, 0);
     return {
       ...s,
       superintendente: superintendentesPorSuperintendencia.get(s.id) || null,
       diretorias: diretoriasMontadas,
-      totalPessoas: totalSup
+      totalAtivos: totalAtivosSup,
+      totalInativos: totalInativosSup
     };
   });
 }
@@ -11283,7 +11330,7 @@ function filtrarArvorePorBusca(arvore, termoBruto) {
     })
     .filter(Boolean);
 }
-function LinhaPessoa({ pessoa, nivel, destaque }) {
+function LinhaPessoa({ pessoa, nivel, destaque, inativo }) {
   const cor = NIVEL_COR[nivel];
   return /*#__PURE__*/React.createElement("div", {
     style: {
@@ -11292,6 +11339,7 @@ function LinhaPessoa({ pessoa, nivel, destaque }) {
       gap: 10,
       padding: "8px 10px",
       borderRadius: 10,
+      opacity: inativo ? 0.55 : 1,
       background: destaque ? "var(--marca-50)" : "transparent"
     }
   }, /*#__PURE__*/React.createElement(Avatar, { nome: pessoa.nome_completo, id: pessoa.id, size: 28 }),
@@ -11301,6 +11349,18 @@ function LinhaPessoa({ pessoa, nivel, destaque }) {
       }, pessoa.nome_completo),
       /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, color: "var(--cinza-400)" } }, pessoa.cargo_origem)
     ),
+    inativo && /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 20,
+        background: "var(--cinza-200)", color: "var(--cinza-600)", flexShrink: 0
+      }
+    }, "Inativo"),
+    pessoa.vinculo && /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 20,
+        background: "var(--cinza-100)", color: "var(--cinza-500)", flexShrink: 0
+      }
+    }, pessoa.vinculo),
     /*#__PURE__*/React.createElement("span", {
       style: {
         fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 20,
@@ -11318,7 +11378,13 @@ function LinhaPessoa({ pessoa, nivel, destaque }) {
   );
 }
 function CardGerencia({ gerencia, aberta, onToggle }) {
-  const qtd = gerencia.vendedores.length + (gerencia.gerente ? 1 : 0);
+  const ehAtivo = f => (f.situacao || "ATIVO").toUpperCase() === "ATIVO";
+  const gerenteAtivo = gerencia.gerente && ehAtivo(gerencia.gerente);
+  const gerenteInativo = gerencia.gerente && !ehAtivo(gerencia.gerente);
+  const vendedoresAtivos = gerencia.vendedores.filter(ehAtivo);
+  const vendedoresInativos = gerencia.vendedores.filter(v => !ehAtivo(v));
+  const totalAtivos = vendedoresAtivos.length + (gerenteAtivo ? 1 : 0);
+  const totalInativos = vendedoresInativos.length + (gerenteInativo ? 1 : 0);
   return /*#__PURE__*/React.createElement("div", {
     style: {
       background: "var(--cinza-50)",
@@ -11345,15 +11411,18 @@ function CardGerencia({ gerencia, aberta, onToggle }) {
       ),
       /*#__PURE__*/React.createElement("span", {
         style: { fontSize: 11, fontWeight: 600, color: "var(--cinza-500)", background: "var(--cinza-100)", padding: "2px 8px", borderRadius: 20, flexShrink: 0 }
-      }, qtd, " ", qtd === 1 ? "pessoa" : "pessoas")
+      }, textoAtivosInativos(totalAtivos, totalInativos))
     ),
     aberta && /*#__PURE__*/React.createElement("div", {
       style: { padding: "0 10px 10px 34px", display: "flex", flexDirection: "column", gap: 2 }
     },
-      gerencia.gerente && /*#__PURE__*/React.createElement(LinhaPessoa, { pessoa: gerencia.gerente, nivel: "gerente", destaque: true }),
+      gerencia.gerente && /*#__PURE__*/React.createElement(LinhaPessoa, { pessoa: gerencia.gerente, nivel: "gerente", destaque: true, inativo: gerenteInativo }),
       gerencia.vendedores.length === 0 && !gerencia.gerente
         ? /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: "var(--cinza-300)", padding: "6px 10px" } }, "Nenhum vendedor nesta gerência.")
-        : gerencia.vendedores.map(v => /*#__PURE__*/React.createElement(LinhaPessoa, { key: v.id, pessoa: v, nivel: "vendedor" }))
+        : [
+            ...vendedoresAtivos.map(v => /*#__PURE__*/React.createElement(LinhaPessoa, { key: v.id, pessoa: v, nivel: "vendedor" })),
+            ...vendedoresInativos.map(v => /*#__PURE__*/React.createElement(LinhaPessoa, { key: v.id, pessoa: v, nivel: "vendedor", inativo: true }))
+          ]
     )
   );
 }
@@ -11499,6 +11568,9 @@ function LinhaFuncionarioArvore({ f, contagens, setFuncSelecionado, setView, som
       }, f.ativo ? "● Ativo" : "○ Inativo")
     ),
     /*#__PURE__*/React.createElement(Semaforo, { esq: contagens[f.id].esquecimentos }),
+    f.vinculo && /*#__PURE__*/React.createElement("span", {
+      style: { fontSize: 10, fontWeight: 700, color: "var(--cinza-500)", background: "var(--cinza-100)", padding: "2px 8px", borderRadius: 20, flexShrink: 0 }
+    }, f.vinculo),
     /*#__PURE__*/React.createElement("span", {
       style: { fontSize: 11, background: al.bg, color: al.cor, padding: "3px 10px", borderRadius: 20, fontWeight: 600, flexShrink: 0 }
     }, al.label),
@@ -11524,7 +11596,6 @@ function LinhaFuncionarioArvore({ f, contagens, setFuncSelecionado, setView, som
 // de CardGerencia, mas listando os vendedores já filtrados (busca/setor/
 // situação) via LinhaFuncionarioArvore em vez de LinhaPessoa.
 function CardGerenciaFuncionarios({ gerencia, aberta, onToggle, contagens, setFuncSelecionado, setView, somenteLeituraGestor, setConfirmExcluir }) {
-  const qtd = gerencia.vendedores.length;
   return /*#__PURE__*/React.createElement("div", {
     style: { background: "var(--cinza-50)", border: "1px solid var(--cinza-100)", borderRadius: 12, overflow: "hidden" }
   },
@@ -11542,7 +11613,7 @@ function CardGerenciaFuncionarios({ gerencia, aberta, onToggle, contagens, setFu
       ),
       /*#__PURE__*/React.createElement("span", {
         style: { fontSize: 11, fontWeight: 600, color: "var(--cinza-500)", background: "var(--cinza-100)", padding: "2px 8px", borderRadius: 20, flexShrink: 0 }
-      }, qtd, " ", qtd === 1 ? "vendedor" : "vendedores")
+      }, textoAtivosInativos(gerencia.totalAtivos, gerencia.totalInativos))
     ),
     aberta && /*#__PURE__*/React.createElement("div", {
       style: { padding: "0 10px 10px 34px", display: "flex", flexDirection: "column", gap: 2 }
@@ -11579,7 +11650,7 @@ function NoDiretoriaFuncionarios({ diretoria, aberta, onToggle, gerenciasAbertas
       ),
       /*#__PURE__*/React.createElement("span", {
         style: { fontSize: 12, fontWeight: 700, color: "var(--marca-600)", background: "var(--marca-50)", padding: "4px 10px", borderRadius: 20, flexShrink: 0 }
-      }, diretoria.totalPessoas, " ", diretoria.totalPessoas === 1 ? "pessoa" : "pessoas")
+      }, textoAtivosInativos(diretoria.totalAtivos, diretoria.totalInativos))
     ),
     aberta && /*#__PURE__*/React.createElement("div", {
       style: { padding: "0 16px 16px 16px", display: "flex", flexDirection: "column", gap: 8 }
@@ -11637,7 +11708,7 @@ function NoDiretoria({ diretoria, aberta, onToggle, gerenciasAbertas, onToggleGe
       ),
       /*#__PURE__*/React.createElement("span", {
         style: { fontSize: 12, fontWeight: 700, color: "var(--marca-600)", background: "var(--marca-50)", padding: "4px 10px", borderRadius: 20, flexShrink: 0 }
-      }, diretoria.totalPessoas, " pessoas")
+      }, textoAtivosInativos(diretoria.totalAtivos, diretoria.totalInativos))
     ),
     aberta && /*#__PURE__*/React.createElement("div", {
       style: { padding: "0 16px 16px 16px", display: "flex", flexDirection: "column", gap: 8 }
@@ -11700,7 +11771,7 @@ function NoSuperintendencia({ superintendencia, aberta, onToggle, estadoAberto, 
           background: aberta ? "rgba(255,255,255,.22)" : "var(--marca-50)",
           color: aberta ? "var(--cor-branco)" : "var(--marca-600)"
         }
-      }, superintendencia.totalPessoas, " pessoas")
+      }, textoAtivosInativos(superintendencia.totalAtivos, superintendencia.totalInativos))
     ),
     aberta && /*#__PURE__*/React.createElement("div", {
       style: { padding: 20, display: "flex", flexDirection: "column", gap: 10, background: "var(--cinza-50)" }
@@ -11947,6 +12018,16 @@ function App() {
   const funcionariosExibidos = useMemo(() => {
     // Conta de teste continua isolada em seu próprio localStorage — nunca
     // mistura com dados reais da hierarquia comercial.
+    if (contaTesteAtivaAgora) return funcionarios;
+    const unificados = [...funcionarios, ...dadosComercial.funcionarios.filter(f => (f.situacao || "ATIVO").toUpperCase() === "ATIVO").map(normalizarFuncComercial)];
+    return filtrarPorEscopoGestor(unificados, usuario, dadosComercial);
+  }, [funcionarios, dadosComercial, usuario, contaTesteAtivaAgora]);
+  // Variante COM inativos, usada só pela tela de gestão de Funcionários
+  // (view "funcionarios"), onde agora exibimos ativos e inativos lado a
+  // lado na árvore. Todas as outras telas (dashboard, relatórios, painel
+  // de aprovação, portal) continuam usando `funcionariosExibidos` (só
+  // ativos) — não faz sentido inflar essas com gente inativa.
+  const funcionariosComInativos = useMemo(() => {
     if (contaTesteAtivaAgora) return funcionarios;
     const unificados = [...funcionarios, ...dadosComercial.funcionarios.map(normalizarFuncComercial)];
     return filtrarPorEscopoGestor(unificados, usuario, dadosComercial);
@@ -12198,7 +12279,7 @@ function App() {
       if (view === "funcionarios") return /*#__PURE__*/React.createElement(ListaFuncionarios, {
         setView: setView,
         setFuncSelecionado: setFuncSelecionado,
-        funcionarios: funcionariosExibidos,
+        funcionarios: funcionariosComInativos,
         setFuncionarios: setFuncionarios,
         ocorrencias: ocorrenciasFiltradas,
         setOcorrencias: setOcorrencias,
