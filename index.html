@@ -8969,7 +8969,22 @@ function PainelAprovacao({
         gap: 8
       }
     }, easymob ? /*#__PURE__*/React.createElement("button", {
-      onClick: () => window.open(easymob, "_blank"),
+      onClick: () => {
+        // window.open(dataUrl, "_blank") não funciona de forma confiável:
+        // vários navegadores tratam data URLs longas em base64 como
+        // navegação bloqueada/sanitizada e abrem a aba em branco, sem
+        // nenhum erro visível. Em vez de navegar direto para a data URL,
+        // abrimos uma aba com um documento HTML mínimo que apenas exibe a
+        // imagem via <img src="...">, o que funciona em qualquer navegador.
+        const win = window.open("", "_blank");
+        if (!win) return; // pop-up bloqueado pelo navegador
+        win.document.write(
+          '<html><head><title>Print EasyMob</title></head>' +
+          '<body style="margin:0;background:#111;display:flex;align-items:center;justify-content:center;min-height:100vh;">' +
+          '<img src="' + easymob + '" style="max-width:100%;max-height:100vh;" /></body></html>'
+        );
+        win.document.close();
+      },
       style: {
         background: "var(--verde-100)",
         color: "var(--verde-700)",
