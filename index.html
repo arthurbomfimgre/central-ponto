@@ -390,12 +390,32 @@ function useSharedState(key, initial, sessaoPronta, contaTesteFlag) {
     return () => clearInterval(id);
   }, [key, sessaoPronta]);
 
+  // Ref sempre sincronizado com o `state` mais recente. Necessário porque
+  // `setState` abaixo precisa ler o valor atual de forma síncrona (sem
+  // esperar o callback de setRaw, que não tem timing garantido — ver
+  // comentário dentro de setState), mas sem colocar `state` nas deps do
+  // useCallback, o que mudaria a identidade de setState a cada render e
+  // podia quebrar outros efeitos/memos deste arquivo que assumem que
+  // setState é estável entre renders.
+  const stateRef = useRef(state);
+  stateRef.current = state;
+
   const setState = useCallback(valOrFn => {
-    let next;
-    setRaw(prev => {
-      next = typeof valOrFn === "function" ? valOrFn(prev) : valOrFn;
-      return next;
-    });
+    // IMPORTANTE: `next` precisa estar pronto ANTES de qualquer await/Promise
+    // e não pode depender do callback passado a setRaw ser executado a
+    // tempo — setRaw(prev => ...) é assíncrono (o React apenas agenda a
+    // atualização), então esperar o callback rodar para popular `next` não
+    // tem garantia nenhuma de timing. Antes, isso podia deixar `next`
+    // undefined no momento de chamar salvarSupa(key, next); salvarSupa
+    // recebia um valor não-objeto/undefined, caía no early-return
+    // `{ ok: true }` e a UI mostrava "salvo com sucesso" sem nunca ter
+    // enviado nada ao Supabase (era exatamente o bug do print do EasyMob
+    // não chegar ao banco). Ler stateRef.current resolve `next` de forma
+    // síncrona e sempre atualizada, sem depender do timing do React nem
+    // mudar a identidade desta função.
+    const next = typeof valOrFn === "function" ? valOrFn(stateRef.current) : valOrFn;
+    stateRef.current = next;
+    setRaw(next);
     if (contaTesteAtiva()) {
       // Grava só localmente, isolado da chave real — nunca chama o Supabase.
       return Promise.resolve().then(() => {
