@@ -7713,12 +7713,18 @@ function PerfilFuncionario({
   addNotif,
   mesFiltro,
   setMesFiltro,
-  somenteLeitura = false
+  somenteLeitura = false,
+  sessaoPronta = true,
+  contaTesteAtivaAgora = false
 }) {
   const [filtroStatus, setFiltroStatus] = useState("Todos");
   const [modalCriar, setModalCriar] = useState(false);
   const [modalEasyMob, setModalEasyMob] = useState(null);
-  const [easymobMap, setEasymobMap] = useSharedState(`${SK_EASYMOB}_map`, {});
+  // Sem passar sessaoPronta/contaTesteAtivaAgora aqui, o efeito de carga
+  // inicial e o polling de 3s dentro de useSharedState nunca disparavam
+  // (ambos exigem sessaoPronta truthy) — o admin nunca buscava o print do
+  // EasyMob do Supabase, mesmo com o dado já gravado no banco.
+  const [easymobMap, setEasymobMap] = useSharedState(`${SK_EASYMOB}_map`, {}, sessaoPronta, contaTesteAtivaAgora);
   const [sucesso, setSucesso] = useState("");
   const [confirmExcluirOc, setConfirmExcluirOc] = useState(null);
   const [editandoOc, setEditandoOc] = useState(null);
@@ -8564,14 +8570,19 @@ function PainelAprovacao({
   addNotif,
   isAdmin,
   mesFiltro,
-  setMesFiltro
+  setMesFiltro,
+  sessaoPronta = true,
+  contaTesteAtivaAgora = false
 }) {
   const [modal, setModal] = useState(null);
   const [obs, setObs] = useState("");
   const [filtro, setFiltro] = useState("Corrigido");
   const [filtroSetor, setFiltroSetor] = useState("Todos");
   const [filtroCargo, setFiltroCargo] = useState("Todos");
-  const [easymobMap] = useSharedState(`${SK_EASYMOB}_map`, {});
+  // Sem sessaoPronta/contaTesteAtivaAgora, a carga inicial e o polling de
+  // useSharedState nunca disparavam — o print do EasyMob ficava gravado no
+  // Supabase mas nunca era buscado para exibição aqui.
+  const [easymobMap] = useSharedState(`${SK_EASYMOB}_map`, {}, sessaoPronta, contaTesteAtivaAgora);
   const cargosDisponiveis = useMemo(() => [...new Set(funcionarios.map(f => f.cargo))].sort((a, b) => a.localeCompare(b, "pt-BR", {
     sensitivity: "base"
   })), [funcionarios]);
@@ -10482,7 +10493,9 @@ function PortalFuncionario({
   setFuncionarios,
   addNotif,
   notifs,
-  setNotifs
+  setNotifs,
+  sessaoPronta = true,
+  contaTesteAtivaAgora = false
 }) {
   const funcLogado = funcionarios.find(f => f.id === usuarioLogado.funcionario_id) || funcionarios[0];
   // Conta de teste (ou qualquer cenário sem nenhum funcionário cadastrado):
@@ -10518,7 +10531,9 @@ function PortalFuncionario({
   const contagemFunc = contarOcorrencias(ocorrenciasPortal, funcLogado.id);
   const [modal, setModal] = useState(null);
   const [sucesso, setSucesso] = useState(false);
-  const [easymobMap, setEasymobMap] = useSharedState(`${SK_EASYMOB}_map`, {});
+  // Sem sessaoPronta/contaTesteAtivaAgora, a carga inicial e o polling de
+  // useSharedState nunca disparavam para este componente.
+  const [easymobMap, setEasymobMap] = useSharedState(`${SK_EASYMOB}_map`, {}, sessaoPronta, contaTesteAtivaAgora);
   const [enviandoEasymob, setEnviandoEasymob] = useState(null); // id da ocorrência em envio
   const [erroEasymob, setErroEasymob] = useState(null);
   const [trocandoTipo, setTrocandoTipo] = useState(null); // id da ocorrência com a grade de tipo reaberta
@@ -12335,7 +12350,9 @@ function App() {
         addNotif: addNotif,
         mesFiltro: mesFiltro,
         setMesFiltro: setMesFiltro,
-        somenteLeitura: ["diretor", "superintendente"].includes(usuario?.nivel)
+        somenteLeitura: ["diretor", "superintendente"].includes(usuario?.nivel),
+        sessaoPronta: sessaoPronta,
+        contaTesteAtivaAgora: contaTesteAtivaAgora
       });
       if (view === "aprovacao") return /*#__PURE__*/React.createElement(PainelAprovacao, {
         ocorrencias: ocorrenciasFiltradas,
@@ -12345,7 +12362,9 @@ function App() {
         addNotif: addNotif,
         isAdmin: isAdmin,
         mesFiltro: mesFiltro,
-        setMesFiltro: setMesFiltro
+        setMesFiltro: setMesFiltro,
+        sessaoPronta: sessaoPronta,
+        contaTesteAtivaAgora: contaTesteAtivaAgora
       });
       if (view === "relatorios") return /*#__PURE__*/React.createElement(Relatorios, {
         ocorrencias: ocorrenciasRelatorio,
@@ -12369,7 +12388,9 @@ function App() {
         setFuncionarios: setFuncionarios,
         addNotif: addNotif,
         notifs: notifsExibidas,
-        setNotifs: setNotifs
+        setNotifs: setNotifs,
+        sessaoPronta: sessaoPronta,
+        contaTesteAtivaAgora: contaTesteAtivaAgora
       });
     }
     if (view === "mural") return /*#__PURE__*/React.createElement(ProcessosPonto, { usuario: usuario, setView: setView });
@@ -12381,7 +12402,9 @@ function App() {
       setFuncionarios: setFuncionarios,
       addNotif: addNotif,
       notifs: notifsExibidas,
-      setNotifs: setNotifs
+      setNotifs: setNotifs,
+      sessaoPronta: sessaoPronta,
+      contaTesteAtivaAgora: contaTesteAtivaAgora
     });
   }
   return /*#__PURE__*/React.createElement("div", {
