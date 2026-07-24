@@ -6009,7 +6009,7 @@ function ListaFuncionarios({
     return ok1 && ok2 && ok3;
   }).sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR", {
     sensitivity: "base"
-  })), [busca, setor, filtroAlerta, funcionarios, contagens]);
+  })), [busca, cargoFiltro, filtroAlerta, funcionarios, contagens]);
   // Agrupa `lista` (já filtrada por busca/setor/situação) em árvore
   // Diretoria → Gerência para a visão expansível de superintendente/diretor.
   // Superintendente vê todas as diretorias da própria superintendência;
