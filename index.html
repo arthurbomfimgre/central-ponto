@@ -5953,7 +5953,7 @@ function ListaFuncionarios({
   diretoriasComercial = []
 }) {
   const [busca, setBusca] = useState("");
-  const [setor, setSetor] = useState("Todos");
+  const [cargoFiltro, setCargoFiltro] = useState("Todos");
   const [filtroAlerta, setFiltroAlerta] = useState("Todos");
   // Filtro adicional de sub-unidade. Diretor: um único nível (gerência
   // dentro da sua diretoria). Superintendente: cascata de dois níveis —
@@ -6003,7 +6003,7 @@ function ListaFuncionarios({
   }, [ocorrencias, funcionarios]);
   const lista = useMemo(() => funcionarios.filter(f => {
     const ok1 = f.nome.toLowerCase().includes(busca.toLowerCase()) || f.matricula.toLowerCase().includes(busca.toLowerCase());
-    const ok2 = setor === "Todos" || f.setor === setor;
+    const ok2 = cargoFiltro === "Todos" || f.cargo === cargoFiltro;
     const esq = contagens[f.id].esquecimentos;
     const ok3 = filtroAlerta === "Todos" || filtroAlerta === "Normal" && esq <= 1 || filtroAlerta === "Atenção" && esq === 2 || filtroAlerta === "Limite" && esq === 3 || filtroAlerta === "Excedido" && esq >= 4;
     return ok1 && ok2 && ok3;
@@ -6268,9 +6268,9 @@ function ListaFuncionarios({
       textTransform: "uppercase",
       letterSpacing: ".05em"
     }
-  }, "Setor"), /*#__PURE__*/React.createElement("select", {
-    value: setor,
-    onChange: e => setSetor(e.target.value),
+  }, "Cargo"), /*#__PURE__*/React.createElement("select", {
+    value: cargoFiltro,
+    onChange: e => setCargoFiltro(e.target.value),
     style: {
       padding: "9px 14px",
       borderRadius: 10,
@@ -6279,7 +6279,7 @@ function ListaFuncionarios({
       background: "var(--cor-branco)",
       cursor: "pointer"
     }
-  }, ["Todos", ...setoresDisponiveis].map(s => /*#__PURE__*/React.createElement("option", {
+  }, ["Todos", ...cargosDisponiveis].map(s => /*#__PURE__*/React.createElement("option", {
     key: s
   }, s)))), /*#__PURE__*/React.createElement("div", {
     style: {
@@ -8589,7 +8589,6 @@ function PainelAprovacao({
   const [modal, setModal] = useState(null);
   const [obs, setObs] = useState("");
   const [filtro, setFiltro] = useState("Corrigido");
-  const [filtroSetor, setFiltroSetor] = useState("Todos");
   const [filtroCargo, setFiltroCargo] = useState("Todos");
   // Sem sessaoPronta/contaTesteAtivaAgora, a carga inicial e o polling de
   // useSharedState nunca disparavam — o print do EasyMob ficava gravado no
@@ -8598,14 +8597,10 @@ function PainelAprovacao({
   const cargosDisponiveis = useMemo(() => [...new Set(funcionarios.map(f => f.cargo))].sort((a, b) => a.localeCompare(b, "pt-BR", {
     sensitivity: "base"
   })), [funcionarios]);
-  const setoresDisponiveis = useMemo(() => [...new Set(funcionarios.map(f => f.setor).filter(Boolean))].sort((a, b) => a.localeCompare(b, "pt-BR", {
-    sensitivity: "base"
-  })), [funcionarios]);
   const lista = ocorrencias.filter(o => {
     if (filtro !== "Todos" && o.status !== filtro) return false;
     const func = funcionarios.find(f => f.id === o.funcionario_id);
     if (!func) return false;
-    if (filtroSetor !== "Todos" && func.setor !== filtroSetor) return false;
     if (filtroCargo !== "Todos" && func.cargo !== filtroCargo) return false;
     return true;
   }).sort((a, b) => (b.atualizadoEm || b.data || "").localeCompare(a.atualizadoEm || a.data || ""));
@@ -8671,7 +8666,6 @@ function PainelAprovacao({
   const ocorrenciasFiltroSC = ocorrencias.filter(o => {
     const func = funcionarios.find(f => f.id === o.funcionario_id);
     if (!func) return false;
-    if (filtroSetor !== "Todos" && func.setor !== filtroSetor) return false;
     if (filtroCargo !== "Todos" && func.cargo !== filtroCargo) return false;
     return true;
   });
@@ -8767,33 +8761,6 @@ function PainelAprovacao({
       textTransform: "uppercase",
       letterSpacing: ".05em"
     }
-  }, "Setor"), /*#__PURE__*/React.createElement("select", {
-    value: filtroSetor,
-    onChange: e => setFiltroSetor(e.target.value),
-    style: {
-      padding: "9px 14px",
-      borderRadius: 10,
-      border: "1px solid var(--cinza-200)",
-      fontSize: 13,
-      background: "var(--cor-branco)",
-      cursor: "pointer"
-    }
-  }, ["Todos", ...setoresDisponiveis].map(s => /*#__PURE__*/React.createElement("option", {
-    key: s
-  }, s)))), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: "flex",
-      flexDirection: "column",
-      gap: 4
-    }
-  }, /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontSize: 11,
-      fontWeight: 700,
-      color: "var(--cinza-400)",
-      textTransform: "uppercase",
-      letterSpacing: ".05em"
-    }
   }, "Cargo"), /*#__PURE__*/React.createElement("select", {
     value: filtroCargo,
     onChange: e => setFiltroCargo(e.target.value),
@@ -8807,9 +8774,8 @@ function PainelAprovacao({
     }
   }, ["Todos", ...cargosDisponiveis].map(c => /*#__PURE__*/React.createElement("option", {
     key: c
-  }, c)))), (filtroSetor !== "Todos" || filtroCargo !== "Todos") && /*#__PURE__*/React.createElement("button", {
+  }, c)))), filtroCargo !== "Todos" && /*#__PURE__*/React.createElement("button", {
     onClick: () => {
-      setFiltroSetor("Todos");
       setFiltroCargo("Todos");
     },
     style: {
@@ -9200,17 +9166,17 @@ function Relatorios({
   setMesFiltro,
   seletorEscopo
 }) {
-  const [setorFiltro, setSetorFiltro] = useState("Todos");
+  const [cargoFiltro, setCargoFiltro] = useState("Todos");
   const [view, setView] = useState("resumo"); // resumo | detalhe
-  const setoresDisponiveis = useMemo(() => [...new Set(funcionarios.map(f => f.setor).filter(Boolean))].sort((a, b) => a.localeCompare(b, "pt-BR", {
+  const cargosDisponiveis = useMemo(() => [...new Set(funcionarios.map(f => f.cargo).filter(Boolean))].sort((a, b) => a.localeCompare(b, "pt-BR", {
     sensitivity: "base"
   })), [funcionarios]);
 
   // ocorrencias já chega filtrada pelo mês selecionado globalmente (via App)
   const ocs = ocorrencias.filter(o => {
     const func = funcionarios.find(f => f.id === o.funcionario_id);
-    const matchSetor = setorFiltro === "Todos" || func && func.setor === setorFiltro;
-    return matchSetor;
+    const matchCargo = cargoFiltro === "Todos" || func && func.cargo === cargoFiltro;
+    return matchCargo;
   });
   const totalPorTipo = TIPOS_OCORRENCIA.map(t => ({
     tipo: t,
@@ -9222,7 +9188,7 @@ function Relatorios({
     Verificado: ocs.filter(o => o.status === "Verificado").length,
     Rejeitado: ocs.filter(o => o.status === "Rejeitado").length
   };
-  const funcStatsBase = funcionarios.filter(f => setorFiltro === "Todos" || f.setor === setorFiltro).map(f => {
+  const funcStatsBase = funcionarios.filter(f => cargoFiltro === "Todos" || f.cargo === cargoFiltro).map(f => {
     const fOcs = ocs.filter(o => o.funcionario_id === f.id);
     return {
       ...f,
@@ -9344,9 +9310,9 @@ function Relatorios({
       textTransform: "uppercase",
       letterSpacing: ".05em"
     }
-  }, "Setor"), /*#__PURE__*/React.createElement("select", {
-    value: setorFiltro,
-    onChange: e => setSetorFiltro(e.target.value),
+  }, "Cargo"), /*#__PURE__*/React.createElement("select", {
+    value: cargoFiltro,
+    onChange: e => setCargoFiltro(e.target.value),
     style: {
       padding: "9px 14px",
       borderRadius: 10,
@@ -9355,7 +9321,7 @@ function Relatorios({
       background: "var(--cor-branco)",
       cursor: "pointer"
     }
-  }, ["Todos", ...setoresDisponiveis].map(s => /*#__PURE__*/React.createElement("option", {
+  }, ["Todos", ...cargosDisponiveis].map(s => /*#__PURE__*/React.createElement("option", {
     key: s
   }, s)))), /*#__PURE__*/React.createElement("div", {
     style: {
