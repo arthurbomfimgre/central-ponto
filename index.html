@@ -3858,8 +3858,11 @@ const OCS_SJCJULHO = [
     novoParaFunc: false
   }
 ];
-const SETORES_LIST = ["INTELIGÊNCIA COMERCIAL", "BACKOFFICE GRE", "POS CONTEMPLACAO", "GRE"];
-const SETORES = ["Todos", ...SETORES_LIST];
+// SETORES_LIST/SETORES (lista fixa antiga) foram removidas: os setores
+// agora são derivados dinamicamente dos funcionários já importados/
+// cadastrados (ver `setoresDisponiveis` em cada componente que usa filtro
+// ou formulário de setor), para acompanhar automaticamente qualquer setor
+// novo que vier de planilhas futuras.
 const STATUS_LIST = ["Pendente", "Corrigido", "Verificado", "Rejeitado"];
 const TIPOS_OCORRENCIA = ["Esquecimento", "Erro de Registro", "Atestado Médico", "Falta", "Banco de Horas", "Abono", "Integração"];
 const TIPO_EXIGE_EASYMOB = "Erro de Registro";
@@ -5976,12 +5979,19 @@ function ListaFuncionarios({
   const [novo, setNovo] = useState({
     nome: "",
     cargo: "",
-    setor: SETORES_LIST[0]
+    setor: ""
   });
   const [err, setErr] = useState("");
   const [sucesso, setSucesso] = useState("");
   const [salvando, setSalvando] = useState(false);
   const cargosDisponiveis = useMemo(() => [...new Set(funcionarios.map(f => f.cargo))].sort((a, b) => a.localeCompare(b, "pt-BR", {
+    sensitivity: "base"
+  })), [funcionarios]);
+  // Setores disponíveis, derivados dinamicamente dos funcionários já
+  // cadastrados/importados (em vez de uma lista fixa desatualizada) — assim
+  // qualquer setor que vier de uma planilha nova aparece automaticamente
+  // nos filtros e formulários, sem precisar editar código depois.
+  const setoresDisponiveis = useMemo(() => [...new Set(funcionarios.map(f => f.setor).filter(Boolean))].sort((a, b) => a.localeCompare(b, "pt-BR", {
     sensitivity: "base"
   })), [funcionarios]);
   const contagens = useMemo(() => {
@@ -6094,7 +6104,7 @@ function ListaFuncionarios({
 
     setSalvando(false);
     setModalAdd(false);
-    setNovo({ nome: "", cargo: "", setor: SETORES_LIST[0] });
+    setNovo({ nome: "", cargo: "", setor: "" });
     setErr("");
 
     if (avisoAuth) {
@@ -6269,7 +6279,7 @@ function ListaFuncionarios({
       background: "var(--cor-branco)",
       cursor: "pointer"
     }
-  }, SETORES.map(s => /*#__PURE__*/React.createElement("option", {
+  }, ["Todos", ...setoresDisponiveis].map(s => /*#__PURE__*/React.createElement("option", {
     key: s
   }, s)))), /*#__PURE__*/React.createElement("div", {
     style: {
@@ -6586,7 +6596,7 @@ function ListaFuncionarios({
       background: "var(--cor-branco)",
       boxSizing: "border-box"
     }
-  }, SETORES_LIST.map(s => /*#__PURE__*/React.createElement("option", {
+  }, /*#__PURE__*/React.createElement("option", { value: "" }, "Selecione um setor…"), setoresDisponiveis.map(s => /*#__PURE__*/React.createElement("option", {
     key: s
   }, s)))), err && /*#__PURE__*/React.createElement("div", {
     style: {
@@ -7735,6 +7745,7 @@ function PerfilFuncionario({
   const [salvandoEdicao, setSalvandoEdicao] = useState(false);
   const [errEdicao, setErrEdicao] = useState("");
   const cargosDisponiveis = useMemo(() => [...new Set(funcionarios.map(f => f.cargo))].sort((a, b) => a.localeCompare(b, "pt-BR", { sensitivity: "base" })), [funcionarios]);
+  const setoresDisponiveis = useMemo(() => [...new Set(funcionarios.map(f => f.setor).filter(Boolean))].sort((a, b) => a.localeCompare(b, "pt-BR", { sensitivity: "base" })), [funcionarios]);
 
   function abrirEditar() {
     setEditando({
@@ -8491,7 +8502,8 @@ function PerfilFuncionario({
         onChange: e => setEditando(p => ({ ...p, setor: e.target.value })),
         style: { width: "100%", padding: "10px 14px", borderRadius: 10, border: "1px solid var(--cinza-200)", fontSize: 13, background: "var(--cor-branco)", cursor: "pointer", boxSizing: "border-box" }
       },
-        SETORES_LIST.map(s => /*#__PURE__*/React.createElement("option", { key: s }, s))
+        /*#__PURE__*/React.createElement("option", { value: "" }, "Selecione…"),
+        setoresDisponiveis.map(s => /*#__PURE__*/React.createElement("option", { key: s }, s))
       )
     )
   ),
@@ -8584,6 +8596,9 @@ function PainelAprovacao({
   // Supabase mas nunca era buscado para exibição aqui.
   const [easymobMap] = useSharedState(`${SK_EASYMOB}_map`, {}, sessaoPronta, contaTesteAtivaAgora);
   const cargosDisponiveis = useMemo(() => [...new Set(funcionarios.map(f => f.cargo))].sort((a, b) => a.localeCompare(b, "pt-BR", {
+    sensitivity: "base"
+  })), [funcionarios]);
+  const setoresDisponiveis = useMemo(() => [...new Set(funcionarios.map(f => f.setor).filter(Boolean))].sort((a, b) => a.localeCompare(b, "pt-BR", {
     sensitivity: "base"
   })), [funcionarios]);
   const lista = ocorrencias.filter(o => {
@@ -8763,7 +8778,7 @@ function PainelAprovacao({
       background: "var(--cor-branco)",
       cursor: "pointer"
     }
-  }, SETORES.map(s => /*#__PURE__*/React.createElement("option", {
+  }, ["Todos", ...setoresDisponiveis].map(s => /*#__PURE__*/React.createElement("option", {
     key: s
   }, s)))), /*#__PURE__*/React.createElement("div", {
     style: {
@@ -9187,6 +9202,9 @@ function Relatorios({
 }) {
   const [setorFiltro, setSetorFiltro] = useState("Todos");
   const [view, setView] = useState("resumo"); // resumo | detalhe
+  const setoresDisponiveis = useMemo(() => [...new Set(funcionarios.map(f => f.setor).filter(Boolean))].sort((a, b) => a.localeCompare(b, "pt-BR", {
+    sensitivity: "base"
+  })), [funcionarios]);
 
   // ocorrencias já chega filtrada pelo mês selecionado globalmente (via App)
   const ocs = ocorrencias.filter(o => {
@@ -9337,7 +9355,7 @@ function Relatorios({
       background: "var(--cor-branco)",
       cursor: "pointer"
     }
-  }, SETORES.map(s => /*#__PURE__*/React.createElement("option", {
+  }, ["Todos", ...setoresDisponiveis].map(s => /*#__PURE__*/React.createElement("option", {
     key: s
   }, s)))), /*#__PURE__*/React.createElement("div", {
     style: {
