@@ -69,6 +69,12 @@ const EDGE_CRIAR_USUARIO = `${SUPA_URL}/functions/v1/criar-usuario-funcionario`;
 // ainda não têm auth_user_id (ver componente ArvoreHierarquia). Só a conta
 // de teste comercial@portovale.com.br vê o botão que dispara isso.
 const EDGE_CRIAR_USUARIOS_COMERCIAL_LOTE = `${SUPA_URL}/functions/v1/criar-usuarios-comercial-lote`;
+// Edge Function do painel de acessos (resetar_senha/revogar_acesso/
+// reativar_acesso) — protegida no servidor, só aceita chamadas autenticadas
+// como comercial@portovale.com.br (ver comentário de segurança na própria
+// function). Usada tanto pelas ações manuais do painel quanto pela
+// auto-revogação ao importar planilha (ver aplicarImportacaoHierarquia).
+const EDGE_GERENCIAR_ACESSO = `${SUPA_URL}/functions/v1/admin-gerenciar-acesso`;
 
 // Mapeamento: chave -> tabela Supabase
 const SK_OCS    = "cp_ocorrencias_v4";
@@ -7385,6 +7391,41 @@ function filtrarPlanoPorSelecao(plano, diretoriasRejeitadas, gerenciasRejeitadas
 // do id real da diretoria), e ambas antes dos funcionários (que precisam
 // dos ids de gerência/diretoria/superintendência para gravar as FKs).
 // onProgresso(etapa) é opcional, só para feedback textual no modal.
+// Chama a Edge Function do painel de acessos (admin-gerenciar-acesso) com o
+// token real da sessão logada — a function exige isso no servidor e rejeita
+// qualquer chamada sem um token válido de comercial@portovale.com.br (ver
+// comentário de segurança na própria function). Retorna { ok, ...resto } ou
+// { ok: false, erro }.
+// - acao: "resetar_senha" | "revogar_acesso" | "reativar_acesso"
+// - funcionario: registro de funcionarios_comercial (precisa de auth_user_id e id)
+async function chamarGerenciarAcesso(acao, funcionario) {
+  if (!funcionario.auth_user_id) {
+    // Sem login criado ainda — não há usuário Auth para agir sobre. Não é
+    // erro: só não há nada a fazer no Auth (a situacao/acesso_revogado no
+    // banco continua valendo normalmente).
+    return { ok: true, semAuthUser: true };
+  }
+  try {
+    const { data: sessao } = await supa.auth.getSession();
+    const token = sessao?.session?.access_token;
+    if (!token) return { ok: false, erro: "Sessão expirada — faça login novamente." };
+    const res = await fetch(EDGE_GERENCIAR_ACESSO, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+      body: JSON.stringify({
+        acao,
+        auth_user_id: funcionario.auth_user_id,
+        funcionario_comercial_id: funcionario.id
+      })
+    });
+    const json = await res.json();
+    if (!res.ok || json.erro) return { ok: false, erro: json.erro || `Falha (HTTP ${res.status}).` };
+    return { ok: true, ...json };
+  } catch (e) {
+    return { ok: false, erro: "Não foi possível contatar a Edge Function. Verifique se ela está publicada." };
+  }
+}
+
 async function aplicarImportacaoHierarquia(plano, banco, onProgresso) {
   const progresso = onProgresso || (() => {});
 
@@ -7461,15 +7502,31 @@ async function aplicarImportacaoHierarquia(plano, banco, onProgresso) {
   }
 
   // ── 5) Inativa quem sumiu da planilha ────────────────────────────────────
+  // Além de marcar situacao=INATIVO (já existia), agora também revoga o
+  // acesso de login (Auth) de quem tinha auth_user_id — via a mesma Edge
+  // Function do painel de acessos, com o mesmo efeito do botão manual
+  // "Revogar acesso": bane o usuário no Auth e marca acesso_revogado=true
+  // em funcionarios_comercial. Feito depois do update de situacao (não
+  // bloqueia a inativação em si se a Edge Function falhar) — falhas aqui
+  // ficam registradas em `falhasRevogacao` e são reportadas ao usuário no
+  // resumo, mas não interrompem a importação.
   progresso(`Inativando ${plano.funcionariosInativados.length} funcionário(s)…`);
+  const falhasRevogacao = [];
   for (const inativo of plano.funcionariosInativados) {
     const { error } = await supa.from("funcionarios_comercial")
       .update({ situacao: "INATIVO" })
       .eq("id", inativo.id);
     if (error) throw new Error(`Falha ao inativar funcionário "${inativo.nome_completo}": ${extrairMensagemErro(error)}`);
+    if (inativo.auth_user_id) {
+      const resultado = await chamarGerenciarAcesso("revogar_acesso", inativo);
+      if (!resultado.ok) {
+        falhasRevogacao.push({ nome: inativo.nome_completo, matricula: inativo.matricula, motivo: resultado.erro });
+      }
+    }
   }
 
   progresso("Concluído.");
+  return { falhasRevogacao };
 }
 
 function ModalImportarHierarquia({ onClose, onConcluido }) {
@@ -7533,13 +7590,14 @@ function ModalImportarHierarquia({ onClose, onConcluido }) {
     setErro("");
     try {
       const planoFiltrado = filtrarPlanoPorSelecao(plano, diretoriasRejeitadas, gerenciasRejeitadas);
-      await aplicarImportacaoHierarquia(planoFiltrado, banco, setEtapaAtual);
+      const { falhasRevogacao } = await aplicarImportacaoHierarquia(planoFiltrado, banco, setEtapaAtual);
       setConcluido({
         novos: planoFiltrado.funcionariosNovos.length,
         atualizados: planoFiltrado.funcionariosAtualizados.length,
         inativados: planoFiltrado.funcionariosInativados.length,
         diretoriasCriadas: planoFiltrado.diretoriasNovas.length,
-        gerenciasCriadas: planoFiltrado.gerenciasNovas.length
+        gerenciasCriadas: planoFiltrado.gerenciasNovas.length,
+        falhasRevogacao: falhasRevogacao || []
       });
       setPlano(null);
       setArquivo(null);
@@ -7701,6 +7759,16 @@ function ModalImportarHierarquia({ onClose, onConcluido }) {
         style: { background: "var(--verde-100)", color: "var(--verde-800)", borderRadius: 10, padding: "12px 16px", fontSize: 13, fontWeight: 600 }
       }, "✓ Importação concluída: ", concluido.novos, " novo(s), ", concluido.atualizados, " atualizado(s), ",
         concluido.inativados, " inativado(s), ", concluido.diretoriasCriadas, " diretoria(s) nova(s), ", concluido.gerenciasCriadas, " gerência(s) nova(s)."),
+      concluido.falhasRevogacao?.length > 0 && /*#__PURE__*/React.createElement("div", {
+        style: { background: "var(--amber-100)", color: "var(--amber-800)", borderRadius: 10, padding: "12px 16px", fontSize: 12.5 }
+      },
+        /*#__PURE__*/React.createElement("div", { style: { fontWeight: 700, marginBottom: 6 } },
+          "⚠️ Situação atualizada, mas ", concluido.falhasRevogacao.length, " login(s) não puderam ser revogados automaticamente no Auth (revogue manualmente no painel de Acessos):"),
+        /*#__PURE__*/React.createElement("ul", { style: { paddingLeft: 18, display: "flex", flexDirection: "column", gap: 2 } },
+          concluido.falhasRevogacao.map((f, i) => /*#__PURE__*/React.createElement("li", { key: i },
+            f.nome, " (mat. ", f.matricula, ") — ", f.motivo))
+        )
+      ),
       /*#__PURE__*/React.createElement("button", {
         onClick: onClose,
         style: {
