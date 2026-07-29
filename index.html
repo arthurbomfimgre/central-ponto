@@ -11707,6 +11707,15 @@ function LinhaFuncionarioArvore({ f, contagens, setFuncSelecionado, setView, som
     f.vinculo && /*#__PURE__*/React.createElement("span", {
       style: { fontSize: 10, fontWeight: 700, color: "var(--cinza-500)", background: "var(--cinza-100)", padding: "2px 8px", borderRadius: 20, flexShrink: 0 }
     }, f.vinculo),
+    // Acesso revogado — só existe para gente vinda de funcionarios_comercial
+    // (campo acesso_revogado só é gerido lá, via ModalPerfilComercial/
+    // chamarGerenciarAcesso). Exibida para qualquer um que veja esta lista,
+    // inclusive gestores — mas sem botão de ação, já que revogar/reativar
+    // continua exclusivo do admin geral (ver Hierarquia).
+    f.acesso_revogado && /*#__PURE__*/React.createElement("span", {
+      title: "Login bloqueado no Auth",
+      style: { fontSize: 10, fontWeight: 700, color: "var(--vermelho-600)", background: "var(--vermelho-100)", padding: "2px 8px", borderRadius: 20, flexShrink: 0 }
+    }, "🔒 Acesso revogado"),
     /*#__PURE__*/React.createElement("span", {
       style: { fontSize: 11, background: al.bg, color: al.cor, padding: "3px 10px", borderRadius: 20, fontWeight: 600, flexShrink: 0 }
     }, al.label),
