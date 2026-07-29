@@ -11906,6 +11906,141 @@ function NoSuperintendencia({ superintendencia, aberta, onToggle, estadoAberto, 
     )
   );
 }
+// Modal de teste isolado para o painel de acessos — permite escolher um
+// funcionário e disparar revogar_acesso/reativar_acesso manualmente, sem
+// precisar passar por uma importação de planilha inteira. Temporário: serve
+// para validar a Edge Function antes da tela definitiva do painel (fatia
+// seguinte) existir. Só reflete o resultado nesta sessão do modal — não
+// atualiza a árvore ao redor (fechar e reabrir a tela mostra o estado real
+// vindo do banco).
+function ModalTesteAcesso({ funcionarios, onClose }) {
+  const [busca, setBusca] = useState("");
+  const [selecionadoId, setSelecionadoId] = useState(null);
+  const [executando, setExecutando] = useState(false);
+  const [resultado, setResultado] = useState(null); // { ok, ...} ou { ok:false, erro }
+
+  const candidatos = useMemo(() => {
+    const termo = busca.trim().toLowerCase();
+    if (!termo) return [];
+    return funcionarios
+      .filter(f => f.nome_completo?.toLowerCase().includes(termo) || String(f.matricula).includes(termo))
+      .slice(0, 8);
+  }, [busca, funcionarios]);
+
+  const selecionado = funcionarios.find(f => f.id === selecionadoId) || null;
+
+  async function executar(acao) {
+    if (!selecionado || executando) return;
+    setExecutando(true);
+    setResultado(null);
+    const r = await chamarGerenciarAcesso(acao, selecionado);
+    setResultado(r);
+    setExecutando(false);
+  }
+
+  return /*#__PURE__*/React.createElement(Modal, {
+    title: "🧪 Testar painel de acessos",
+    onClose,
+    maxWidth: 520
+  },
+    /*#__PURE__*/React.createElement("p", {
+      style: { fontSize: 12.5, color: "var(--cinza-500)", marginBottom: 16 }
+    }, "Escolha um funcionário e dispare uma ação diretamente na Edge Function admin-gerenciar-acesso, para validar antes de a tela definitiva existir."),
+
+    /*#__PURE__*/React.createElement("input", {
+      value: busca,
+      onChange: e => { setBusca(e.target.value); setSelecionadoId(null); setResultado(null); },
+      placeholder: "Buscar por nome ou matrícula…",
+      style: {
+        width: "100%", padding: "10px 14px", borderRadius: 10,
+        border: "1px solid var(--cinza-200)", fontSize: 13, marginBottom: 8
+      }
+    }),
+
+    !selecionado && candidatos.length > 0 && /*#__PURE__*/React.createElement("div", {
+      style: { display: "flex", flexDirection: "column", gap: 4, marginBottom: 8, maxHeight: 220, overflowY: "auto" }
+    },
+      candidatos.map(f => /*#__PURE__*/React.createElement("button", {
+        key: f.id,
+        onClick: () => { setSelecionadoId(f.id); setResultado(null); },
+        style: {
+          textAlign: "left", padding: "8px 12px", borderRadius: 8, border: "1px solid var(--cinza-100)",
+          background: "var(--cinza-50)", cursor: "pointer", fontSize: 12.5
+        }
+      },
+        /*#__PURE__*/React.createElement("strong", null, f.nome_completo), " — mat. ", f.matricula,
+        " · ", f.situacao || "ATIVO",
+        f.auth_user_id ? " · tem login" : " · SEM LOGIN (nada a revogar no Auth)",
+        f.acesso_revogado ? " · 🔒 acesso revogado" : ""
+      ))
+    ),
+
+    selecionado && /*#__PURE__*/React.createElement("div", {
+      style: { background: "var(--marca-50)", borderRadius: 12, padding: "12px 14px", marginBottom: 14 }
+    },
+      /*#__PURE__*/React.createElement("div", { style: { fontSize: 13, fontWeight: 700, color: "var(--cinza-900)" } }, selecionado.nome_completo),
+      /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: "var(--cinza-500)", marginTop: 2 } },
+        "Matrícula ", selecionado.matricula, " · Situação: ", selecionado.situacao || "ATIVO",
+        " · auth_user_id: ", selecionado.auth_user_id || "(vazio)",
+        " · acesso_revogado: ", String(!!selecionado.acesso_revogado)),
+      !selecionado.auth_user_id && /*#__PURE__*/React.createElement("div", {
+        style: { fontSize: 12, color: "var(--amber-700)", marginTop: 6, fontWeight: 600 }
+      }, "⚠️ Este funcionário não tem login criado ainda — revogar/reativar não terá efeito no Auth (só retorna sem fazer nada)."),
+
+      /*#__PURE__*/React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" } },
+        /*#__PURE__*/React.createElement("button", {
+          onClick: () => executar("revogar_acesso"),
+          disabled: executando,
+          style: {
+            padding: "8px 14px", borderRadius: 8, border: "none",
+            background: executando ? "var(--cinza-300)" : "var(--vermelho-600)", color: "var(--cor-branco)",
+            fontSize: 12.5, fontWeight: 700, cursor: executando ? "default" : "pointer"
+          }
+        }, "🔒 Revogar acesso"),
+        /*#__PURE__*/React.createElement("button", {
+          onClick: () => executar("reativar_acesso"),
+          disabled: executando,
+          style: {
+            padding: "8px 14px", borderRadius: 8, border: "none",
+            background: executando ? "var(--cinza-300)" : "var(--verde-600)", color: "var(--cor-branco)",
+            fontSize: 12.5, fontWeight: 700, cursor: executando ? "default" : "pointer"
+          }
+        }, "🔓 Reativar acesso"),
+        /*#__PURE__*/React.createElement("button", {
+          onClick: () => executar("resetar_senha"),
+          disabled: executando,
+          style: {
+            padding: "8px 14px", borderRadius: 8, border: "none",
+            background: executando ? "var(--cinza-300)" : "var(--marca-600)", color: "var(--cor-branco)",
+            fontSize: 12.5, fontWeight: 700, cursor: executando ? "default" : "pointer"
+          }
+        }, "🔑 Resetar senha")
+      ),
+      /*#__PURE__*/React.createElement("button", {
+        onClick: () => { setSelecionadoId(null); setResultado(null); },
+        style: { marginTop: 10, background: "none", border: "none", color: "var(--cinza-500)", fontSize: 11.5, cursor: "pointer", textDecoration: "underline" }
+      }, "← escolher outro funcionário")
+    ),
+
+    executando && /*#__PURE__*/React.createElement("p", { style: { fontSize: 12.5, color: "var(--cinza-400)" } }, "Executando…"),
+
+    resultado && !executando && /*#__PURE__*/React.createElement("div", {
+      style: {
+        background: resultado.ok ? "var(--verde-100)" : "var(--vermelho-100)",
+        color: resultado.ok ? "var(--verde-800)" : "var(--vermelho-800)",
+        borderRadius: 10, padding: "12px 14px", fontSize: 12.5
+      }
+    },
+      resultado.ok
+        ? (resultado.semAuthUser
+            ? "✅ Chamada concluída (sem auth_user_id, nada foi feito no Auth)."
+            : resultado.senha_temporaria
+              ? `✅ Senha redefinida. Senha temporária: ${resultado.senha_temporaria}`
+              : "✅ Ação executada com sucesso na Edge Function.")
+        : `❌ ${resultado.erro}`
+    )
+  );
+}
 function ArvoreHierarquia() {
   const { carregando, erro, superintendencias, diretorias, gerencias, funcionarios } = useArvoreComercialData();
   const [busca, setBusca] = useState("");
@@ -11914,6 +12049,7 @@ function ArvoreHierarquia() {
   const [criandoUsuarios, setCriandoUsuarios] = useState(false);
   const [resumoUsuarios, setResumoUsuarios] = useState(null);
   const [modalImportar, setModalImportar] = useState(false);
+  const [modalTesteAcesso, setModalTesteAcesso] = useState(false);
 
   const semLoginCount = useMemo(
     () => funcionarios.filter(f => !f.auth_user_id).length,
@@ -12009,15 +12145,29 @@ function ArvoreHierarquia() {
           totais.total, " funcionários · ", totais.superintendencias, " superintendências · ",
           totais.diretorias, " diretorias · ", totais.gerencias, " gerências · ", totais.vendedores, " vendedores")
       ),
-      /*#__PURE__*/React.createElement("button", {
-        onClick: () => setModalImportar(true),
-        style: {
-          padding: "9px 16px", borderRadius: 10, border: "none",
-          background: "var(--marca-gradiente)", color: "var(--cor-branco)",
-          fontSize: 12.5, fontWeight: 700, cursor: "pointer", flexShrink: 0
-        }
-      }, "📥 Importar planilha")
+      /*#__PURE__*/React.createElement("div", { style: { display: "flex", gap: 10, flexShrink: 0 } },
+        /*#__PURE__*/React.createElement("button", {
+          onClick: () => setModalTesteAcesso(true),
+          style: {
+            padding: "9px 16px", borderRadius: 10, border: "1px solid var(--cinza-200)",
+            background: "var(--cor-branco)", color: "var(--cinza-700)",
+            fontSize: 12.5, fontWeight: 700, cursor: "pointer"
+          }
+        }, "🧪 Testar acesso"),
+        /*#__PURE__*/React.createElement("button", {
+          onClick: () => setModalImportar(true),
+          style: {
+            padding: "9px 16px", borderRadius: 10, border: "none",
+            background: "var(--marca-gradiente)", color: "var(--cor-branco)",
+            fontSize: 12.5, fontWeight: 700, cursor: "pointer"
+          }
+        }, "📥 Importar planilha")
+      )
     ),
+    modalTesteAcesso && /*#__PURE__*/React.createElement(ModalTesteAcesso, {
+      funcionarios,
+      onClose: () => setModalTesteAcesso(false)
+    }),
     modalImportar && /*#__PURE__*/React.createElement(ModalImportarHierarquia, {
       onClose: () => setModalImportar(false),
       onConcluido: () => window.location.reload()
