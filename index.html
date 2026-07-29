@@ -11319,7 +11319,17 @@ function useArvoreComercialData(sessaoPronta = true) {
     })();
     return () => { ativo = false; };
   }, [sessaoPronta]);
-  return estado;
+  // Atualiza uma única pessoa em memória (por id) sem precisar refazer a
+  // busca inteira no Supabase — usado depois de editar perfil ou mudar
+  // acesso em ModalPerfilComercial, para a árvore refletir a mudança na
+  // hora sem exigir reload da página.
+  function atualizarFuncionarioLocal(pessoaAtualizada) {
+    setEstado(prev => ({
+      ...prev,
+      funcionarios: prev.funcionarios.map(f => f.id === pessoaAtualizada.id ? { ...f, ...pessoaAtualizada } : f)
+    }));
+  }
+  return { ...estado, atualizarFuncionarioLocal };
 }
 // Monta a árvore em memória a partir das listas planas. Cada diretoria pode
 // ter, além de suas gerências normais, um "grupo" de vendedores vinculados
@@ -11447,9 +11457,17 @@ function filtrarArvorePorBusca(arvore, termoBruto) {
     })
     .filter(Boolean);
 }
+// Contexto para levar o handler de clique em pessoa até LinhaPessoa sem
+// precisar repassar a prop manualmente por todos os níveis intermediários
+// da árvore (NoSuperintendencia → NoDiretoria → CardGerencia → LinhaPessoa).
+// Vale null quando a árvore está em modo somente-visualização (sem clique).
+const ContextoSelecaoPessoa = React.createContext(null);
 function LinhaPessoa({ pessoa, nivel, destaque, inativo }) {
   const cor = NIVEL_COR[nivel];
+  const onSelecionar = React.useContext(ContextoSelecaoPessoa);
+  const clicavel = !!onSelecionar;
   return /*#__PURE__*/React.createElement("div", {
+    onClick: clicavel ? () => onSelecionar(pessoa) : undefined,
     style: {
       display: "flex",
       alignItems: "center",
@@ -11457,7 +11475,8 @@ function LinhaPessoa({ pessoa, nivel, destaque, inativo }) {
       padding: "8px 10px",
       borderRadius: 10,
       opacity: inativo ? 0.55 : 1,
-      background: destaque ? "var(--marca-50)" : "transparent"
+      background: destaque ? "var(--marca-50)" : "transparent",
+      cursor: clicavel ? "pointer" : "default"
     }
   }, /*#__PURE__*/React.createElement(Avatar, { nome: pessoa.nome_completo, id: pessoa.id, size: 28 }),
     /*#__PURE__*/React.createElement("div", { style: { minWidth: 0, flex: 1 } },
@@ -11906,150 +11925,259 @@ function NoSuperintendencia({ superintendencia, aberta, onToggle, estadoAberto, 
     )
   );
 }
-// Modal de teste isolado para o painel de acessos — permite escolher um
-// funcionário e disparar revogar_acesso/reativar_acesso manualmente, sem
-// precisar passar por uma importação de planilha inteira. Temporário: serve
-// para validar a Edge Function antes da tela definitiva do painel (fatia
-// seguinte) existir. Só reflete o resultado nesta sessão do modal — não
-// atualiza a árvore ao redor (fechar e reabrir a tela mostra o estado real
-// vindo do banco).
-function ModalTesteAcesso({ funcionarios, onClose }) {
-  const [busca, setBusca] = useState("");
-  const [selecionadoId, setSelecionadoId] = useState(null);
-  const [executando, setExecutando] = useState(false);
-  const [resultado, setResultado] = useState(null); // { ok, ...} ou { ok:false, erro }
+// ─── EDIÇÃO DE PERFIL + CONTROLE DE ACESSOS (funcionarios_comercial) ───────
+// Modal usado a partir da árvore de Hierarquia (clique em qualquer pessoa).
+// Duas seções: (1) edição dos dados cadastrais da pessoa em
+// funcionarios_comercial — campos próprios dessa tabela, diferentes dos da
+// tabela legada (não há "esquecimentos/atestados" aqui, isso é controle de
+// ponto da tabela antiga); (2) controle de acesso (resetar senha / revogar /
+// reativar), reaproveitando chamarGerenciarAcesso já usada na importação.
+// onAtualizado(pessoaAtualizada) é chamado após salvar/mudar acesso com
+// sucesso, para o chamador atualizar sua cópia em memória sem precisar
+// recarregar a página inteira.
+function ModalPerfilComercial({ pessoa, onClose, onAtualizado }) {
+  const [editando, setEditando] = useState({
+    nome_completo: pessoa.nome_completo || "",
+    cargo_origem: pessoa.cargo_origem || "",
+    email: pessoa.email || "",
+    matricula: pessoa.matricula || "",
+    modalidade: pessoa.modalidade || "presencial",
+    situacao: (pessoa.situacao || "ATIVO").toUpperCase()
+  });
+  const [salvando, setSalvando] = useState(false);
+  const [erroSalvar, setErroSalvar] = useState("");
+  const [sucessoSalvar, setSucessoSalvar] = useState("");
 
-  const candidatos = useMemo(() => {
-    const termo = busca.trim().toLowerCase();
-    if (!termo) return [];
-    return funcionarios
-      .filter(f => f.nome_completo?.toLowerCase().includes(termo) || String(f.matricula).includes(termo))
-      .slice(0, 8);
-  }, [busca, funcionarios]);
+  // Estado local do bloco de acesso — refletido a partir de `pessoa`, mas
+  // atualizado otimisticamente após cada ação bem-sucedida para o modal não
+  // ficar mostrando um status desatualizado até o próximo reload da árvore.
+  const [acessoRevogado, setAcessoRevogado] = useState(!!pessoa.acesso_revogado);
+  const [acaoEmAndamento, setAcaoEmAndamento] = useState(null); // "resetar_senha" | "revogar_acesso" | "reativar_acesso" | null
+  const [resultadoAcao, setResultadoAcao] = useState(null); // { ok, erro?, mensagem? }
 
-  const selecionado = funcionarios.find(f => f.id === selecionadoId) || null;
+  const temLogin = !!pessoa.auth_user_id;
 
-  async function executar(acao) {
-    if (!selecionado || executando) return;
-    setExecutando(true);
-    setResultado(null);
-    const r = await chamarGerenciarAcesso(acao, selecionado);
-    setResultado(r);
-    setExecutando(false);
+  async function salvar() {
+    if (!editando.nome_completo.trim() || !editando.cargo_origem.trim() || !editando.matricula.trim()) {
+      setErroSalvar("Nome, cargo e matrícula são obrigatórios.");
+      return;
+    }
+    setSalvando(true);
+    setErroSalvar("");
+    setSucessoSalvar("");
+    const campos = {
+      nome_completo: editando.nome_completo.trim().toUpperCase(),
+      cargo_origem: editando.cargo_origem.trim().toUpperCase(),
+      email: editando.email.trim().toLowerCase() || null,
+      matricula: editando.matricula.trim(),
+      modalidade: editando.modalidade,
+      situacao: editando.situacao
+    };
+    const { data, error } = await supa.from("funcionarios_comercial")
+      .update(campos)
+      .eq("id", pessoa.id)
+      .select().single();
+    setSalvando(false);
+    if (error) {
+      setErroSalvar(`Falha ao salvar: ${extrairMensagemErro(error)}`);
+      return;
+    }
+    setSucessoSalvar("Perfil atualizado com sucesso.");
+    setTimeout(() => setSucessoSalvar(""), 3000);
+    onAtualizado && onAtualizado({ ...pessoa, ...data });
   }
 
+  async function executarAcaoAcesso(acao) {
+    if (acaoEmAndamento) return;
+    setAcaoEmAndamento(acao);
+    setResultadoAcao(null);
+    const resultado = await chamarGerenciarAcesso(acao, pessoa);
+    setAcaoEmAndamento(null);
+    if (!resultado.ok) {
+      setResultadoAcao({ ok: false, erro: resultado.erro || "Falha desconhecida." });
+      return;
+    }
+    if (acao === "revogar_acesso") setAcessoRevogado(true);
+    if (acao === "reativar_acesso") setAcessoRevogado(false);
+    const mensagens = {
+      resetar_senha: "E-mail de redefinição de senha enviado.",
+      revogar_acesso: "Acesso revogado — o login foi bloqueado.",
+      reativar_acesso: "Acesso reativado — o login voltou a funcionar."
+    };
+    setResultadoAcao({ ok: true, mensagem: mensagens[acao] });
+    onAtualizado && onAtualizado({
+      ...pessoa,
+      acesso_revogado: acao === "revogar_acesso" ? true : acao === "reativar_acesso" ? false : pessoa.acesso_revogado
+    });
+  }
+
+  const campoStyle = { width: "100%", padding: "10px 14px", borderRadius: 10, border: "1px solid var(--cinza-200)", fontSize: 13, outline: "none", background: "var(--cor-branco)", color: "var(--cinza-900)", boxSizing: "border-box" };
+  const labelStyle = { fontSize: 13, fontWeight: 600, color: "var(--cinza-700)", display: "block", marginBottom: 6 };
+
   return /*#__PURE__*/React.createElement(Modal, {
-    title: "🧪 Testar painel de acessos",
+    title: "✏️ Editar perfil — " + pessoa.nome_completo,
     onClose,
-    maxWidth: 520
-  },
-    /*#__PURE__*/React.createElement("p", {
-      style: { fontSize: 12.5, color: "var(--cinza-500)", marginBottom: 16 }
-    }, "Escolha um funcionário e dispare uma ação diretamente na Edge Function admin-gerenciar-acesso, para validar antes de a tela definitiva existir."),
+    maxWidth: 560
+  }, /*#__PURE__*/React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 16 } },
 
-    /*#__PURE__*/React.createElement("input", {
-      value: busca,
-      onChange: e => { setBusca(e.target.value); setSelecionadoId(null); setResultado(null); },
-      placeholder: "Buscar por nome ou matrícula…",
-      style: {
-        width: "100%", padding: "10px 14px", borderRadius: 10,
-        border: "1px solid var(--cinza-200)", fontSize: 13, marginBottom: 8
-      }
-    }),
-
-    !selecionado && candidatos.length > 0 && /*#__PURE__*/React.createElement("div", {
-      style: { display: "flex", flexDirection: "column", gap: 4, marginBottom: 8, maxHeight: 220, overflowY: "auto" }
-    },
-      candidatos.map(f => /*#__PURE__*/React.createElement("button", {
-        key: f.id,
-        onClick: () => { setSelecionadoId(f.id); setResultado(null); },
-        style: {
-          textAlign: "left", padding: "8px 12px", borderRadius: 8, border: "1px solid var(--cinza-100)",
-          background: "var(--cinza-50)", cursor: "pointer", fontSize: 12.5
-        }
-      },
-        /*#__PURE__*/React.createElement("strong", null, f.nome_completo), " — mat. ", f.matricula,
-        " · ", f.situacao || "ATIVO",
-        f.auth_user_id ? " · tem login" : " · SEM LOGIN (nada a revogar no Auth)",
-        f.acesso_revogado ? " · 🔒 acesso revogado" : ""
-      ))
+    /*# Nome #*/
+    /*#__PURE__*/React.createElement("div", null,
+      /*#__PURE__*/React.createElement("label", { style: labelStyle }, "Nome completo"),
+      /*#__PURE__*/React.createElement("input", {
+        value: editando.nome_completo,
+        onChange: e => setEditando(p => ({ ...p, nome_completo: e.target.value })),
+        style: campoStyle
+      })
     ),
 
-    selecionado && /*#__PURE__*/React.createElement("div", {
-      style: { background: "var(--marca-50)", borderRadius: 12, padding: "12px 14px", marginBottom: 14 }
-    },
-      /*#__PURE__*/React.createElement("div", { style: { fontSize: 13, fontWeight: 700, color: "var(--cinza-900)" } }, selecionado.nome_completo),
-      /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: "var(--cinza-500)", marginTop: 2 } },
-        "Matrícula ", selecionado.matricula, " · Situação: ", selecionado.situacao || "ATIVO",
-        " · auth_user_id: ", selecionado.auth_user_id || "(vazio)",
-        " · acesso_revogado: ", String(!!selecionado.acesso_revogado)),
-      !selecionado.auth_user_id && /*#__PURE__*/React.createElement("div", {
-        style: { fontSize: 12, color: "var(--amber-700)", marginTop: 6, fontWeight: 600 }
-      }, "⚠️ Este funcionário não tem login criado ainda — revogar/reativar não terá efeito no Auth (só retorna sem fazer nada)."),
-
-      /*#__PURE__*/React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" } },
-        /*#__PURE__*/React.createElement("button", {
-          onClick: () => executar("revogar_acesso"),
-          disabled: executando,
-          style: {
-            padding: "8px 14px", borderRadius: 8, border: "none",
-            background: executando ? "var(--cinza-300)" : "var(--vermelho-600)", color: "var(--cor-branco)",
-            fontSize: 12.5, fontWeight: 700, cursor: executando ? "default" : "pointer"
-          }
-        }, "🔒 Revogar acesso"),
-        /*#__PURE__*/React.createElement("button", {
-          onClick: () => executar("reativar_acesso"),
-          disabled: executando,
-          style: {
-            padding: "8px 14px", borderRadius: 8, border: "none",
-            background: executando ? "var(--cinza-300)" : "var(--verde-600)", color: "var(--cor-branco)",
-            fontSize: 12.5, fontWeight: 700, cursor: executando ? "default" : "pointer"
-          }
-        }, "🔓 Reativar acesso"),
-        /*#__PURE__*/React.createElement("button", {
-          onClick: () => executar("resetar_senha"),
-          disabled: executando,
-          style: {
-            padding: "8px 14px", borderRadius: 8, border: "none",
-            background: executando ? "var(--cinza-300)" : "var(--marca-600)", color: "var(--cor-branco)",
-            fontSize: 12.5, fontWeight: 700, cursor: executando ? "default" : "pointer"
-          }
-        }, "🔑 Resetar senha")
+    /*# Matrícula + Cargo lado a lado #*/
+    /*#__PURE__*/React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 } },
+      /*#__PURE__*/React.createElement("div", null,
+        /*#__PURE__*/React.createElement("label", { style: labelStyle }, "Matrícula"),
+        /*#__PURE__*/React.createElement("input", {
+          value: editando.matricula,
+          onChange: e => setEditando(p => ({ ...p, matricula: e.target.value })),
+          style: { ...campoStyle, fontFamily: "monospace" }
+        })
       ),
-      /*#__PURE__*/React.createElement("button", {
-        onClick: () => { setSelecionadoId(null); setResultado(null); },
-        style: { marginTop: 10, background: "none", border: "none", color: "var(--cinza-500)", fontSize: 11.5, cursor: "pointer", textDecoration: "underline" }
-      }, "← escolher outro funcionário")
+      /*#__PURE__*/React.createElement("div", null,
+        /*#__PURE__*/React.createElement("label", { style: labelStyle }, "Cargo"),
+        /*#__PURE__*/React.createElement("input", {
+          value: editando.cargo_origem,
+          onChange: e => setEditando(p => ({ ...p, cargo_origem: e.target.value })),
+          style: campoStyle
+        })
+      )
     ),
 
-    executando && /*#__PURE__*/React.createElement("p", { style: { fontSize: 12.5, color: "var(--cinza-400)" } }, "Executando…"),
+    /*# E-mail #*/
+    /*#__PURE__*/React.createElement("div", null,
+      /*#__PURE__*/React.createElement("label", { style: labelStyle }, "E-mail de login"),
+      /*#__PURE__*/React.createElement("input", {
+        type: "email",
+        value: editando.email,
+        onChange: e => setEditando(p => ({ ...p, email: e.target.value.trim().toLowerCase() })),
+        style: campoStyle
+      })
+    ),
 
-    resultado && !executando && /*#__PURE__*/React.createElement("div", {
-      style: {
-        background: resultado.ok ? "var(--verde-100)" : "var(--vermelho-100)",
-        color: resultado.ok ? "var(--verde-800)" : "var(--vermelho-800)",
-        borderRadius: 10, padding: "12px 14px", fontSize: 12.5
-      }
-    },
-      resultado.ok
-        ? (resultado.semAuthUser
-            ? "✅ Chamada concluída (sem auth_user_id, nada foi feito no Auth)."
-            : resultado.senha_temporaria
-              ? `✅ Senha redefinida. Senha temporária: ${resultado.senha_temporaria}`
-              : "✅ Ação executada com sucesso na Edge Function.")
-        : `❌ ${resultado.erro}`
+    /*# Modalidade + Situação lado a lado #*/
+    /*#__PURE__*/React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 } },
+      /*#__PURE__*/React.createElement("div", null,
+        /*#__PURE__*/React.createElement("label", { style: labelStyle }, "Modalidade"),
+        /*#__PURE__*/React.createElement("select", {
+          value: editando.modalidade,
+          onChange: e => setEditando(p => ({ ...p, modalidade: e.target.value })),
+          style: { ...campoStyle, cursor: "pointer" }
+        },
+          /*#__PURE__*/React.createElement("option", { value: "presencial" }, "Presencial"),
+          /*#__PURE__*/React.createElement("option", { value: "home_office" }, "🏠 Home office")
+        )
+      ),
+      /*#__PURE__*/React.createElement("div", null,
+        /*#__PURE__*/React.createElement("label", { style: labelStyle }, "Situação"),
+        /*#__PURE__*/React.createElement("select", {
+          value: editando.situacao,
+          onChange: e => setEditando(p => ({ ...p, situacao: e.target.value })),
+          style: { ...campoStyle, cursor: "pointer" }
+        },
+          /*#__PURE__*/React.createElement("option", { value: "ATIVO" }, "● Ativo"),
+          /*#__PURE__*/React.createElement("option", { value: "INATIVO" }, "○ Inativo")
+        )
+      )
+    ),
+
+    erroSalvar && /*#__PURE__*/React.createElement("div", {
+      style: { background: "var(--vermelho-100)", borderRadius: 10, padding: "10px 14px", fontSize: 13, color: "var(--vermelho-600)" }
+    }, erroSalvar),
+    sucessoSalvar && /*#__PURE__*/React.createElement("div", {
+      style: { background: "var(--verde-100)", borderRadius: 10, padding: "10px 14px", fontSize: 13, color: "var(--verde-800)" }
+    }, "✅ ", sucessoSalvar),
+
+    /*# Botão salvar dos dados cadastrais #*/
+    /*#__PURE__*/React.createElement("div", { style: { display: "flex", justifyContent: "flex-end" } },
+      /*#__PURE__*/React.createElement("button", {
+        onClick: salvar,
+        disabled: salvando,
+        style: {
+          padding: "10px 20px", borderRadius: 10, border: "none",
+          background: salvando ? "var(--cinza-300)" : "linear-gradient(135deg,var(--indigo-500),var(--roxo-500))",
+          color: "var(--cor-branco)", fontSize: 13, fontWeight: 700,
+          cursor: salvando ? "not-allowed" : "pointer"
+        }
+      }, salvando ? "⏳ Salvando..." : "💾 Salvar alterações")
+    ),
+
+    /*# ── Controle de acesso ─────────────────────────────────────────── #*/
+    /*#__PURE__*/React.createElement("div", { style: { borderTop: "1px solid var(--cinza-100)", paddingTop: 16, display: "flex", flexDirection: "column", gap: 12 } },
+      /*#__PURE__*/React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 } },
+        /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, fontWeight: 700, color: "var(--cinza-400)", textTransform: "uppercase", letterSpacing: ".05em" } }, "Controle de acesso"),
+        temLogin && /*#__PURE__*/React.createElement("span", {
+          style: {
+            fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 20,
+            background: acessoRevogado ? "var(--vermelho-100)" : "var(--verde-100)",
+            color: acessoRevogado ? "var(--vermelho-600)" : "var(--verde-800)"
+          }
+        }, acessoRevogado ? "🔒 Acesso revogado" : "🔓 Acesso ativo")
+      ),
+
+      !temLogin && /*#__PURE__*/React.createElement("div", {
+        style: { fontSize: 12.5, color: "var(--cinza-400)", background: "var(--cinza-50)", borderRadius: 10, padding: "10px 12px" }
+      }, "Esta pessoa ainda não tem login criado — nada para gerenciar no Auth até que um login seja criado (ver aviso na tela de Hierarquia)."),
+
+      temLogin && /*#__PURE__*/React.createElement("div", { style: { display: "flex", gap: 8, flexWrap: "wrap" } },
+        /*#__PURE__*/React.createElement("button", {
+          onClick: () => executarAcaoAcesso("resetar_senha"),
+          disabled: !!acaoEmAndamento,
+          style: {
+            padding: "9px 14px", borderRadius: 10, border: "1px solid var(--marca-300)",
+            background: "var(--marca-50)", color: "var(--marca-700)", fontSize: 12.5, fontWeight: 700,
+            cursor: acaoEmAndamento ? "default" : "pointer", opacity: acaoEmAndamento && acaoEmAndamento !== "resetar_senha" ? 0.5 : 1
+          }
+        }, acaoEmAndamento === "resetar_senha" ? "⏳ Enviando..." : "✉️ Resetar senha"),
+
+        !acessoRevogado && /*#__PURE__*/React.createElement("button", {
+          onClick: () => executarAcaoAcesso("revogar_acesso"),
+          disabled: !!acaoEmAndamento,
+          style: {
+            padding: "9px 14px", borderRadius: 10, border: "1px solid var(--vermelho-300)",
+            background: "var(--vermelho-100)", color: "var(--vermelho-600)", fontSize: 12.5, fontWeight: 700,
+            cursor: acaoEmAndamento ? "default" : "pointer", opacity: acaoEmAndamento && acaoEmAndamento !== "revogar_acesso" ? 0.5 : 1
+          }
+        }, acaoEmAndamento === "revogar_acesso" ? "⏳ Revogando..." : "🔒 Revogar acesso"),
+
+        acessoRevogado && /*#__PURE__*/React.createElement("button", {
+          onClick: () => executarAcaoAcesso("reativar_acesso"),
+          disabled: !!acaoEmAndamento,
+          style: {
+            padding: "9px 14px", borderRadius: 10, border: "1px solid var(--verde-200)",
+            background: "var(--verde-100)", color: "var(--verde-800)", fontSize: 12.5, fontWeight: 700,
+            cursor: acaoEmAndamento ? "default" : "pointer", opacity: acaoEmAndamento && acaoEmAndamento !== "reativar_acesso" ? 0.5 : 1
+          }
+        }, acaoEmAndamento === "reativar_acesso" ? "⏳ Reativando..." : "🔓 Reativar acesso")
+      ),
+
+      resultadoAcao && /*#__PURE__*/React.createElement("div", {
+        style: {
+          fontSize: 12.5, borderRadius: 10, padding: "10px 12px",
+          background: resultadoAcao.ok ? "var(--verde-100)" : "var(--vermelho-100)",
+          color: resultadoAcao.ok ? "var(--verde-800)" : "var(--vermelho-600)"
+        }
+      }, resultadoAcao.ok ? `✅ ${resultadoAcao.mensagem}` : `❌ ${resultadoAcao.erro}`)
     )
-  );
+  ));
 }
 function ArvoreHierarquia() {
-  const { carregando, erro, superintendencias, diretorias, gerencias, funcionarios } = useArvoreComercialData();
+  const { carregando, erro, superintendencias, diretorias, gerencias, funcionarios, atualizarFuncionarioLocal } = useArvoreComercialData();
   const [busca, setBusca] = useState("");
   const [aberto, setAberto] = useState({});
   const toggle = chave => setAberto(prev => ({ ...prev, [chave]: !prev[chave] }));
   const [criandoUsuarios, setCriandoUsuarios] = useState(false);
   const [resumoUsuarios, setResumoUsuarios] = useState(null);
   const [modalImportar, setModalImportar] = useState(false);
-  const [modalTesteAcesso, setModalTesteAcesso] = useState(false);
+  // Pessoa clicada na árvore, para abrir o modal de edição de perfil +
+  // controle de acesso (ModalPerfilComercial). null = modal fechado.
+  const [pessoaSelecionada, setPessoaSelecionada] = useState(null);
 
   const semLoginCount = useMemo(
     () => funcionarios.filter(f => !f.auth_user_id).length,
@@ -12145,29 +12273,15 @@ function ArvoreHierarquia() {
           totais.total, " funcionários · ", totais.superintendencias, " superintendências · ",
           totais.diretorias, " diretorias · ", totais.gerencias, " gerências · ", totais.vendedores, " vendedores")
       ),
-      /*#__PURE__*/React.createElement("div", { style: { display: "flex", gap: 10, flexShrink: 0 } },
-        /*#__PURE__*/React.createElement("button", {
-          onClick: () => setModalTesteAcesso(true),
-          style: {
-            padding: "9px 16px", borderRadius: 10, border: "1px solid var(--cinza-200)",
-            background: "var(--cor-branco)", color: "var(--cinza-700)",
-            fontSize: 12.5, fontWeight: 700, cursor: "pointer"
-          }
-        }, "🧪 Testar acesso"),
-        /*#__PURE__*/React.createElement("button", {
-          onClick: () => setModalImportar(true),
-          style: {
-            padding: "9px 16px", borderRadius: 10, border: "none",
-            background: "var(--marca-gradiente)", color: "var(--cor-branco)",
-            fontSize: 12.5, fontWeight: 700, cursor: "pointer"
-          }
-        }, "📥 Importar planilha")
-      )
+      /*#__PURE__*/React.createElement("button", {
+        onClick: () => setModalImportar(true),
+        style: {
+          padding: "9px 16px", borderRadius: 10, border: "none",
+          background: "var(--marca-gradiente)", color: "var(--cor-branco)",
+          fontSize: 12.5, fontWeight: 700, cursor: "pointer", flexShrink: 0
+        }
+      }, "📥 Importar planilha")
     ),
-    modalTesteAcesso && /*#__PURE__*/React.createElement(ModalTesteAcesso, {
-      funcionarios,
-      onClose: () => setModalTesteAcesso(false)
-    }),
     modalImportar && /*#__PURE__*/React.createElement(ModalImportarHierarquia, {
       onClose: () => setModalImportar(false),
       onConcluido: () => window.location.reload()
@@ -12218,16 +12332,26 @@ function ArvoreHierarquia() {
           resumoUsuarios.falhas.map(f => /*#__PURE__*/React.createElement("li", { key: f.id }, `${f.nome}: ${f.motivo}`)))
       )
     ),
-    arvore.length === 0
-      ? /*#__PURE__*/React.createElement("div", { style: { padding: 40, textAlign: "center", color: "var(--cinza-300)", fontSize: 13 } }, "Nenhum resultado para essa busca.")
-      : arvore.map(s => /*#__PURE__*/React.createElement(NoSuperintendencia, {
-          key: s.id,
-          superintendencia: s,
-          aberta: !!aberto[`s_${s.id}`],
-          onToggle: () => toggle(`s_${s.id}`),
-          estadoAberto: aberto,
-          onToggleChave: toggle
-        }))
+    /*#__PURE__*/React.createElement(ContextoSelecaoPessoa.Provider, { value: setPessoaSelecionada },
+      arvore.length === 0
+        ? /*#__PURE__*/React.createElement("div", { style: { padding: 40, textAlign: "center", color: "var(--cinza-300)", fontSize: 13 } }, "Nenhum resultado para essa busca.")
+        : arvore.map(s => /*#__PURE__*/React.createElement(NoSuperintendencia, {
+            key: s.id,
+            superintendencia: s,
+            aberta: !!aberto[`s_${s.id}`],
+            onToggle: () => toggle(`s_${s.id}`),
+            estadoAberto: aberto,
+            onToggleChave: toggle
+          }))
+    ),
+    pessoaSelecionada && /*#__PURE__*/React.createElement(ModalPerfilComercial, {
+      pessoa: pessoaSelecionada,
+      onClose: () => setPessoaSelecionada(null),
+      onAtualizado: pessoaAtualizada => {
+        atualizarFuncionarioLocal(pessoaAtualizada);
+        setPessoaSelecionada(pessoaAtualizada);
+      }
+    })
   );
 }
 function App() {
