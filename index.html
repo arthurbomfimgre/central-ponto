@@ -12145,12 +12145,19 @@ function ModalPerfilComercial({ pessoa, onClose, onAtualizado, nomeExibicao: nom
     }
     if (acao === "revogar_acesso") setAcessoRevogado(true);
     if (acao === "reativar_acesso") setAcessoRevogado(false);
-    const mensagens = {
-      resetar_senha: "E-mail de redefinição de senha enviado.",
-      revogar_acesso: "Acesso revogado — o login foi bloqueado.",
-      reativar_acesso: "Acesso reativado — o login voltou a funcionar."
-    };
-    setResultadoAcao({ ok: true, mensagem: mensagens[acao] });
+    if (acao === "resetar_senha") {
+      setResultadoAcao({
+        ok: true,
+        mensagem: "Nova senha temporária gerada. Copie e repasse com segurança:",
+        senhaTemporaria: resultado.senha_temporaria || null
+      });
+    } else {
+      const mensagens = {
+        revogar_acesso: "Acesso revogado — o login foi bloqueado.",
+        reativar_acesso: "Acesso reativado — o login voltou a funcionar."
+      };
+      setResultadoAcao({ ok: true, mensagem: mensagens[acao] });
+    }
     onAtualizado && onAtualizado({
       ...pessoa,
       acesso_revogado: acao === "revogar_acesso" ? true : acao === "reativar_acesso" ? false : pessoa.acesso_revogado
@@ -12280,7 +12287,7 @@ function ModalPerfilComercial({ pessoa, onClose, onAtualizado, nomeExibicao: nom
             background: "var(--marca-50)", color: "var(--marca-700)", fontSize: 12.5, fontWeight: 700,
             cursor: acaoEmAndamento ? "default" : "pointer", opacity: acaoEmAndamento && acaoEmAndamento !== "resetar_senha" ? 0.5 : 1
           }
-        }, acaoEmAndamento === "resetar_senha" ? "⏳ Enviando..." : "✉️ Resetar senha"),
+        }, acaoEmAndamento === "resetar_senha" ? "⏳ Gerando..." : "🔑 Gerar nova senha"),
 
         !acessoRevogado && /*#__PURE__*/React.createElement("button", {
           onClick: () => executarAcaoAcesso("revogar_acesso"),
@@ -12307,9 +12314,33 @@ function ModalPerfilComercial({ pessoa, onClose, onAtualizado, nomeExibicao: nom
         style: {
           fontSize: 12.5, borderRadius: 10, padding: "10px 12px",
           background: resultadoAcao.ok ? "var(--verde-100)" : "var(--vermelho-100)",
-          color: resultadoAcao.ok ? "var(--verde-800)" : "var(--vermelho-600)"
+          color: resultadoAcao.ok ? "var(--verde-800)" : "var(--vermelho-600)",
+          display: "flex", flexDirection: "column", gap: 8
         }
-      }, resultadoAcao.ok ? `✅ ${resultadoAcao.mensagem}` : `❌ ${resultadoAcao.erro}`)
+      },
+        /*#__PURE__*/React.createElement("span", null,
+          resultadoAcao.ok ? `✅ ${resultadoAcao.mensagem}` : `❌ ${resultadoAcao.erro}`
+        ),
+        resultadoAcao.ok && resultadoAcao.senhaTemporaria && /*#__PURE__*/React.createElement("div", {
+          style: {
+            display: "flex", alignItems: "center", gap: 8,
+            background: "var(--cor-branco)", border: "1px solid var(--verde-200)",
+            borderRadius: 8, padding: "8px 10px"
+          }
+        },
+          /*#__PURE__*/React.createElement("code", {
+            style: { fontSize: 14, fontWeight: 700, letterSpacing: ".05em", color: "var(--cinza-900)", flex: 1 }
+          }, resultadoAcao.senhaTemporaria),
+          /*#__PURE__*/React.createElement("button", {
+            onClick: () => navigator.clipboard && navigator.clipboard.writeText(resultadoAcao.senhaTemporaria),
+            style: {
+              padding: "5px 10px", borderRadius: 6, border: "1px solid var(--verde-300)",
+              background: "var(--verde-50)", color: "var(--verde-800)", fontSize: 11.5, fontWeight: 700,
+              cursor: "pointer"
+            }
+          }, "📋 Copiar")
+        )
+      )
     )
   ));
 }
