@@ -5967,7 +5967,7 @@ function ListaFuncionarios({
   // "Todos" em qualquer nível mantém o escopo completo daquele nível.
   // Visão em árvore (substitui os dropdowns em cascata): superintendente e
   // diretor navegam clicando para expandir Diretoria → Gerência, no mesmo
-  // padrão visual de NoDiretoria/CardGerencia (tela "Hierarquia Comercial").
+  // padrão visual de NoDiretoria/CardGerencia (tela "Painel de Acessos").
   // `estadoAberto` guarda quais nós estão expandidos, por chave `d_<id>`/`g_<id>`.
   const usaVisaoArvore = ["superintendente", "diretor"].includes(usuario?.nivel);
   const [estadoAberto, setEstadoAberto] = useState({});
@@ -12330,7 +12330,10 @@ function ArvoreHierarquia() {
     diretorias: diretorias.length,
     gerencias: gerencias.length,
     vendedores: funcionarios.filter(f => f.nivel === "vendedor").length,
-    total: funcionarios.length
+    total: funcionarios.length,
+    comLogin: funcionarios.filter(f => !!f.auth_user_id).length,
+    revogados: funcionarios.filter(f => !!f.auth_user_id && !!f.acesso_revogado).length,
+    ativosComAcesso: funcionarios.filter(f => !!f.auth_user_id && !f.acesso_revogado).length
   }), [superintendencias, diretorias, gerencias, funcionarios]);
 
   if (carregando) {
@@ -12347,7 +12350,7 @@ function ArvoreHierarquia() {
   return /*#__PURE__*/React.createElement("div", { style: { padding: "24px 28px", maxWidth: 980, margin: "0 auto", display: "flex", flexDirection: "column", gap: 18 } },
     /*#__PURE__*/React.createElement("div", { style: { display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, flexWrap: "wrap" } },
       /*#__PURE__*/React.createElement("div", null,
-        /*#__PURE__*/React.createElement("h1", { style: { fontSize: 22, fontWeight: 800, color: "var(--cinza-900)", marginBottom: 4 } }, "Hierarquia Comercial"),
+        /*#__PURE__*/React.createElement("h1", { style: { fontSize: 22, fontWeight: 800, color: "var(--cinza-900)", marginBottom: 4 } }, "🔐 Painel de Acessos"),
         /*#__PURE__*/React.createElement("p", { style: { fontSize: 13, color: "var(--cinza-400)" } },
           totais.total, " funcionários · ", totais.superintendencias, " superintendências · ",
           totais.diretorias, " diretorias · ", totais.gerencias, " gerências · ", totais.vendedores, " vendedores")
@@ -12365,6 +12368,74 @@ function ArvoreHierarquia() {
       onClose: () => setModalImportar(false),
       onConcluido: () => window.location.reload()
     }),
+
+    // ── Card de resumo de acesso ──────────────────────────────────────────
+    // Ponto central da tela: em vez da árvore organizacional ser o primeiro
+    // assunto ao abrir (como na antiga "Hierarquia Comercial"), o status de
+    // acesso das contas vem primeiro, em destaque — a árvore logo abaixo
+    // continua existindo, mas agora como o meio de NAVEGAR até uma pessoa,
+    // não como o assunto principal da página.
+    /*#__PURE__*/React.createElement("div", {
+      style: {
+        background: "var(--cor-branco)", border: "1px solid var(--cinza-200)",
+        borderRadius: 14, padding: "18px 20px", display: "flex", flexDirection: "column", gap: 14
+      }
+    },
+      /*#__PURE__*/React.createElement("div", { style: { display: "flex", gap: 20, flexWrap: "wrap" } },
+        /*#__PURE__*/React.createElement("div", null,
+          /*#__PURE__*/React.createElement("div", { style: { fontSize: 22, fontWeight: 800, color: "var(--verde-600)" } }, totais.ativosComAcesso),
+          /*#__PURE__*/React.createElement("div", { style: { fontSize: 11.5, color: "var(--cinza-400)", fontWeight: 600 } }, "Com acesso ativo")
+        ),
+        /*#__PURE__*/React.createElement("div", null,
+          /*#__PURE__*/React.createElement("div", { style: { fontSize: 22, fontWeight: 800, color: "var(--amber-700)" } }, semLoginCount),
+          /*#__PURE__*/React.createElement("div", { style: { fontSize: 11.5, color: "var(--cinza-400)", fontWeight: 600 } }, "Sem login criado")
+        ),
+        /*#__PURE__*/React.createElement("div", null,
+          /*#__PURE__*/React.createElement("div", { style: { fontSize: 22, fontWeight: 800, color: "var(--vermelho-600)" } }, totais.revogados),
+          /*#__PURE__*/React.createElement("div", { style: { fontSize: 11.5, color: "var(--cinza-400)", fontWeight: 600 } }, "Acesso revogado")
+        )
+      ),
+      semLoginCount > 0 && /*#__PURE__*/React.createElement("div", {
+        style: {
+          background: "var(--amber-100)", border: "1px solid var(--amber-200)",
+          borderRadius: 12, padding: "12px 16px", display: "flex",
+          flexDirection: "column", gap: 10
+        }
+      },
+        /*#__PURE__*/React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" } },
+          /*#__PURE__*/React.createElement("div", { style: { flex: 1, minWidth: 220, fontSize: 12.5, color: "var(--amber-800)" } },
+            "⚠️ ", semLoginCount, " funcionário(s) ainda sem login criado (auth_user_id vazio)."),
+          /*#__PURE__*/React.createElement("button", {
+            onClick: criarUsuariosEmLote,
+            disabled: criandoUsuarios,
+            style: {
+              padding: "8px 16px", borderRadius: 10, border: "none",
+              background: criandoUsuarios ? "var(--cinza-300)" : "var(--marca-600)",
+              color: "var(--cor-branco)", fontSize: 12.5, fontWeight: 700,
+              cursor: criandoUsuarios ? "default" : "pointer", flexShrink: 0
+            }
+          }, criandoUsuarios ? "Criando… (não feche esta aba)" : "Criar logins em lote")
+        ),
+        // Lista com nome + matrícula de quem está sem login — recolhida por
+        // padrão para não ocupar espaço quando forem muitos, mas consultável
+        // na hora sem precisar caçar pessoa por pessoa na árvore.
+        /*#__PURE__*/React.createElement("details", null,
+          /*#__PURE__*/React.createElement("summary", { style: { fontSize: 12, fontWeight: 700, color: "var(--amber-800)", cursor: "pointer" } },
+            "Ver quem está sem login"),
+          /*#__PURE__*/React.createElement("ul", { style: { paddingLeft: 18, marginTop: 8, display: "flex", flexDirection: "column", gap: 2, fontSize: 12.5, color: "var(--amber-800)", maxHeight: 220, overflow: "auto" } },
+            funcionarios.filter(f => !f.auth_user_id).sort((a, b) => a.nome_completo.localeCompare(b.nome_completo, "pt-BR", { sensitivity: "base" })).map(f =>
+              /*#__PURE__*/React.createElement("li", { key: f.id }, f.nome_completo, " — mat. ", f.matricula)))
+        )
+      ),
+      totais.revogados > 0 && /*#__PURE__*/React.createElement("details", null,
+        /*#__PURE__*/React.createElement("summary", { style: { fontSize: 12, fontWeight: 700, color: "var(--vermelho-600)", cursor: "pointer" } },
+          "Ver quem está com acesso revogado"),
+        /*#__PURE__*/React.createElement("ul", { style: { paddingLeft: 18, marginTop: 8, display: "flex", flexDirection: "column", gap: 2, fontSize: 12.5, color: "var(--vermelho-600)", maxHeight: 220, overflow: "auto" } },
+          funcionarios.filter(f => !!f.auth_user_id && !!f.acesso_revogado).sort((a, b) => a.nome_completo.localeCompare(b.nome_completo, "pt-BR", { sensitivity: "base" })).map(f =>
+            /*#__PURE__*/React.createElement("li", { key: f.id }, f.nome_completo, " — mat. ", f.matricula)))
+      )
+    ),
+
     /*#__PURE__*/React.createElement("input", {
       value: busca,
       onChange: e => setBusca(e.target.value),
@@ -12374,38 +12445,6 @@ function ArvoreHierarquia() {
         fontSize: 13, outline: "none", background: "var(--cor-branco)", color: "var(--cinza-900)"
       }
     }),
-    semLoginCount > 0 && /*#__PURE__*/React.createElement("div", {
-      style: {
-        background: "var(--amber-100)", border: "1px solid var(--amber-200)",
-        borderRadius: 12, padding: "12px 16px", display: "flex",
-        flexDirection: "column", gap: 10
-      }
-    },
-      /*#__PURE__*/React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" } },
-        /*#__PURE__*/React.createElement("div", { style: { flex: 1, minWidth: 220, fontSize: 12.5, color: "var(--amber-800)" } },
-          "⚠️ ", semLoginCount, " funcionário(s) ainda sem login criado (auth_user_id vazio)."),
-        /*#__PURE__*/React.createElement("button", {
-          onClick: criarUsuariosEmLote,
-          disabled: criandoUsuarios,
-          style: {
-            padding: "8px 16px", borderRadius: 10, border: "none",
-            background: criandoUsuarios ? "var(--cinza-300)" : "var(--marca-600)",
-            color: "var(--cor-branco)", fontSize: 12.5, fontWeight: 700,
-            cursor: criandoUsuarios ? "default" : "pointer", flexShrink: 0
-          }
-        }, criandoUsuarios ? "Criando… (não feche esta aba)" : "Criar logins em lote")
-      ),
-      // Lista com nome + matrícula de quem está sem login — recolhida por
-      // padrão para não ocupar espaço quando forem muitos, mas consultável
-      // na hora sem precisar caçar pessoa por pessoa na árvore.
-      /*#__PURE__*/React.createElement("details", null,
-        /*#__PURE__*/React.createElement("summary", { style: { fontSize: 12, fontWeight: 700, color: "var(--amber-800)", cursor: "pointer" } },
-          "Ver quem está sem login"),
-        /*#__PURE__*/React.createElement("ul", { style: { paddingLeft: 18, marginTop: 8, display: "flex", flexDirection: "column", gap: 2, fontSize: 12.5, color: "var(--amber-800)", maxHeight: 220, overflow: "auto" } },
-          funcionarios.filter(f => !f.auth_user_id).sort((a, b) => a.nome_completo.localeCompare(b.nome_completo, "pt-BR", { sensitivity: "base" })).map(f =>
-            /*#__PURE__*/React.createElement("li", { key: f.id }, f.nome_completo, " — mat. ", f.matricula)))
-      )
-    ),
     resumoUsuarios && /*#__PURE__*/React.createElement("div", {
       style: {
         background: resumoUsuarios.erro ? "var(--vermelho-100)" : "var(--verde-100)",
@@ -12722,8 +12761,8 @@ function App() {
   // hierarquia comercial estiver em preview — ver previewHierarquia acima.
   ...(previewHierarquia ? [{
     id: "hierarquia",
-    label: "Hierarquia",
-    icon: "🗂️"
+    label: "Painel de Acessos",
+    icon: "🔐"
   }] : []),
   {
     id: "portal",
