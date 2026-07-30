@@ -12115,6 +12115,20 @@ function ModalPerfilComercial({ pessoa, onClose, onAtualizado, nomeExibicao: nom
       setErroSalvar("Nome, cargo e matrícula são obrigatórios.");
       return;
     }
+
+    // Confirmação explícita antes de qualquer ação que vá mexer no acesso —
+    // revogar ou reativar login não deve acontecer só por causa de um clique
+    // em Salvar sem o admin confirmar que está ciente do efeito colateral.
+    const vaiRevogar = editando.situacao === "INATIVO" && temLogin && !acessoRevogado;
+    const vaiReativar = editando.situacao === "ATIVO" && temLogin && acessoRevogado;
+    if (vaiRevogar) {
+      const confirmado = window.confirm(`Ao salvar, o acesso de ${nomeParaTitulo} ao sistema também será revogado. Confirma?`);
+      if (!confirmado) return;
+    } else if (vaiReativar) {
+      const confirmado = window.confirm(`Ao salvar, o acesso de ${nomeParaTitulo} ao sistema também será reativado. Confirma?`);
+      if (!confirmado) return;
+    }
+
     setSalvando(true);
     setErroSalvar("");
     setSucessoSalvar("");
@@ -12140,22 +12154,30 @@ function ModalPerfilComercial({ pessoa, onClose, onAtualizado, nomeExibicao: nom
     // volta pra Ativo e o acesso estava revogado, reativa automaticamente.
     // Se virou Inativo, revoga (mesma lógica já usada na importação de
     // planilha, ver seção 2.3 do PAINEL_DE_ACESSOS.md).
+    //
+    // Quando revoga ou reativa, fecha o modal em vez de mantê-lo aberto
+    // reeditando a mesma pessoa — mantê-lo aberto (como no caso de edição
+    // cadastral comum) dava a impressão de que o modal tinha "reaberto
+    // sozinho", já que os dados mudam sob os olhos do admin sem ele ter
+    // pedido para continuar editando.
     let dadosFinais = { ...pessoa, ...data };
-    if (editando.situacao === "INATIVO" && temLogin && !acessoRevogado) {
+    if (vaiRevogar) {
       const resultadoRevogacao = await chamarGerenciarAcesso("revogar_acesso", dadosFinais);
       if (resultadoRevogacao.ok) {
-        setAcessoRevogado(true);
         dadosFinais = { ...dadosFinais, acesso_revogado: true };
-        setSucessoSalvar("Perfil atualizado e acesso revogado automaticamente (situação: Inativo).");
+        onAtualizado && onAtualizado(dadosFinais);
+        onClose();
+        return;
       } else {
         setSucessoSalvar("Perfil atualizado, mas houve falha ao revogar o acesso automaticamente — tente salvar novamente.");
       }
-    } else if (editando.situacao === "ATIVO" && temLogin && acessoRevogado) {
+    } else if (vaiReativar) {
       const resultadoReativacao = await chamarGerenciarAcesso("reativar_acesso", dadosFinais);
       if (resultadoReativacao.ok) {
-        setAcessoRevogado(false);
         dadosFinais = { ...dadosFinais, acesso_revogado: false };
-        setSucessoSalvar("Perfil atualizado e acesso reativado automaticamente (situação: Ativo).");
+        onAtualizado && onAtualizado(dadosFinais);
+        onClose();
+        return;
       } else {
         setSucessoSalvar("Perfil atualizado, mas houve falha ao reativar o acesso automaticamente — tente salvar novamente.");
       }
