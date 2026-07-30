@@ -12129,10 +12129,10 @@ function ModalPerfilComercial({ pessoa, onClose, onAtualizado, nomeExibicao: nom
       return;
     }
 
-    // Se a situação virou Inativo e a pessoa tinha login ativo, revoga o
-    // acesso automaticamente — mesma lógica de auto-revogação que já roda
-    // na importação de planilha (ver seção 2.3 do PAINEL_DE_ACESSOS.md),
-    // agora também coberta no caminho manual (edição direta no modal).
+    // Espelha a auto-revogação (acima) no sentido contrário: se a situação
+    // volta pra Ativo e o acesso estava revogado, reativa automaticamente.
+    // Se virou Inativo, revoga (mesma lógica já usada na importação de
+    // planilha, ver seção 2.3 do PAINEL_DE_ACESSOS.md).
     let dadosFinais = { ...pessoa, ...data };
     if (editando.situacao === "INATIVO" && temLogin && !acessoRevogado) {
       const resultadoRevogacao = await chamarGerenciarAcesso("revogar_acesso", dadosFinais);
@@ -12141,7 +12141,16 @@ function ModalPerfilComercial({ pessoa, onClose, onAtualizado, nomeExibicao: nom
         dadosFinais = { ...dadosFinais, acesso_revogado: true };
         setSucessoSalvar("Perfil atualizado e acesso revogado automaticamente (situação: Inativo).");
       } else {
-        setSucessoSalvar("Perfil atualizado, mas houve falha ao revogar o acesso automaticamente — revogue manualmente abaixo.");
+        setSucessoSalvar("Perfil atualizado, mas houve falha ao revogar o acesso automaticamente — tente salvar novamente.");
+      }
+    } else if (editando.situacao === "ATIVO" && temLogin && acessoRevogado) {
+      const resultadoReativacao = await chamarGerenciarAcesso("reativar_acesso", dadosFinais);
+      if (resultadoReativacao.ok) {
+        setAcessoRevogado(false);
+        dadosFinais = { ...dadosFinais, acesso_revogado: false };
+        setSucessoSalvar("Perfil atualizado e acesso reativado automaticamente (situação: Ativo).");
+      } else {
+        setSucessoSalvar("Perfil atualizado, mas houve falha ao reativar o acesso automaticamente — tente salvar novamente.");
       }
     } else {
       setSucessoSalvar("Perfil atualizado com sucesso.");
@@ -12264,6 +12273,13 @@ function ModalPerfilComercial({ pessoa, onClose, onAtualizado, nomeExibicao: nom
       }
     }, "⚠️ Ao salvar, o acesso desta pessoa ao sistema também será revogado automaticamente."),
 
+    editando.situacao === "ATIVO" && temLogin && acessoRevogado && /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 12.5, background: "var(--verde-100)", color: "var(--verde-800)",
+        borderRadius: 10, padding: "10px 14px"
+      }
+    }, "✅ Ao salvar, o acesso desta pessoa ao sistema também será reativado automaticamente."),
+
     erroSalvar && /*#__PURE__*/React.createElement("div", {
       style: { background: "var(--vermelho-100)", borderRadius: 10, padding: "10px 14px", fontSize: 13, color: "var(--vermelho-600)" }
     }, erroSalvar),
@@ -12311,27 +12327,7 @@ function ModalPerfilComercial({ pessoa, onClose, onAtualizado, nomeExibicao: nom
             background: "var(--marca-50)", color: "var(--marca-700)", fontSize: 12.5, fontWeight: 700,
             cursor: acaoEmAndamento ? "default" : "pointer", opacity: acaoEmAndamento && acaoEmAndamento !== "resetar_senha" ? 0.5 : 1
           }
-        }, acaoEmAndamento === "resetar_senha" ? "⏳ Gerando..." : "🔑 Gerar nova senha"),
-
-        !acessoRevogado && /*#__PURE__*/React.createElement("button", {
-          onClick: () => executarAcaoAcesso("revogar_acesso"),
-          disabled: !!acaoEmAndamento,
-          style: {
-            padding: "9px 14px", borderRadius: 10, border: "1px solid var(--vermelho-300)",
-            background: "var(--vermelho-100)", color: "var(--vermelho-600)", fontSize: 12.5, fontWeight: 700,
-            cursor: acaoEmAndamento ? "default" : "pointer", opacity: acaoEmAndamento && acaoEmAndamento !== "revogar_acesso" ? 0.5 : 1
-          }
-        }, acaoEmAndamento === "revogar_acesso" ? "⏳ Revogando..." : "🔒 Revogar acesso"),
-
-        acessoRevogado && /*#__PURE__*/React.createElement("button", {
-          onClick: () => executarAcaoAcesso("reativar_acesso"),
-          disabled: !!acaoEmAndamento,
-          style: {
-            padding: "9px 14px", borderRadius: 10, border: "1px solid var(--verde-200)",
-            background: "var(--verde-100)", color: "var(--verde-800)", fontSize: 12.5, fontWeight: 700,
-            cursor: acaoEmAndamento ? "default" : "pointer", opacity: acaoEmAndamento && acaoEmAndamento !== "reativar_acesso" ? 0.5 : 1
-          }
-        }, acaoEmAndamento === "reativar_acesso" ? "⏳ Reativando..." : "🔓 Reativar acesso")
+        }, acaoEmAndamento === "resetar_senha" ? "⏳ Gerando..." : "🔑 Gerar nova senha")
       ),
 
       resultadoAcao && /*#__PURE__*/React.createElement("div", {
