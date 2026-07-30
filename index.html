@@ -7436,7 +7436,10 @@ function filtrarPlanoPorSelecao(plano, diretoriasRejeitadas, gerenciasRejeitadas
 // { ok: false, erro }.
 // - acao: "resetar_senha" | "revogar_acesso" | "reativar_acesso"
 // - funcionario: registro de funcionarios_comercial (precisa de auth_user_id e id)
-async function chamarGerenciarAcesso(acao, funcionario) {
+// - origem: "manual" (padrão, ação disparada pelo modal de perfil) ou
+//   "importacao_planilha" (auto-revogação/reativação rodada durante a
+//   importação) — só usado para o log de auditoria, não muda o comportamento.
+async function chamarGerenciarAcesso(acao, funcionario, origem) {
   if (!funcionario.auth_user_id) {
     // Sem login criado ainda — não há usuário Auth para agir sobre. Não é
     // erro: só não há nada a fazer no Auth (a situacao/acesso_revogado no
@@ -7453,7 +7456,10 @@ async function chamarGerenciarAcesso(acao, funcionario) {
       body: JSON.stringify({
         acao,
         auth_user_id: funcionario.auth_user_id,
-        funcionario_comercial_id: funcionario.id
+        funcionario_comercial_id: funcionario.id,
+        funcionario_nome: funcionario.nome_completo || null,
+        funcionario_matricula: funcionario.matricula || null,
+        origem: origem || "manual"
       })
     });
     const json = await res.json();
@@ -7463,6 +7469,7 @@ async function chamarGerenciarAcesso(acao, funcionario) {
     return { ok: false, erro: "Não foi possível contatar a Edge Function. Verifique se ela está publicada." };
   }
 }
+
 
 // Nome para mensagens de log/erro da importação — mais simples que
 // calcularNomesExibicao (sem desambiguação por 2/3/4 nomes): usa o apelido
@@ -7565,7 +7572,7 @@ async function aplicarImportacaoHierarquia(plano, banco, onProgresso) {
     if (error) throw new Error(`Falha ao inativar funcionário "${nomeParaLog(inativo)}": ${extrairMensagemErro(error)}`);
     idsInativadosAgora.add(inativo.id);
     if (inativo.auth_user_id) {
-      const resultado = await chamarGerenciarAcesso("revogar_acesso", inativo);
+      const resultado = await chamarGerenciarAcesso("revogar_acesso", inativo, "importacao_planilha");
       if (!resultado.ok) {
         falhasRevogacao.push({ nome: nomeParaLog(inativo), matricula: inativo.matricula, motivo: resultado.erro });
       }
@@ -7590,7 +7597,7 @@ async function aplicarImportacaoHierarquia(plano, banco, onProgresso) {
   if (jaEramInativosComAcessoPendente.length > 0) {
     progresso(`Revogando acesso de ${jaEramInativosComAcessoPendente.length} funcionário(s) já inativado(s) anteriormente…`);
     for (const f of jaEramInativosComAcessoPendente) {
-      const resultado = await chamarGerenciarAcesso("revogar_acesso", f);
+      const resultado = await chamarGerenciarAcesso("revogar_acesso", f, "importacao_planilha");
       if (!resultado.ok) {
         falhasRevogacao.push({ nome: nomeParaLog(f), matricula: f.matricula, motivo: resultado.erro });
       }
@@ -12364,6 +12371,142 @@ function ModalPerfilComercial({ pessoa, onClose, onAtualizado, nomeExibicao: nom
     )
   ));
 }
+// ─── LOG DE AUDITORIA (log_acessos) ────────────────────────────────────────
+// Lista cronológica (mais recente primeiro) de toda ação administrativa
+// registrada — resetar senha, revogar/reativar acesso (manual ou vindo da
+// importação de planilha) e edição de perfil. Só leitura: a escrita nessa
+// tabela acontece via Edge Function (resetar/revogar/reativar) ou trigger no
+// banco (editar_perfil), nunca diretamente pelo client — ver
+// PAINEL_DE_ACESSOS.md seção 4.2.
+const RUBRICA_ACAO_LOG = {
+  resetar_senha: { label: "🔑 Senha resetada", cor: "var(--marca-700)" },
+  revogar_acesso: { label: "🔒 Acesso revogado", cor: "var(--vermelho-600)" },
+  reativar_acesso: { label: "🔓 Acesso reativado", cor: "var(--verde-800)" },
+  editar_perfil: { label: "✏️ Perfil editado", cor: "var(--cinza-700)" }
+};
+
+function formatarDataHoraLog(iso) {
+  try {
+    return new Date(iso).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
+  } catch (e) {
+    return iso;
+  }
+}
+
+// Descreve o campo `detalhe` (jsonb) de forma legível, sem expor um JSON cru
+// pro admin. Cobre os dois formatos gravados hoje: editar_perfil (mapa de
+// campo -> {de, para}) e revogar/reativar (situacao_anterior/situacao_nova).
+function descreverDetalheLog(item) {
+  const d = item.detalhe;
+  if (!d || typeof d !== "object") return null;
+  if (item.acao === "editar_perfil") {
+    const rotulos = { nome_completo: "Nome", cargo_origem: "Cargo", email: "E-mail", matricula: "Matrícula", modalidade: "Modalidade", situacao: "Situação" };
+    const partes = Object.keys(d).filter(k => rotulos[k]).map(k => `${rotulos[k]}: "${d[k].de ?? "—"}" → "${d[k].para ?? "—"}"`);
+    return partes.length ? partes.join(" · ") : null;
+  }
+  if (d.situacao_anterior !== undefined || d.situacao_nova !== undefined) {
+    return `Situação: ${d.situacao_anterior ?? "—"} → ${d.situacao_nova ?? "—"}`;
+  }
+  return null;
+}
+
+function ModalLogAcessos({ onClose }) {
+  const [carregando, setCarregando] = useState(true);
+  const [erro, setErro] = useState("");
+  const [itens, setItens] = useState([]);
+  const [busca, setBusca] = useState("");
+  const [filtroAcao, setFiltroAcao] = useState("");
+
+  useEffect(() => {
+    let cancelado = false;
+    (async () => {
+      setCarregando(true);
+      setErro("");
+      const { data, error } = await supa
+        .from("log_acessos")
+        .select("*")
+        .order("criado_em", { ascending: false })
+        .limit(500);
+      if (cancelado) return;
+      if (error) {
+        setErro(extrairMensagemErro(error));
+      } else {
+        setItens(data || []);
+      }
+      setCarregando(false);
+    })();
+    return () => { cancelado = true; };
+  }, []);
+
+  const itensFiltrados = useMemo(() => {
+    const buscaNorm = busca.trim().toLowerCase();
+    return itens.filter(item => {
+      if (filtroAcao && item.acao !== filtroAcao) return false;
+      if (!buscaNorm) return true;
+      const alvo = `${item.funcionario_nome || ""} ${item.funcionario_matricula || ""} ${item.ator_email || ""}`.toLowerCase();
+      return alvo.includes(buscaNorm);
+    });
+  }, [itens, busca, filtroAcao]);
+
+  const campoStyle = { padding: "9px 12px", borderRadius: 10, border: "1px solid var(--cinza-200)", fontSize: 12.5, outline: "none", background: "var(--cor-branco)", color: "var(--cinza-900)" };
+
+  return /*#__PURE__*/React.createElement(Modal, {
+    title: "📋 Log de auditoria",
+    onClose,
+    maxWidth: 760
+  }, /*#__PURE__*/React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 14 } },
+
+    /*# Filtros #*/
+    /*#__PURE__*/React.createElement("div", { style: { display: "flex", gap: 8, flexWrap: "wrap" } },
+      /*#__PURE__*/React.createElement("input", {
+        type: "text", placeholder: "Buscar por nome, matrícula ou responsável…",
+        value: busca, onChange: e => setBusca(e.target.value),
+        style: { ...campoStyle, flex: 1, minWidth: 220 }
+      }),
+      /*#__PURE__*/React.createElement("select", {
+        value: filtroAcao, onChange: e => setFiltroAcao(e.target.value),
+        style: { ...campoStyle, cursor: "pointer" }
+      },
+        /*#__PURE__*/React.createElement("option", { value: "" }, "Todas as ações"),
+        Object.keys(RUBRICA_ACAO_LOG).map(k => /*#__PURE__*/React.createElement("option", { key: k, value: k }, RUBRICA_ACAO_LOG[k].label))
+      )
+    ),
+
+    carregando && /*#__PURE__*/React.createElement("div", { style: { padding: 24, textAlign: "center", color: "var(--cinza-400)", fontSize: 13 } }, "Carregando…"),
+    erro && /*#__PURE__*/React.createElement("div", { style: { background: "var(--vermelho-100)", color: "var(--vermelho-600)", borderRadius: 10, padding: "10px 14px", fontSize: 13 } }, "Não foi possível carregar o log: ", erro),
+
+    !carregando && !erro && itensFiltrados.length === 0 && /*#__PURE__*/React.createElement("div", {
+      style: { padding: 24, textAlign: "center", color: "var(--cinza-400)", fontSize: 13 }
+    }, "Nenhum registro encontrado."),
+
+    !carregando && !erro && itensFiltrados.length > 0 && /*#__PURE__*/React.createElement("div", {
+      style: { display: "flex", flexDirection: "column", gap: 8, maxHeight: "60vh", overflow: "auto" }
+    },
+      itensFiltrados.map(item => {
+        const rubrica = RUBRICA_ACAO_LOG[item.acao] || { label: item.acao, cor: "var(--cinza-700)" };
+        const detalheTexto = descreverDetalheLog(item);
+        return /*#__PURE__*/React.createElement("div", {
+          key: item.id,
+          style: { border: "1px solid var(--cinza-100)", borderRadius: 12, padding: "10px 14px", display: "flex", flexDirection: "column", gap: 4 }
+        },
+          /*#__PURE__*/React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" } },
+            /*#__PURE__*/React.createElement("span", { style: { fontSize: 12.5, fontWeight: 700, color: rubrica.cor } }, rubrica.label),
+            /*#__PURE__*/React.createElement("span", { style: { fontSize: 11.5, color: "var(--cinza-400)" } }, formatarDataHoraLog(item.criado_em))
+          ),
+          /*#__PURE__*/React.createElement("div", { style: { fontSize: 12.5, color: "var(--cinza-700)" } },
+            item.funcionario_nome || "—", item.funcionario_matricula ? ` — mat. ${item.funcionario_matricula}` : "",
+            item.origem === "importacao_planilha" && /*#__PURE__*/React.createElement("span", {
+              style: { marginLeft: 8, fontSize: 11, fontWeight: 700, color: "var(--amber-700)", background: "var(--amber-100)", padding: "2px 8px", borderRadius: 20 }
+            }, "via importação")
+          ),
+          detalheTexto && /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: "var(--cinza-400)" } }, detalheTexto),
+          /*#__PURE__*/React.createElement("div", { style: { fontSize: 11.5, color: "var(--cinza-300)" } }, "por ", item.ator_email)
+        );
+      })
+    )
+  ));
+}
+
 function ArvoreHierarquia() {
   const { carregando, erro, superintendencias, diretorias, gerencias, funcionarios, atualizarFuncionarioLocal } = useArvoreComercialData();
   const [busca, setBusca] = useState("");
@@ -12372,6 +12515,7 @@ function ArvoreHierarquia() {
   const [criandoUsuarios, setCriandoUsuarios] = useState(false);
   const [resumoUsuarios, setResumoUsuarios] = useState(null);
   const [modalImportar, setModalImportar] = useState(false);
+  const [modalLog, setModalLog] = useState(false);
   // Pessoa clicada na árvore, para abrir o modal de edição de perfil +
   // controle de acesso (ModalPerfilComercial). null = modal fechado.
   const [pessoaSelecionada, setPessoaSelecionada] = useState(null);
@@ -12476,15 +12620,28 @@ function ArvoreHierarquia() {
           totais.total, " funcionários · ", totais.superintendencias, " superintendências · ",
           totais.diretorias, " diretorias · ", totais.gerencias, " gerências · ", totais.vendedores, " vendedores")
       ),
-      /*#__PURE__*/React.createElement("button", {
-        onClick: () => setModalImportar(true),
-        style: {
-          padding: "9px 16px", borderRadius: 10, border: "none",
-          background: "var(--marca-gradiente)", color: "var(--cor-branco)",
-          fontSize: 12.5, fontWeight: 700, cursor: "pointer", flexShrink: 0
-        }
-      }, "📥 Importar planilha")
+      /*#__PURE__*/React.createElement("div", { style: { display: "flex", gap: 8, flexShrink: 0 } },
+        /*#__PURE__*/React.createElement("button", {
+          onClick: () => setModalLog(true),
+          style: {
+            padding: "9px 16px", borderRadius: 10, border: "1px solid var(--cinza-200)",
+            background: "var(--cor-branco)", color: "var(--cinza-700)",
+            fontSize: 12.5, fontWeight: 700, cursor: "pointer"
+          }
+        }, "📋 Log de auditoria"),
+        /*#__PURE__*/React.createElement("button", {
+          onClick: () => setModalImportar(true),
+          style: {
+            padding: "9px 16px", borderRadius: 10, border: "none",
+            background: "var(--marca-gradiente)", color: "var(--cor-branco)",
+            fontSize: 12.5, fontWeight: 700, cursor: "pointer"
+          }
+        }, "📥 Importar planilha")
+      )
     ),
+    modalLog && /*#__PURE__*/React.createElement(ModalLogAcessos, {
+      onClose: () => setModalLog(false)
+    }),
     modalImportar && /*#__PURE__*/React.createElement(ModalImportarHierarquia, {
       onClose: () => setModalImportar(false),
       onConcluido: () => window.location.reload()
