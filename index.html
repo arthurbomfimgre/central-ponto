@@ -12295,20 +12295,6 @@ function ModalPerfilComercial({ pessoa, onClose, onAtualizado, nomeExibicao: nom
       )
     ),
 
-    editando.situacao === "INATIVO" && temLogin && !acessoRevogado && /*#__PURE__*/React.createElement("div", {
-      style: {
-        fontSize: 12.5, background: "var(--vermelho-100)", color: "var(--vermelho-600)",
-        borderRadius: 10, padding: "10px 14px"
-      }
-    }, "⚠️ Ao salvar, o acesso desta pessoa ao sistema também será revogado automaticamente."),
-
-    editando.situacao === "ATIVO" && temLogin && acessoRevogado && /*#__PURE__*/React.createElement("div", {
-      style: {
-        fontSize: 12.5, background: "var(--verde-100)", color: "var(--verde-800)",
-        borderRadius: 10, padding: "10px 14px"
-      }
-    }, "✅ Ao salvar, o acesso desta pessoa ao sistema também será reativado automaticamente."),
-
     erroSalvar && /*#__PURE__*/React.createElement("div", {
       style: { background: "var(--vermelho-100)", borderRadius: 10, padding: "10px 14px", fontSize: 13, color: "var(--vermelho-600)" }
     }, erroSalvar),
