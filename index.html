@@ -7512,11 +7512,13 @@ async function aplicarImportacaoHierarquia(plano, banco, onProgresso) {
   // resumo, mas não interrompem a importação.
   progresso(`Inativando ${plano.funcionariosInativados.length} funcionário(s)…`);
   const falhasRevogacao = [];
+  const idsInativadosAgora = new Set();
   for (const inativo of plano.funcionariosInativados) {
     const { error } = await supa.from("funcionarios_comercial")
       .update({ situacao: "INATIVO" })
       .eq("id", inativo.id);
     if (error) throw new Error(`Falha ao inativar funcionário "${inativo.nome_completo}": ${extrairMensagemErro(error)}`);
+    idsInativadosAgora.add(inativo.id);
     if (inativo.auth_user_id) {
       const resultado = await chamarGerenciarAcesso("revogar_acesso", inativo);
       if (!resultado.ok) {
@@ -7525,8 +7527,33 @@ async function aplicarImportacaoHierarquia(plano, banco, onProgresso) {
     }
   }
 
+  // ── 6) Revoga acesso de quem JÁ estava inativado antes desta importação
+  //      (não faz parte de `funcionariosInativados` acima, que só pega quem
+  //      acabou de virar inativo agora) mas ainda tem login com
+  //      acesso_revogado=false — situação "órfã" que podia ficar assim para
+  //      sempre em importações anteriores a esta correção, ou por falhas
+  //      antigas em falhasRevogacao que nunca foram reprocessadas. Cobre
+  //      todo o banco (banco.funcionariosTodos), não só o escopo/
+  //      superintendência desta planilha, já que aqui não há criação de
+  //      dados novos — só corrigir um estado que ficou pendente.
+  const jaEramInativosComAcessoPendente = banco.funcionariosTodos.filter(f =>
+    (f.situacao || "ATIVO").toUpperCase() === "INATIVO" &&
+    !idsInativadosAgora.has(f.id) &&
+    f.auth_user_id &&
+    !f.acesso_revogado
+  );
+  if (jaEramInativosComAcessoPendente.length > 0) {
+    progresso(`Revogando acesso de ${jaEramInativosComAcessoPendente.length} funcionário(s) já inativado(s) anteriormente…`);
+    for (const f of jaEramInativosComAcessoPendente) {
+      const resultado = await chamarGerenciarAcesso("revogar_acesso", f);
+      if (!resultado.ok) {
+        falhasRevogacao.push({ nome: f.nome_completo, matricula: f.matricula, motivo: resultado.erro });
+      }
+    }
+  }
+
   progresso("Concluído.");
-  return { falhasRevogacao };
+  return { falhasRevogacao, revogadosRetroativos: jaEramInativosComAcessoPendente.map(f => ({ nome: f.nome_completo, matricula: f.matricula })) };
 }
 
 function ModalImportarHierarquia({ onClose, onConcluido }) {
@@ -7590,7 +7617,7 @@ function ModalImportarHierarquia({ onClose, onConcluido }) {
     setErro("");
     try {
       const planoFiltrado = filtrarPlanoPorSelecao(plano, diretoriasRejeitadas, gerenciasRejeitadas);
-      const { falhasRevogacao } = await aplicarImportacaoHierarquia(planoFiltrado, banco, setEtapaAtual);
+      const { falhasRevogacao, revogadosRetroativos } = await aplicarImportacaoHierarquia(planoFiltrado, banco, setEtapaAtual);
       setConcluido({
         novos: planoFiltrado.funcionariosNovos.length,
         atualizados: planoFiltrado.funcionariosAtualizados.length,
@@ -7598,6 +7625,7 @@ function ModalImportarHierarquia({ onClose, onConcluido }) {
         diretoriasCriadas: planoFiltrado.diretoriasNovas.length,
         gerenciasCriadas: planoFiltrado.gerenciasNovas.length,
         falhasRevogacao: falhasRevogacao || [],
+        revogadosRetroativos: revogadosRetroativos || [],
         // Listas com nome + matrícula de cada pessoa afetada, para exibir o
         // resumo detalhado após a importação (não só a contagem).
         listaNovos: planoFiltrado.funcionariosNovos.map(f => ({ nome: f.nome_completo, matricula: f.matricula })),
@@ -7792,6 +7820,14 @@ function ModalImportarHierarquia({ onClose, onConcluido }) {
           "Ver ", concluido.listaInativados.length, " funcionário(s) inativado(s) / acesso revogado"),
         /*#__PURE__*/React.createElement("ul", { style: { paddingLeft: 18, marginTop: 8, display: "flex", flexDirection: "column", gap: 2, maxHeight: 200, overflow: "auto" } },
           concluido.listaInativados.map((f, i) => /*#__PURE__*/React.createElement("li", { key: i }, f.nome, " — mat. ", f.matricula)))
+      ),
+      concluido.revogadosRetroativos?.length > 0 && /*#__PURE__*/React.createElement("details", {
+        style: { background: "var(--amber-50)", borderRadius: 10, padding: "10px 14px", fontSize: 12.5 }
+      },
+        /*#__PURE__*/React.createElement("summary", { style: { fontWeight: 700, color: "var(--amber-800)", cursor: "pointer" } },
+          "Ver ", concluido.revogadosRetroativos.length, " funcionário(s) que já estavam inativos e tiveram o acesso revogado agora"),
+        /*#__PURE__*/React.createElement("ul", { style: { paddingLeft: 18, marginTop: 8, display: "flex", flexDirection: "column", gap: 2, maxHeight: 200, overflow: "auto" } },
+          concluido.revogadosRetroativos.map((f, i) => /*#__PURE__*/React.createElement("li", { key: i }, f.nome, " — mat. ", f.matricula)))
       ),
       concluido.falhasRevogacao?.length > 0 && /*#__PURE__*/React.createElement("div", {
         style: { background: "var(--amber-100)", color: "var(--amber-800)", borderRadius: 10, padding: "12px 16px", fontSize: 12.5 }
