@@ -12128,9 +12128,26 @@ function ModalPerfilComercial({ pessoa, onClose, onAtualizado, nomeExibicao: nom
       setErroSalvar(`Falha ao salvar: ${extrairMensagemErro(error)}`);
       return;
     }
-    setSucessoSalvar("Perfil atualizado com sucesso.");
-    setTimeout(() => setSucessoSalvar(""), 3000);
-    onAtualizado && onAtualizado({ ...pessoa, ...data });
+
+    // Se a situação virou Inativo e a pessoa tinha login ativo, revoga o
+    // acesso automaticamente — mesma lógica de auto-revogação que já roda
+    // na importação de planilha (ver seção 2.3 do PAINEL_DE_ACESSOS.md),
+    // agora também coberta no caminho manual (edição direta no modal).
+    let dadosFinais = { ...pessoa, ...data };
+    if (editando.situacao === "INATIVO" && temLogin && !acessoRevogado) {
+      const resultadoRevogacao = await chamarGerenciarAcesso("revogar_acesso", dadosFinais);
+      if (resultadoRevogacao.ok) {
+        setAcessoRevogado(true);
+        dadosFinais = { ...dadosFinais, acesso_revogado: true };
+        setSucessoSalvar("Perfil atualizado e acesso revogado automaticamente (situação: Inativo).");
+      } else {
+        setSucessoSalvar("Perfil atualizado, mas houve falha ao revogar o acesso automaticamente — revogue manualmente abaixo.");
+      }
+    } else {
+      setSucessoSalvar("Perfil atualizado com sucesso.");
+    }
+    setTimeout(() => setSucessoSalvar(""), 5000);
+    onAtualizado && onAtualizado(dadosFinais);
   }
 
   async function executarAcaoAcesso(acao) {
@@ -12239,6 +12256,13 @@ function ModalPerfilComercial({ pessoa, onClose, onAtualizado, nomeExibicao: nom
         )
       )
     ),
+
+    editando.situacao === "INATIVO" && temLogin && !acessoRevogado && /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 12.5, background: "var(--vermelho-100)", color: "var(--vermelho-600)",
+        borderRadius: 10, padding: "10px 14px"
+      }
+    }, "⚠️ Ao salvar, o acesso desta pessoa ao sistema também será revogado automaticamente."),
 
     erroSalvar && /*#__PURE__*/React.createElement("div", {
       style: { background: "var(--vermelho-100)", borderRadius: 10, padding: "10px 14px", fontSize: 13, color: "var(--vermelho-600)" }
@@ -12493,7 +12517,7 @@ function ArvoreHierarquia() {
         ),
         /*#__PURE__*/React.createElement("div", null,
           /*#__PURE__*/React.createElement("div", { style: { fontSize: 22, fontWeight: 800, color: "var(--vermelho-600)" } }, totais.revogados),
-          /*#__PURE__*/React.createElement("div", { style: { fontSize: 11.5, color: "var(--cinza-400)", fontWeight: 600 } }, "Acesso revogado")
+          /*#__PURE__*/React.createElement("div", { style: { fontSize: 11.5, color: "var(--cinza-400)", fontWeight: 600 } }, "Acesso inativo")
         )
       ),
       semLoginCount > 0 && /*#__PURE__*/React.createElement("div", {
@@ -12530,7 +12554,7 @@ function ArvoreHierarquia() {
       ),
       totais.revogados > 0 && /*#__PURE__*/React.createElement("details", null,
         /*#__PURE__*/React.createElement("summary", { style: { fontSize: 12, fontWeight: 700, color: "var(--vermelho-600)", cursor: "pointer" } },
-          "Ver quem está com acesso revogado"),
+          "Ver quem está com acesso inativo"),
         /*#__PURE__*/React.createElement("ul", { style: { paddingLeft: 18, marginTop: 8, display: "flex", flexDirection: "column", gap: 2, fontSize: 12.5, color: "var(--vermelho-600)", maxHeight: 220, overflow: "auto" } },
           funcionarios.filter(f => !!f.auth_user_id && !!f.acesso_revogado).sort((a, b) => nomeExibicao(a, nomesExibicao).localeCompare(nomeExibicao(b, nomesExibicao), "pt-BR", { sensitivity: "base" })).map(f =>
             /*#__PURE__*/React.createElement("li", { key: f.id }, nomeExibicao(f, nomesExibicao), " — mat. ", f.matricula)))
