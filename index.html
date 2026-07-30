@@ -3915,6 +3915,44 @@ function contarOcorrencias(ocorrencias, funcionarioId) {
 // primeironome.sobrenome@portovale.com.br (tudo minúsculo, sem acento).
 // O e-mail é usado só para autenticar no Supabase Auth — a senha real nunca
 // fica no código-fonte, só no Supabase.
+// Calcula o "nome de exibição" de cada funcionário da lista comercial, para
+// uso em toda a UI do Painel de Acessos (árvore, cards, listas de resumo,
+// mensagens de log/erro): usa o apelido cadastrado na planilha quando
+// existe; se não existir, usa os 2 primeiros nomes da pessoa — e só cresce
+// para 3, 4... nomes quando essa combinação de 2 primeiros nomes colide com
+// a de outro funcionário SEM apelido na mesma lista (colisão = mesmos 2
+// primeiros nomes; funcionários com apelido nunca entram nessa comparação,
+// já que exibem o apelido e não competem por "2 primeiros nomes").
+// Retorna um Map: id do funcionário -> nome de exibição (string).
+function calcularNomesExibicao(funcionarios) {
+  const resultado = new Map();
+  // Funcionários que vão exibir os primeiros nomes (sem apelido cadastrado).
+  const semApelido = funcionarios.filter(f => !(f.apelido && String(f.apelido).trim()));
+  funcionarios.forEach(f => {
+    if (f.apelido && String(f.apelido).trim()) {
+      resultado.set(f.id, String(f.apelido).trim().toUpperCase());
+    }
+  });
+  // Para cada funcionário sem apelido, tenta com 2 nomes; se colidir com
+  // outro (mesmos 2 primeiros nomes), tenta 3, depois 4, até desambiguar ou
+  // esgotar as partes do nome completo (nesse caso, usa o nome inteiro).
+  semApelido.forEach(f => {
+    const partes = String(f.nome_completo || "").trim().split(/\s+/).filter(Boolean);
+    let qtd = Math.min(2, partes.length);
+    let candidato = partes.slice(0, qtd).join(" ");
+    const colideComOutro = (nomeTentativa, qtdPartes) => semApelido.some(outro => {
+      if (outro.id === f.id) return false;
+      const partesOutro = String(outro.nome_completo || "").trim().split(/\s+/).filter(Boolean);
+      return partesOutro.slice(0, qtdPartes).join(" ") === nomeTentativa;
+    });
+    while (colideComOutro(candidato, qtd) && qtd < partes.length) {
+      qtd += 1;
+      candidato = partes.slice(0, qtd).join(" ");
+    }
+    resultado.set(f.id, candidato || f.nome_completo || "");
+  });
+  return resultado;
+}
 function gerarEmail(nomeCompleto) {
   const partes = nomeCompleto.trim().split(/\s+/);
   const primeiro = partes[0];
@@ -7426,6 +7464,13 @@ async function chamarGerenciarAcesso(acao, funcionario) {
   }
 }
 
+// Nome para mensagens de log/erro da importação — mais simples que
+// calcularNomesExibicao (sem desambiguação por 2/3/4 nomes): usa o apelido
+// quando existe, senão o nome completo. Suficiente aqui porque essas
+// mensagens sempre vêm acompanhadas da matrícula, que já é inequívoca.
+function nomeParaLog(f) {
+  return (f.apelido && String(f.apelido).trim()) ? String(f.apelido).trim().toUpperCase() : (f.nome_completo || f.nome || "");
+}
 async function aplicarImportacaoHierarquia(plano, banco, onProgresso) {
   const progresso = onProgresso || (() => {});
 
@@ -7480,7 +7525,7 @@ async function aplicarImportacaoHierarquia(plano, banco, onProgresso) {
     const { _superintendenciaId, _diretoriaNome, _gerenciaNome, ...campos } = novo;
     const ids = resolverIds(novo);
     const { error } = await supa.from("funcionarios_comercial").insert({ ...campos, ...ids });
-    if (error) throw new Error(`Falha ao criar funcionário "${novo.nome_completo}" (matrícula ${novo.matricula}): ${extrairMensagemErro(error)}`);
+    if (error) throw new Error(`Falha ao criar funcionário "${nomeParaLog(novo)}" (matrícula ${novo.matricula}): ${extrairMensagemErro(error)}`);
   }
 
   // ── 4) Atualiza funcionários existentes ─────────────────────────────────
@@ -7517,12 +7562,12 @@ async function aplicarImportacaoHierarquia(plano, banco, onProgresso) {
     const { error } = await supa.from("funcionarios_comercial")
       .update({ situacao: "INATIVO" })
       .eq("id", inativo.id);
-    if (error) throw new Error(`Falha ao inativar funcionário "${inativo.nome_completo}": ${extrairMensagemErro(error)}`);
+    if (error) throw new Error(`Falha ao inativar funcionário "${nomeParaLog(inativo)}": ${extrairMensagemErro(error)}`);
     idsInativadosAgora.add(inativo.id);
     if (inativo.auth_user_id) {
       const resultado = await chamarGerenciarAcesso("revogar_acesso", inativo);
       if (!resultado.ok) {
-        falhasRevogacao.push({ nome: inativo.nome_completo, matricula: inativo.matricula, motivo: resultado.erro });
+        falhasRevogacao.push({ nome: nomeParaLog(inativo), matricula: inativo.matricula, motivo: resultado.erro });
       }
     }
   }
@@ -7547,13 +7592,13 @@ async function aplicarImportacaoHierarquia(plano, banco, onProgresso) {
     for (const f of jaEramInativosComAcessoPendente) {
       const resultado = await chamarGerenciarAcesso("revogar_acesso", f);
       if (!resultado.ok) {
-        falhasRevogacao.push({ nome: f.nome_completo, matricula: f.matricula, motivo: resultado.erro });
+        falhasRevogacao.push({ nome: nomeParaLog(f), matricula: f.matricula, motivo: resultado.erro });
       }
     }
   }
 
   progresso("Concluído.");
-  return { falhasRevogacao, revogadosRetroativos: jaEramInativosComAcessoPendente.map(f => ({ nome: f.nome_completo, matricula: f.matricula })) };
+  return { falhasRevogacao, revogadosRetroativos: jaEramInativosComAcessoPendente.map(f => ({ nome: nomeParaLog(f), matricula: f.matricula })) };
 }
 
 function ModalImportarHierarquia({ onClose, onConcluido }) {
@@ -7628,9 +7673,9 @@ function ModalImportarHierarquia({ onClose, onConcluido }) {
         revogadosRetroativos: revogadosRetroativos || [],
         // Listas com nome + matrícula de cada pessoa afetada, para exibir o
         // resumo detalhado após a importação (não só a contagem).
-        listaNovos: planoFiltrado.funcionariosNovos.map(f => ({ nome: f.nome_completo, matricula: f.matricula })),
+        listaNovos: planoFiltrado.funcionariosNovos.map(f => ({ nome: nomeParaLog(f), matricula: f.matricula })),
         listaAtualizados: planoFiltrado.funcionariosAtualizados.map(f => ({ nome: f.nome, matricula: f.matriculaAnterior })),
-        listaInativados: planoFiltrado.funcionariosInativados.map(f => ({ nome: f.nome_completo, matricula: f.matricula }))
+        listaInativados: planoFiltrado.funcionariosInativados.map(f => ({ nome: nomeParaLog(f), matricula: f.matricula }))
       });
       setPlano(null);
       setArquivo(null);
@@ -11414,7 +11459,7 @@ function textoAtivosInativos(ativos, inativos) {
   if (!inativos) return txtAtivos;
   return `${txtAtivos} · ${inativos} ${inativos === 1 ? "inativo" : "inativos"}`;
 }
-function montarArvore({ superintendencias, diretorias, gerencias, funcionarios }) {
+function montarArvore({ superintendencias, diretorias, gerencias, funcionarios, nomesExibicao }) {
   const ehAtivo = f => (f.situacao || "ATIVO").toUpperCase() === "ATIVO";
   const porGerencia = new Map();
   const diretosNaDiretoria = new Map(); // diretoria_id -> [vendedores sem gerência]
@@ -11446,7 +11491,7 @@ function montarArvore({ superintendencias, diretorias, gerencias, funcionarios }
     }
   }
 
-  const ordenarNome = (a, b) => (a.nome_completo || "").localeCompare(b.nome_completo || "", "pt-BR");
+  const ordenarNome = (a, b) => nomeExibicao(a, nomesExibicao).localeCompare(nomeExibicao(b, nomesExibicao), "pt-BR");
 
   const gerenciasPorDiretoria = new Map();
   for (const g of gerencias) {
@@ -11502,10 +11547,12 @@ function montarArvore({ superintendencias, diretorias, gerencias, funcionarios }
     };
   });
 }
-function filtrarArvorePorBusca(arvore, termoBruto) {
+function filtrarArvorePorBusca(arvore, termoBruto, nomesExibicao) {
   const termo = normalizarBusca(termoBruto);
   if (!termo) return arvore;
-  const bate = f => f && normalizarBusca(f.nome_completo).includes(termo);
+  // Considera tanto o nome completo (dado real) quanto o nome de exibição
+  // (apelido, quando existe) — a pessoa pode digitar qualquer um dos dois.
+  const bate = f => f && (normalizarBusca(f.nome_completo).includes(termo) || normalizarBusca(nomeExibicao(f, nomesExibicao)).includes(termo));
   return arvore
     .map(s => {
       const diretorias = s.diretorias
@@ -11532,9 +11579,22 @@ function filtrarArvorePorBusca(arvore, termoBruto) {
 // da árvore (NoSuperintendencia → NoDiretoria → CardGerencia → LinhaPessoa).
 // Vale null quando a árvore está em modo somente-visualização (sem clique).
 const ContextoSelecaoPessoa = React.createContext(null);
+// Map (id do funcionário -> nome de exibição, ver calcularNomesExibicao)
+// disponibilizado uma vez no topo da árvore (ArvoreHierarquia) e consumido
+// por qualquer componente filho, sem precisar repassar prop por prop em
+// cada nível (NoSuperintendencia → NoDiretoria → CardGerencia → LinhaPessoa).
+const ContextoNomesExibicao = React.createContext(new Map());
+function nomeExibicao(pessoaOuId, mapaOuNull) {
+  if (!pessoaOuId) return "";
+  const id = typeof pessoaOuId === "object" ? pessoaOuId.id : pessoaOuId;
+  const mapa = mapaOuNull;
+  return (mapa && mapa.get(id)) || (typeof pessoaOuId === "object" ? pessoaOuId.nome_completo : "") || "";
+}
 function LinhaPessoa({ pessoa, nivel, destaque, inativo }) {
   const cor = NIVEL_COR[nivel];
   const onSelecionar = React.useContext(ContextoSelecaoPessoa);
+  const mapaNomes = React.useContext(ContextoNomesExibicao);
+  const nome = nomeExibicao(pessoa, mapaNomes);
   const clicavel = !!onSelecionar;
   return /*#__PURE__*/React.createElement("div", {
     onClick: clicavel ? () => onSelecionar(pessoa) : undefined,
@@ -11548,11 +11608,11 @@ function LinhaPessoa({ pessoa, nivel, destaque, inativo }) {
       background: destaque ? "var(--marca-50)" : "transparent",
       cursor: clicavel ? "pointer" : "default"
     }
-  }, /*#__PURE__*/React.createElement(Avatar, { nome: pessoa.nome_completo, id: pessoa.id, size: 28 }),
+  }, /*#__PURE__*/React.createElement(Avatar, { nome: nome, id: pessoa.id, size: 28 }),
     /*#__PURE__*/React.createElement("div", { style: { minWidth: 0, flex: 1 } },
       /*#__PURE__*/React.createElement("div", {
         style: { fontSize: 13, fontWeight: 600, color: "var(--cinza-900)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }
-      }, pessoa.nome_completo),
+      }, nome),
       /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, color: "var(--cinza-400)" } }, pessoa.cargo_origem)
     ),
     inativo && /*#__PURE__*/React.createElement("span", {
@@ -11584,6 +11644,8 @@ function LinhaPessoa({ pessoa, nivel, destaque, inativo }) {
   );
 }
 function CardGerencia({ gerencia, aberta, onToggle }) {
+  const mapaNomes = React.useContext(ContextoNomesExibicao);
+  const nomeGerente = gerencia.gerente ? nomeExibicao(gerencia.gerente, mapaNomes) : null;
   const ehAtivo = f => (f.situacao || "ATIVO").toUpperCase() === "ATIVO";
   const gerenteAtivo = gerencia.gerente && ehAtivo(gerencia.gerente);
   const gerenteInativo = gerencia.gerente && !ehAtivo(gerencia.gerente);
@@ -11608,12 +11670,12 @@ function CardGerencia({ gerencia, aberta, onToggle }) {
       }
     },
       /*#__PURE__*/React.createElement("span", { style: { fontSize: 12, color: "var(--cinza-400)", transform: aberta ? "rotate(90deg)" : "rotate(0deg)", transition: "transform .15s", flexShrink: 0 } }, "▶"),
-      gerencia.gerente ? /*#__PURE__*/React.createElement(Avatar, { nome: gerencia.gerente.nome_completo, id: gerencia.gerente.id, size: 26 })
+      gerencia.gerente ? /*#__PURE__*/React.createElement(Avatar, { nome: nomeGerente, id: gerencia.gerente.id, size: 26 })
         : /*#__PURE__*/React.createElement("div", { style: { width: 26, height: 26, borderRadius: "50%", background: "var(--cinza-200)", flexShrink: 0 } }),
       /*#__PURE__*/React.createElement("div", { style: { flex: 1, minWidth: 0 } },
         /*#__PURE__*/React.createElement("div", { style: { fontSize: 13, fontWeight: 700, color: "var(--cinza-900)" } }, gerencia.nome),
         /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, color: "var(--cinza-400)" } },
-          gerencia.gerente ? gerencia.gerente.nome_completo : "Sem gerente definido")
+          gerencia.gerente ? nomeGerente : "Sem gerente definido")
       ),
       /*#__PURE__*/React.createElement("span", {
         style: { fontSize: 11, fontWeight: 600, color: "var(--cinza-500)", background: "var(--cinza-100)", padding: "2px 8px", borderRadius: 20, flexShrink: 0 }
@@ -11892,6 +11954,8 @@ function NoDiretoriaFuncionarios({ diretoria, aberta, onToggle, gerenciasAbertas
 }
 function NoDiretoria({ diretoria, aberta, onToggle, gerenciasAbertas, onToggleGerencia }) {
   const totalGerencias = diretoria.gerencias.length;
+  const mapaNomes = React.useContext(ContextoNomesExibicao);
+  const nomeDiretor = diretoria.diretor ? nomeExibicao(diretoria.diretor, mapaNomes) : null;
   return /*#__PURE__*/React.createElement("div", {
     style: {
       background: "var(--cor-branco)",
@@ -11909,7 +11973,7 @@ function NoDiretoria({ diretoria, aberta, onToggle, gerenciasAbertas, onToggleGe
       }
     },
       /*#__PURE__*/React.createElement("span", { style: { fontSize: 13, color: "var(--cinza-400)", transform: aberta ? "rotate(90deg)" : "rotate(0deg)", transition: "transform .15s", flexShrink: 0 } }, "▶"),
-      diretoria.diretor ? /*#__PURE__*/React.createElement(Avatar, { nome: diretoria.diretor.nome_completo, id: diretoria.diretor.id, size: 34 })
+      diretoria.diretor ? /*#__PURE__*/React.createElement(Avatar, { nome: nomeDiretor, id: diretoria.diretor.id, size: 34 })
         : /*#__PURE__*/React.createElement("div", { style: { width: 34, height: 34, borderRadius: "50%", background: "var(--cinza-200)", flexShrink: 0 } }),
       /*#__PURE__*/React.createElement("div", { style: { flex: 1, minWidth: 0 } },
         /*#__PURE__*/React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8 } },
@@ -11919,7 +11983,7 @@ function NoDiretoria({ diretoria, aberta, onToggle, gerenciasAbertas, onToggleGe
           }, "Diretoria")
         ),
         /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: "var(--cinza-400)", marginTop: 2 } },
-          diretoria.diretor ? diretoria.diretor.nome_completo : "Sem diretor definido", " · ", totalGerencias, " ", totalGerencias === 1 ? "gerência" : "gerências")
+          diretoria.diretor ? nomeDiretor : "Sem diretor definido", " · ", totalGerencias, " ", totalGerencias === 1 ? "gerência" : "gerências")
       ),
       /*#__PURE__*/React.createElement("span", {
         style: { fontSize: 12, fontWeight: 700, color: "var(--marca-600)", background: "var(--marca-50)", padding: "4px 10px", borderRadius: 20, flexShrink: 0 }
@@ -11953,6 +12017,8 @@ function NoDiretoria({ diretoria, aberta, onToggle, gerenciasAbertas, onToggleGe
 }
 function NoSuperintendencia({ superintendencia, aberta, onToggle, estadoAberto, onToggleChave }) {
   const totalDiretorias = superintendencia.diretorias.length;
+  const mapaNomes = React.useContext(ContextoNomesExibicao);
+  const nomeSuper = superintendencia.superintendente ? nomeExibicao(superintendencia.superintendente, mapaNomes) : null;
   return /*#__PURE__*/React.createElement("div", {
     style: {
       background: "var(--cor-branco)",
@@ -11972,12 +12038,12 @@ function NoSuperintendencia({ superintendencia, aberta, onToggle, estadoAberto, 
       }
     },
       /*#__PURE__*/React.createElement("span", { style: { fontSize: 15, transform: aberta ? "rotate(90deg)" : "rotate(0deg)", transition: "transform .15s", flexShrink: 0 } }, "▶"),
-      superintendencia.superintendente ? /*#__PURE__*/React.createElement(Avatar, { nome: superintendencia.superintendente.nome_completo, id: superintendencia.superintendente.id, size: 40 })
+      superintendencia.superintendente ? /*#__PURE__*/React.createElement(Avatar, { nome: nomeSuper, id: superintendencia.superintendente.id, size: 40 })
         : /*#__PURE__*/React.createElement("div", { style: { width: 40, height: 40, borderRadius: "50%", background: "rgba(255,255,255,.3)", flexShrink: 0 } }),
       /*#__PURE__*/React.createElement("div", { style: { flex: 1, minWidth: 0 } },
         /*#__PURE__*/React.createElement("div", { style: { fontSize: 17, fontWeight: 800 } }, superintendencia.nome),
         /*#__PURE__*/React.createElement("div", { style: { fontSize: 12.5, opacity: .85, marginTop: 2 } },
-          superintendencia.superintendente ? superintendencia.superintendente.nome_completo : "Sem superintendente definido",
+          superintendencia.superintendente ? nomeSuper : "Sem superintendente definido",
           " · ", totalDiretorias, " ", totalDiretorias === 1 ? "diretoria" : "diretorias")
       ),
       /*#__PURE__*/React.createElement("span", {
@@ -12014,7 +12080,8 @@ function NoSuperintendencia({ superintendencia, aberta, onToggle, estadoAberto, 
 // onAtualizado(pessoaAtualizada) é chamado após salvar/mudar acesso com
 // sucesso, para o chamador atualizar sua cópia em memória sem precisar
 // recarregar a página inteira.
-function ModalPerfilComercial({ pessoa, onClose, onAtualizado }) {
+function ModalPerfilComercial({ pessoa, onClose, onAtualizado, nomeExibicao: nomeExibicaoProp }) {
+  const nomeParaTitulo = nomeExibicaoProp || pessoa.nome_completo;
   const [editando, setEditando] = useState({
     nome_completo: pessoa.nome_completo || "",
     cargo_origem: pessoa.cargo_origem || "",
@@ -12094,7 +12161,7 @@ function ModalPerfilComercial({ pessoa, onClose, onAtualizado }) {
   const labelStyle = { fontSize: 13, fontWeight: 600, color: "var(--cinza-700)", display: "block", marginBottom: 6 };
 
   return /*#__PURE__*/React.createElement(Modal, {
-    title: "✏️ Editar perfil — " + pessoa.nome_completo,
+    title: "✏️ Editar perfil — " + nomeParaTitulo,
     onClose,
     maxWidth: 560
   }, /*#__PURE__*/React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 16 } },
@@ -12262,6 +12329,9 @@ function ArvoreHierarquia() {
     () => funcionarios.filter(f => !f.auth_user_id).length,
     [funcionarios]
   );
+  // Nome de exibição de cada funcionário (apelido, ou nomes desambiguados)
+  // — ver calcularNomesExibicao. Recalculado só quando a lista mudar.
+  const nomesExibicao = useMemo(() => calcularNomesExibicao(funcionarios), [funcionarios]);
 
   async function criarUsuariosEmLote() {
     if (criandoUsuarios) return;
@@ -12304,10 +12374,10 @@ function ArvoreHierarquia() {
   }
 
   const arvoreCompleta = useMemo(
-    () => montarArvore({ superintendencias, diretorias, gerencias, funcionarios }),
-    [superintendencias, diretorias, gerencias, funcionarios]
+    () => montarArvore({ superintendencias, diretorias, gerencias, funcionarios, nomesExibicao }),
+    [superintendencias, diretorias, gerencias, funcionarios, nomesExibicao]
   );
-  const arvore = useMemo(() => filtrarArvorePorBusca(arvoreCompleta, busca), [arvoreCompleta, busca]);
+  const arvore = useMemo(() => filtrarArvorePorBusca(arvoreCompleta, busca, nomesExibicao), [arvoreCompleta, busca, nomesExibicao]);
 
   // Expande automaticamente todos os níveis quando há uma busca ativa, para
   // que o resultado filtrado apareça já visível em vez de escondido em nós
@@ -12423,16 +12493,16 @@ function ArvoreHierarquia() {
           /*#__PURE__*/React.createElement("summary", { style: { fontSize: 12, fontWeight: 700, color: "var(--amber-800)", cursor: "pointer" } },
             "Ver quem está sem login"),
           /*#__PURE__*/React.createElement("ul", { style: { paddingLeft: 18, marginTop: 8, display: "flex", flexDirection: "column", gap: 2, fontSize: 12.5, color: "var(--amber-800)", maxHeight: 220, overflow: "auto" } },
-            funcionarios.filter(f => !f.auth_user_id).sort((a, b) => a.nome_completo.localeCompare(b.nome_completo, "pt-BR", { sensitivity: "base" })).map(f =>
-              /*#__PURE__*/React.createElement("li", { key: f.id }, f.nome_completo, " — mat. ", f.matricula)))
+            funcionarios.filter(f => !f.auth_user_id).sort((a, b) => nomeExibicao(a, nomesExibicao).localeCompare(nomeExibicao(b, nomesExibicao), "pt-BR", { sensitivity: "base" })).map(f =>
+              /*#__PURE__*/React.createElement("li", { key: f.id }, nomeExibicao(f, nomesExibicao), " — mat. ", f.matricula)))
         )
       ),
       totais.revogados > 0 && /*#__PURE__*/React.createElement("details", null,
         /*#__PURE__*/React.createElement("summary", { style: { fontSize: 12, fontWeight: 700, color: "var(--vermelho-600)", cursor: "pointer" } },
           "Ver quem está com acesso revogado"),
         /*#__PURE__*/React.createElement("ul", { style: { paddingLeft: 18, marginTop: 8, display: "flex", flexDirection: "column", gap: 2, fontSize: 12.5, color: "var(--vermelho-600)", maxHeight: 220, overflow: "auto" } },
-          funcionarios.filter(f => !!f.auth_user_id && !!f.acesso_revogado).sort((a, b) => a.nome_completo.localeCompare(b.nome_completo, "pt-BR", { sensitivity: "base" })).map(f =>
-            /*#__PURE__*/React.createElement("li", { key: f.id }, f.nome_completo, " — mat. ", f.matricula)))
+          funcionarios.filter(f => !!f.auth_user_id && !!f.acesso_revogado).sort((a, b) => nomeExibicao(a, nomesExibicao).localeCompare(nomeExibicao(b, nomesExibicao), "pt-BR", { sensitivity: "base" })).map(f =>
+            /*#__PURE__*/React.createElement("li", { key: f.id }, nomeExibicao(f, nomesExibicao), " — mat. ", f.matricula)))
       )
     ),
 
@@ -12462,20 +12532,23 @@ function ArvoreHierarquia() {
           resumoUsuarios.falhas.map(f => /*#__PURE__*/React.createElement("li", { key: f.id }, `${f.nome}: ${f.motivo}`)))
       )
     ),
-    /*#__PURE__*/React.createElement(ContextoSelecaoPessoa.Provider, { value: setPessoaSelecionada },
-      arvore.length === 0
-        ? /*#__PURE__*/React.createElement("div", { style: { padding: 40, textAlign: "center", color: "var(--cinza-300)", fontSize: 13 } }, "Nenhum resultado para essa busca.")
-        : arvore.map(s => /*#__PURE__*/React.createElement(NoSuperintendencia, {
-            key: s.id,
-            superintendencia: s,
-            aberta: !!aberto[`s_${s.id}`],
-            onToggle: () => toggle(`s_${s.id}`),
-            estadoAberto: aberto,
-            onToggleChave: toggle
-          }))
+    /*#__PURE__*/React.createElement(ContextoNomesExibicao.Provider, { value: nomesExibicao },
+      /*#__PURE__*/React.createElement(ContextoSelecaoPessoa.Provider, { value: setPessoaSelecionada },
+        arvore.length === 0
+          ? /*#__PURE__*/React.createElement("div", { style: { padding: 40, textAlign: "center", color: "var(--cinza-300)", fontSize: 13 } }, "Nenhum resultado para essa busca.")
+          : arvore.map(s => /*#__PURE__*/React.createElement(NoSuperintendencia, {
+              key: s.id,
+              superintendencia: s,
+              aberta: !!aberto[`s_${s.id}`],
+              onToggle: () => toggle(`s_${s.id}`),
+              estadoAberto: aberto,
+              onToggleChave: toggle
+            }))
+      )
     ),
     pessoaSelecionada && /*#__PURE__*/React.createElement(ModalPerfilComercial, {
       pessoa: pessoaSelecionada,
+      nomeExibicao: nomeExibicao(pessoaSelecionada, nomesExibicao),
       onClose: () => setPessoaSelecionada(null),
       onAtualizado: pessoaAtualizada => {
         atualizarFuncionarioLocal(pessoaAtualizada);
