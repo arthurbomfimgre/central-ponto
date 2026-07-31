@@ -7694,6 +7694,17 @@ function ModalImportarHierarquia({ onClose, onConcluido }) {
     try {
       const planoFiltrado = filtrarPlanoPorSelecao(plano, diretoriasRejeitadas, gerenciasRejeitadas);
       const { falhasRevogacao, revogadosRetroativos } = await aplicarImportacaoHierarquia(planoFiltrado, banco, setEtapaAtual);
+      registrarLogAcessosClient({
+        acao: "importacao_planilha",
+        origem: "importacao_planilha",
+        detalhe: {
+          novos: planoFiltrado.funcionariosNovos.length,
+          atualizados: planoFiltrado.funcionariosAtualizados.length,
+          inativados: planoFiltrado.funcionariosInativados.length,
+          diretoriasCriadas: planoFiltrado.diretoriasNovas.length,
+          gerenciasCriadas: planoFiltrado.gerenciasNovas.length
+        }
+      });
       setConcluido({
         novos: planoFiltrado.funcionariosNovos.length,
         atualizados: planoFiltrado.funcionariosAtualizados.length,
@@ -12417,7 +12428,8 @@ const RUBRICA_ACAO_LOG = {
   editar_perfil: { label: "✏️ Perfil editado", cor: "var(--cinza-700)" },
   criar_funcionario: { label: "🆕 Funcionário criado", cor: "var(--verde-700)" },
   criar_login: { label: "👤 Login criado", cor: "var(--marca-600)" },
-  estrutura_criada: { label: "🏗️ Estrutura criada", cor: "var(--roxo-600)" }
+  estrutura_criada: { label: "🏗️ Estrutura criada", cor: "var(--roxo-600)" },
+  importacao_planilha: { label: "📥 Planilha importada", cor: "var(--ciano-700)" }
 };
 
 // Grava um evento de log diretamente do client, usando a sessão real do
@@ -12482,6 +12494,15 @@ function descreverDetalheLog(item) {
   if (item.acao === "estrutura_criada") {
     const tipo = d.tipo === "diretoria" ? "Diretoria" : d.tipo === "gerencia" ? "Gerência" : (d.tipo || "Estrutura");
     return d.pai ? `${tipo} nova, dentro de "${d.pai}"` : `${tipo} nova`;
+  }
+  if (item.acao === "importacao_planilha") {
+    const partes = [];
+    if (d.novos) partes.push(`${d.novos} novo(s)`);
+    if (d.atualizados) partes.push(`${d.atualizados} atualizado(s)`);
+    if (d.inativados) partes.push(`${d.inativados} inativado(s)`);
+    if (d.diretoriasCriadas) partes.push(`${d.diretoriasCriadas} diretoria(s) nova(s)`);
+    if (d.gerenciasCriadas) partes.push(`${d.gerenciasCriadas} gerência(s) nova(s)`);
+    return partes.length ? partes.join(" · ") : "Nenhuma mudança";
   }
   return null;
 }
