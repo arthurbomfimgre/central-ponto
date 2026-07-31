@@ -12284,7 +12284,7 @@ function NoSuperintendencia({ superintendencia, aberta, onToggle, estadoAberto, 
 // onAtualizado(pessoaAtualizada) é chamado após salvar/mudar acesso com
 // sucesso, para o chamador atualizar sua cópia em memória sem precisar
 // recarregar a página inteira.
-function ModalPerfilComercial({ pessoa, onClose, onAtualizado, nomeExibicao: nomeExibicaoProp }) {
+function ModalPerfilComercial({ pessoa, onClose, onAtualizado, nomeExibicao: nomeExibicaoProp, superintendencias, diretorias, gerencias }) {
   const nomeParaTitulo = nomeExibicaoProp || pessoa.nome_completo;
   const [editando, setEditando] = useState({
     nome_completo: pessoa.nome_completo || "",
@@ -12292,8 +12292,54 @@ function ModalPerfilComercial({ pessoa, onClose, onAtualizado, nomeExibicao: nom
     email: pessoa.email || "",
     matricula: pessoa.matricula || "",
     modalidade: pessoa.modalidade || "presencial",
-    situacao: (pessoa.situacao || "ATIVO").toUpperCase()
+    situacao: (pessoa.situacao || "ATIVO").toUpperCase(),
+    nivel: pessoa.nivel || "vendedor",
+    superintendencia_id: pessoa.superintendencia_id ?? null,
+    diretoria_id: pessoa.diretoria_id ?? null,
+    gerencia_id: pessoa.gerencia_id ?? null
   });
+
+  // Listas ordenadas por nome, para os seletores de hierarquia abaixo.
+  const superintendenciasOrdenadas = useMemo(
+    () => [...(superintendencias || [])].sort((a, b) => (a.nome || "").localeCompare(b.nome || "", "pt-BR", { sensitivity: "base" })),
+    [superintendencias]
+  );
+  // Diretorias filtradas pela superintendência escolhida (só faz sentido
+  // oferecer diretorias que pertencem à superintendência selecionada).
+  const diretoriasFiltradas = useMemo(
+    () => (diretorias || [])
+      .filter(d => editando.superintendencia_id != null && d.superintendencia_id === editando.superintendencia_id)
+      .sort((a, b) => (a.nome || "").localeCompare(b.nome || "", "pt-BR", { sensitivity: "base" })),
+    [diretorias, editando.superintendencia_id]
+  );
+  // Gerências filtradas pela diretoria escolhida.
+  const gerenciasFiltradas = useMemo(
+    () => (gerencias || [])
+      .filter(g => editando.diretoria_id != null && g.diretoria_id === editando.diretoria_id)
+      .sort((a, b) => (a.nome || "").localeCompare(b.nome || "", "pt-BR", { sensitivity: "base" })),
+    [gerencias, editando.diretoria_id]
+  );
+
+  // Quando o nível muda, limpa os vínculos que não fazem mais sentido para
+  // o novo nível (ex.: virar superintendente não deve manter gerencia_id
+  // de quando era vendedor).
+  function mudarNivel(novoNivel) {
+    setEditando(p => ({
+      ...p,
+      nivel: novoNivel,
+      diretoria_id: (novoNivel === "vendedor" || novoNivel === "gerente" || novoNivel === "diretor") ? p.diretoria_id : null,
+      gerencia_id: (novoNivel === "vendedor" || novoNivel === "gerente") ? p.gerencia_id : null
+    }));
+  }
+  // Quando a superintendência muda, zera diretoria/gerência (deixavam de
+  // ser válidas, já que pertenciam à superintendência anterior).
+  function mudarSuperintendencia(novoId) {
+    setEditando(p => ({ ...p, superintendencia_id: novoId, diretoria_id: null, gerencia_id: null }));
+  }
+  // Quando a diretoria muda, zera gerência.
+  function mudarDiretoria(novoId) {
+    setEditando(p => ({ ...p, diretoria_id: novoId, gerencia_id: null }));
+  }
   const [salvando, setSalvando] = useState(false);
   const [erroSalvar, setErroSalvar] = useState("");
   const [sucessoSalvar, setSucessoSalvar] = useState("");
@@ -12310,6 +12356,26 @@ function ModalPerfilComercial({ pessoa, onClose, onAtualizado, nomeExibicao: nom
   async function salvar() {
     if (!editando.nome_completo.trim() || !editando.cargo_origem.trim() || !editando.matricula.trim()) {
       setErroSalvar("Nome, cargo e matrícula são obrigatórios.");
+      return;
+    }
+    // Validação da posição na hierarquia: cada nível exige um vínculo
+    // mínimo, senão a pessoa fica "solta" e não aparece corretamente na
+    // árvore (mesmo problema que motivou o fallback de superintendente/
+    // diretor descrito no diagnóstico de hoje).
+    if (editando.nivel === "superintendente" && editando.superintendencia_id == null) {
+      setErroSalvar("Selecione a superintendência.");
+      return;
+    }
+    if (editando.nivel === "diretor" && (editando.superintendencia_id == null || editando.diretoria_id == null)) {
+      setErroSalvar("Selecione a superintendência e a diretoria.");
+      return;
+    }
+    if (editando.nivel === "gerente" && (editando.superintendencia_id == null || editando.diretoria_id == null || editando.gerencia_id == null)) {
+      setErroSalvar("Selecione a superintendência, a diretoria e a gerência.");
+      return;
+    }
+    if (editando.nivel === "vendedor" && (editando.superintendencia_id == null || editando.diretoria_id == null)) {
+      setErroSalvar("Selecione ao menos a superintendência e a diretoria (a gerência é opcional para vendedor vinculado direto à diretoria).");
       return;
     }
 
@@ -12335,7 +12401,11 @@ function ModalPerfilComercial({ pessoa, onClose, onAtualizado, nomeExibicao: nom
       email: editando.email.trim().toLowerCase() || null,
       matricula: editando.matricula.trim(),
       modalidade: editando.modalidade,
-      situacao: editando.situacao
+      situacao: editando.situacao,
+      nivel: editando.nivel,
+      superintendencia_id: editando.superintendencia_id,
+      diretoria_id: (editando.nivel === "diretor" || editando.nivel === "gerente" || editando.nivel === "vendedor") ? editando.diretoria_id : null,
+      gerencia_id: (editando.nivel === "gerente" || editando.nivel === "vendedor") ? editando.gerencia_id : null
     };
     const { data, error } = await supa.from("funcionarios_comercial")
       .update(campos)
@@ -12452,6 +12522,68 @@ function ModalPerfilComercial({ pessoa, onClose, onAtualizado, nomeExibicao: nom
           onChange: e => setEditando(p => ({ ...p, cargo_origem: e.target.value })),
           style: campoStyle
         })
+      )
+    ),
+
+    /*# ── Posição na hierarquia ─────────────────────────────────────── #*/
+    /*#__PURE__*/React.createElement("div", { style: { borderTop: "1px solid var(--cinza-100)", paddingTop: 14, display: "flex", flexDirection: "column", gap: 12 } },
+      /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, fontWeight: 700, color: "var(--cinza-400)", textTransform: "uppercase", letterSpacing: ".05em" } }, "Posição na hierarquia"),
+
+      /*# Nível/cargo hierárquico #*/
+      /*#__PURE__*/React.createElement("div", null,
+        /*#__PURE__*/React.createElement("label", { style: labelStyle }, "Cargo (nível hierárquico)"),
+        /*#__PURE__*/React.createElement("select", {
+          value: editando.nivel,
+          onChange: e => mudarNivel(e.target.value),
+          style: { ...campoStyle, cursor: "pointer" }
+        },
+          /*#__PURE__*/React.createElement("option", { value: "superintendente" }, "Superintendente comercial"),
+          /*#__PURE__*/React.createElement("option", { value: "diretor" }, "Diretor"),
+          /*#__PURE__*/React.createElement("option", { value: "gerente" }, "Gerente"),
+          /*#__PURE__*/React.createElement("option", { value: "vendedor" }, "Vendedor")
+        )
+      ),
+
+      /*# Superintendência — sempre visível, todo nível pertence a uma #*/
+      /*#__PURE__*/React.createElement("div", null,
+        /*#__PURE__*/React.createElement("label", { style: labelStyle }, "Superintendência"),
+        /*#__PURE__*/React.createElement("select", {
+          value: editando.superintendencia_id ?? "",
+          onChange: e => mudarSuperintendencia(e.target.value ? Number(e.target.value) : null),
+          style: { ...campoStyle, cursor: "pointer" }
+        },
+          /*#__PURE__*/React.createElement("option", { value: "" }, "Selecione…"),
+          superintendenciasOrdenadas.map(s => /*#__PURE__*/React.createElement("option", { key: s.id, value: s.id }, s.nome))
+        )
+      ),
+
+      /*# Diretoria — para diretor, gerente e vendedor #*/
+      editando.nivel !== "superintendente" && /*#__PURE__*/React.createElement("div", null,
+        /*#__PURE__*/React.createElement("label", { style: labelStyle }, "Diretoria"),
+        /*#__PURE__*/React.createElement("select", {
+          value: editando.diretoria_id ?? "",
+          onChange: e => mudarDiretoria(e.target.value ? Number(e.target.value) : null),
+          disabled: editando.superintendencia_id == null,
+          style: { ...campoStyle, cursor: editando.superintendencia_id == null ? "not-allowed" : "pointer" }
+        },
+          /*#__PURE__*/React.createElement("option", { value: "" }, editando.superintendencia_id == null ? "Selecione a superintendência primeiro…" : "Selecione…"),
+          diretoriasFiltradas.map(d => /*#__PURE__*/React.createElement("option", { key: d.id, value: d.id }, d.nome))
+        )
+      ),
+
+      /*# Gerência — para gerente, e opcional para vendedor (vendedor pode
+          estar vinculado direto à diretoria, sem gerência) #*/
+      (editando.nivel === "gerente" || editando.nivel === "vendedor") && /*#__PURE__*/React.createElement("div", null,
+        /*#__PURE__*/React.createElement("label", { style: labelStyle }, "Gerência", editando.nivel === "vendedor" && /*#__PURE__*/React.createElement("span", { style: { fontWeight: 400, color: "var(--cinza-400)" } }, " (opcional para vendedor)")),
+        /*#__PURE__*/React.createElement("select", {
+          value: editando.gerencia_id ?? "",
+          onChange: e => setEditando(p => ({ ...p, gerencia_id: e.target.value ? Number(e.target.value) : null })),
+          disabled: editando.diretoria_id == null,
+          style: { ...campoStyle, cursor: editando.diretoria_id == null ? "not-allowed" : "pointer" }
+        },
+          /*#__PURE__*/React.createElement("option", { value: "" }, editando.diretoria_id == null ? "Selecione a diretoria primeiro…" : (editando.nivel === "vendedor" ? "Nenhuma (vínculo direto à diretoria)" : "Selecione…")),
+          gerenciasFiltradas.map(g => /*#__PURE__*/React.createElement("option", { key: g.id, value: g.id }, g.nome))
+        )
       )
     ),
 
@@ -13044,6 +13176,9 @@ function ArvoreHierarquia() {
     pessoaSelecionada && /*#__PURE__*/React.createElement(ModalPerfilComercial, {
       pessoa: pessoaSelecionada,
       nomeExibicao: nomeExibicao(pessoaSelecionada, nomesExibicao),
+      superintendencias,
+      diretorias,
+      gerencias,
       onClose: () => setPessoaSelecionada(null),
       onAtualizado: pessoaAtualizada => {
         atualizarFuncionarioLocal(pessoaAtualizada);
