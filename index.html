@@ -7491,6 +7491,11 @@ async function aplicarImportacaoHierarquia(plano, banco, onProgresso) {
       .select().single();
     if (error) throw new Error(`Falha ao criar diretoria "${nova.nome}": ${extrairMensagemErro(error)}`);
     dirPorChave.set(`${nova.superintendencia_id}::${nova.nome.trim().toUpperCase()}`, data);
+    registrarLogAcessosClient({
+      acao: "estrutura_criada",
+      origem: "importacao_planilha",
+      detalhe: { tipo: "diretoria", nome: nova.nome }
+    });
   }
 
   // ── 2) Cria gerências novas (usando ids reais de diretoria, inclusive as
@@ -7506,6 +7511,11 @@ async function aplicarImportacaoHierarquia(plano, banco, onProgresso) {
       .select().single();
     if (error) throw new Error(`Falha ao criar gerência "${nova.nome}": ${extrairMensagemErro(error)}`);
     gerPorChave.set(`${dir.id}::${nova.nome.trim().toUpperCase()}`, data);
+    registrarLogAcessosClient({
+      acao: "estrutura_criada",
+      origem: "importacao_planilha",
+      detalhe: { tipo: "gerencia", nome: nova.nome, pai: dir.nome }
+    });
   }
 
   // Resolve superintendencia_id/diretoria_id/gerencia_id de um item de
@@ -7531,8 +7541,22 @@ async function aplicarImportacaoHierarquia(plano, banco, onProgresso) {
   for (const novo of plano.funcionariosNovos) {
     const { _superintendenciaId, _diretoriaNome, _gerenciaNome, ...campos } = novo;
     const ids = resolverIds(novo);
-    const { error } = await supa.from("funcionarios_comercial").insert({ ...campos, ...ids });
+    const { data, error } = await supa.from("funcionarios_comercial")
+      .insert({ ...campos, ...ids })
+      .select().single();
     if (error) throw new Error(`Falha ao criar funcionário "${nomeParaLog(novo)}" (matrícula ${novo.matricula}): ${extrairMensagemErro(error)}`);
+    registrarLogAcessosClient({
+      acao: "criar_funcionario",
+      funcionario_comercial_id: data?.id,
+      funcionario_nome: nomeParaLog(novo),
+      funcionario_matricula: novo.matricula,
+      origem: "importacao_planilha",
+      detalhe: {
+        superintendencia: novo._superintendenciaId ? banco.superintendencias?.find(s => s.id === novo._superintendenciaId)?.nome : null,
+        diretoria: _diretoriaNome || null,
+        gerencia: _gerenciaNome || null
+      }
+    });
   }
 
   // ── 4) Atualiza funcionários existentes ─────────────────────────────────
@@ -12390,8 +12414,38 @@ const RUBRICA_ACAO_LOG = {
   resetar_senha: { label: "🔑 Senha resetada", cor: "var(--marca-700)" },
   revogar_acesso: { label: "🔒 Acesso revogado", cor: "var(--vermelho-600)" },
   reativar_acesso: { label: "🔓 Acesso reativado", cor: "var(--verde-800)" },
-  editar_perfil: { label: "✏️ Perfil editado", cor: "var(--cinza-700)" }
+  editar_perfil: { label: "✏️ Perfil editado", cor: "var(--cinza-700)" },
+  criar_funcionario: { label: "🆕 Funcionário criado", cor: "var(--verde-700)" },
+  criar_login: { label: "👤 Login criado", cor: "var(--marca-600)" },
+  estrutura_criada: { label: "🏗️ Estrutura criada", cor: "var(--roxo-600)" }
 };
+
+// Grava um evento de log diretamente do client, usando a sessão real do
+// admin logado (RLS restringe insert a comercial@portovale.com.br — ver
+// passo1c_policy_insert_client.sql). Usado para eventos que acontecem
+// inteiramente no client durante a importação de planilha (criação de
+// funcionário/estrutura) e no fluxo de criação de logins em lote, que não
+// passam pela Edge Function admin-gerenciar-acesso. Por design, erros aqui
+// só vão pro console — não travam o fluxo principal (importação/criação de
+// login), mas também não avisam visivelmente o usuário se o log falhar.
+async function registrarLogAcessosClient({ acao, funcionario_comercial_id, funcionario_nome, funcionario_matricula, origem, detalhe }) {
+  try {
+    const { data: { user } } = await supa.auth.getUser();
+    const { error } = await supa.from("log_acessos").insert({
+      ator_email: user?.email || null,
+      ator_user_id: user?.id || null,
+      funcionario_comercial_id: funcionario_comercial_id || null,
+      funcionario_nome: funcionario_nome || null,
+      funcionario_matricula: funcionario_matricula || null,
+      acao,
+      origem: origem || "manual",
+      detalhe: detalhe || null
+    });
+    if (error) console.error("registrarLogAcessosClient:", error);
+  } catch (e) {
+    console.error("registrarLogAcessosClient (exceção):", e);
+  }
+}
 
 function formatarDataHoraLog(iso) {
   try {
@@ -12414,6 +12468,20 @@ function descreverDetalheLog(item) {
   }
   if (d.situacao_anterior !== undefined || d.situacao_nova !== undefined) {
     return `Situação: ${d.situacao_anterior ?? "—"} → ${d.situacao_nova ?? "—"}`;
+  }
+  if (item.acao === "criar_funcionario") {
+    const partes = [];
+    if (d.superintendencia) partes.push(d.superintendencia);
+    if (d.diretoria) partes.push(d.diretoria);
+    if (d.gerencia) partes.push(d.gerencia);
+    return partes.length ? `Hierarquia: ${partes.join(" → ")}` : "Criado via importação de planilha";
+  }
+  if (item.acao === "criar_login") {
+    return d.email ? `Login criado para ${d.email}` : "Login criado via criação em lote";
+  }
+  if (item.acao === "estrutura_criada") {
+    const tipo = d.tipo === "diretoria" ? "Diretoria" : d.tipo === "gerencia" ? "Gerência" : (d.tipo || "Estrutura");
+    return d.pai ? `${tipo} nova, dentro de "${d.pai}"` : `${tipo} nova`;
   }
   return null;
 }
@@ -12565,6 +12633,20 @@ function ArvoreHierarquia() {
         acumulado.criados += json.resultados.criados.length;
         acumulado.jaExistiam += json.resultados.jaExistiam.length;
         acumulado.falhas.push(...json.resultados.falhas);
+        // A Edge Function devolve só {id, nome} por criado — busca matrícula
+        // e e-mail na lista de funcionários já carregada no client (mesma
+        // fonte usada pelo resto da tela) para o log ficar completo.
+        for (const item of json.resultados.criados) {
+          const f = funcionarios.find(f => f.id === item.id);
+          registrarLogAcessosClient({
+            acao: "criar_login",
+            funcionario_comercial_id: item.id,
+            funcionario_nome: item.nome,
+            funcionario_matricula: f?.matricula || null,
+            origem: "manual",
+            detalhe: { email: f?.email || null }
+          });
+        }
         setResumoUsuarios({ ...acumulado, senha: json.senha_inicial, emAndamento: true });
         if (json.processados_neste_lote < LOTE) break; // acabou
       }
