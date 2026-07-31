@@ -7791,7 +7791,7 @@ function ModalImportarHierarquia({ onClose, onConcluido }) {
       // capturamos o resultado para avisar visivelmente na tela de
       // conclusão se o log não puder ser gravado (ex.: falha de rede ou
       // RLS), em vez de deixar isso passar despercebido.
-      const logGravado = await registrarLogAcessosClient({
+      const resultadoLog = await registrarLogAcessosClient({
         acao: "importacao_planilha",
         origem: "importacao_planilha",
         detalhe: {
@@ -7811,7 +7811,8 @@ function ModalImportarHierarquia({ onClose, onConcluido }) {
         gerenciasCriadas: planoFiltrado.gerenciasNovas.length,
         falhasRevogacao: falhasRevogacao || [],
         revogadosRetroativos: revogadosRetroativos || [],
-        logFalhou: !logGravado,
+        logFalhou: !resultadoLog.ok,
+        logDebug: resultadoLog.debug,
         // Listas com nome + matrícula de cada pessoa afetada, para exibir o
         // resumo detalhado após a importação (não só a contagem).
         listaNovos: planoFiltrado.funcionariosNovos.map(f => ({ nome: nomeParaLog(f), matricula: f.matricula })),
@@ -7981,6 +7982,12 @@ function ModalImportarHierarquia({ onClose, onConcluido }) {
       concluido.logFalhou && /*#__PURE__*/React.createElement("div", {
         style: { background: "var(--amber-100)", color: "var(--amber-800)", borderRadius: 10, padding: "10px 14px", fontSize: 12.5, fontWeight: 600 }
       }, "⚠️ As alterações acima foram aplicadas normalmente, mas não foi possível registrar esta importação no Log de auditoria (falha de conexão ou permissão). Ela não vai aparecer lá."),
+      concluido.logDebug && /*#__PURE__*/React.createElement("details", {
+        style: { background: "var(--cinza-100)", borderRadius: 10, padding: "10px 14px", fontSize: 11.5, color: "var(--cinza-600)" }
+      },
+        /*#__PURE__*/React.createElement("summary", { style: { fontWeight: 700, cursor: "pointer" } }, "🔧 Diagnóstico do registro no log (temporário)"),
+        /*#__PURE__*/React.createElement("pre", { style: { whiteSpace: "pre-wrap", marginTop: 8, fontSize: 11 } }, JSON.stringify(concluido.logDebug, null, 2))
+      ),
       // Resumo detalhado: nome + matrícula de cada pessoa afetada, não só a
       // contagem — cada bloco vem como um <details> nativo (recolhido por
       // padrão) para não sobrecarregar a tela quando forem centenas de
@@ -11546,37 +11553,43 @@ function useArvoreComercialData(sessaoPronta = true) {
     gerencias: [],
     funcionarios: []
   });
+  // Extraído para fora do useEffect para poder ser chamado de novo sob
+  // demanda (ver `refetch` abaixo) — usado depois de uma importação de
+  // planilha para atualizar a árvore sem precisar de window.location.reload(),
+  // que fechava a tela de resumo da importação instantaneamente e não dava
+  // tempo do usuário ler o resultado nem ver logs de diagnóstico no console.
+  async function buscar(ativoRef) {
+    try {
+      const [supRes, dirRes, gerRes, funcRes] = await Promise.all([
+        supa.from("superintendencias").select("*"),
+        supa.from("diretorias").select("*"),
+        supa.from("gerencias").select("*"),
+        supa.from("funcionarios_comercial").select("*")
+      ]);
+      const erro = supRes.error || dirRes.error || gerRes.error || funcRes.error;
+      if (erro) throw erro;
+      if (ativoRef && !ativoRef.current) return;
+      setEstado({
+        carregando: false,
+        erro: null,
+        superintendencias: supRes.data || [],
+        diretorias: dirRes.data || [],
+        gerencias: gerRes.data || [],
+        // Antes filtrava só ATIVO aqui; agora traz todos e quem consome
+        // (montarArvore) é responsável por separar ativos/inativos, já
+        // que a árvore passou a exibir as duas contagens lado a lado.
+        funcionarios: funcRes.data || []
+      });
+    } catch (e) {
+      if (ativoRef && !ativoRef.current) return;
+      setEstado(prev => ({ ...prev, carregando: false, erro: e.message || "Erro ao carregar dados." }));
+    }
+  }
   useEffect(() => {
     if (!sessaoPronta) return;
-    let ativo = true;
-    (async () => {
-      try {
-        const [supRes, dirRes, gerRes, funcRes] = await Promise.all([
-          supa.from("superintendencias").select("*"),
-          supa.from("diretorias").select("*"),
-          supa.from("gerencias").select("*"),
-          supa.from("funcionarios_comercial").select("*")
-        ]);
-        const erro = supRes.error || dirRes.error || gerRes.error || funcRes.error;
-        if (erro) throw erro;
-        if (!ativo) return;
-        setEstado({
-          carregando: false,
-          erro: null,
-          superintendencias: supRes.data || [],
-          diretorias: dirRes.data || [],
-          gerencias: gerRes.data || [],
-          // Antes filtrava só ATIVO aqui; agora traz todos e quem consome
-          // (montarArvore) é responsável por separar ativos/inativos, já
-          // que a árvore passou a exibir as duas contagens lado a lado.
-          funcionarios: funcRes.data || []
-        });
-      } catch (e) {
-        if (!ativo) return;
-        setEstado(prev => ({ ...prev, carregando: false, erro: e.message || "Erro ao carregar dados." }));
-      }
-    })();
-    return () => { ativo = false; };
+    const ativoRef = { current: true };
+    buscar(ativoRef);
+    return () => { ativoRef.current = false; };
   }, [sessaoPronta]);
   // Atualiza uma única pessoa em memória (por id) sem precisar refazer a
   // busca inteira no Supabase — usado depois de editar perfil ou mudar
@@ -11588,7 +11601,7 @@ function useArvoreComercialData(sessaoPronta = true) {
       funcionarios: prev.funcionarios.map(f => f.id === pessoaAtualizada.id ? { ...f, ...pessoaAtualizada } : f)
     }));
   }
-  return { ...estado, atualizarFuncionarioLocal };
+  return { ...estado, atualizarFuncionarioLocal, refetch: () => buscar(null) };
 }
 // Monta a árvore em memória a partir das listas planas. Cada diretoria pode
 // ter, além de suas gerências normais, um "grupo" de vendedores vinculados
@@ -12557,22 +12570,14 @@ async function registrarLogAcessosClient({ acao, funcionario_comercial_id, funci
     };
     const query = _debug ? supa.from("log_acessos").insert(payload).select() : supa.from("log_acessos").insert(payload);
     const { data, error } = await query;
-    if (_debug) {
-      // Diagnóstico temporário: confirma no console exatamente o que foi
-      // (ou não foi) gravado, incluindo o id/criado_em retornado pelo
-      // banco quando a inserção teve sucesso — para investigar por que a
-      // entrada de resumo da importação não aparecia no Log de auditoria.
-      console.log("[registrarLogAcessosClient][debug] payload enviado:", payload);
-      console.log("[registrarLogAcessosClient][debug] resultado do insert:", { data, error });
-    }
     if (error) {
       console.error("registrarLogAcessosClient:", error);
-      return false;
+      return _debug ? { ok: false, debug: { payload, error } } : false;
     }
-    return true;
+    return _debug ? { ok: true, debug: { payload, data } } : true;
   } catch (e) {
     console.error("registrarLogAcessosClient (exceção):", e);
-    return false;
+    return _debug ? { ok: false, debug: { excecao: String(e) } } : false;
   }
 }
 
@@ -12722,7 +12727,7 @@ function ModalLogAcessos({ onClose }) {
 }
 
 function ArvoreHierarquia() {
-  const { carregando, erro, superintendencias, diretorias, gerencias, funcionarios, atualizarFuncionarioLocal } = useArvoreComercialData();
+  const { carregando, erro, superintendencias, diretorias, gerencias, funcionarios, atualizarFuncionarioLocal, refetch } = useArvoreComercialData();
   const [busca, setBusca] = useState("");
   const [aberto, setAberto] = useState({});
   const toggle = chave => setAberto(prev => ({ ...prev, [chave]: !prev[chave] }));
@@ -12872,7 +12877,14 @@ function ArvoreHierarquia() {
     }),
     modalImportar && /*#__PURE__*/React.createElement(ModalImportarHierarquia, {
       onClose: () => setModalImportar(false),
-      onConcluido: () => window.location.reload()
+      // Antes chamava window.location.reload(), que recarregava a página
+      // inteira assim que a importação terminava — fechando o modal e a
+      // tela de resumo ("Importação concluída: X novo(s)...") tão rápido
+      // que o usuário não conseguia ler o resultado nem qualquer log de
+      // diagnóstico no console. Agora só busca os dados de novo (mesma
+      // fonte que a árvore usa) e deixa o modal aberto até o usuário
+      // clicar em "Fechar" na tela de resumo.
+      onConcluido: () => refetch()
     }),
 
     // ── Card de resumo de acesso ──────────────────────────────────────────
