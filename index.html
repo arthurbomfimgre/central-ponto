@@ -7331,32 +7331,98 @@ function analisarImportacaoHierarquia(linhasExcel, banco) {
 
   // Quem sumiu da planilha (existia ativo no banco, matrícula não apareceu
   // desta vez) — marca inativo, nunca deleta.
-  // IMPORTANTE: a comparação só pode valer dentro do escopo das
-  // superintendências que aparecem nesta planilha. Uma importação traz
-  // tipicamente só uma superintendência (ex.: a planilha da EAGLES não
-  // menciona ninguém da LOTUS) — sem essa restrição, todo mundo de fora do
-  // escopo importado pareceria ter "sumido" e seria inativado por engano.
-  // Resolve a superintendência REAL de um funcionário do banco. A maioria
-  // (vendedores/gerentes) não tem `superintendencia_id` preenchido direto na
-  // tabela — só o superintendente tem. O vínculo verdadeiro passa por
+  // IMPORTANTE: a comparação só pode valer dentro do escopo REAL da
+  // planilha, e esse escopo precisa ser calculado no nível MAIS ESPECÍFICO
+  // possível — gerência, senão diretoria, senão superintendência. Se
+  // sempre usássemos superintendência (nível mais amplo), importar uma
+  // planilha com um único funcionário (ex.: só a Lara Reis, de uma
+  // gerência) faria o sistema achar que TODOS os outros da mesma
+  // superintendência "sumiram" e inativaria a superintendência inteira por
+  // engano — mesmo planilhas de uma gerência só, ou de uma diretoria só,
+  // devem inativar apenas dentro desse escopo mais estreito.
+  // Resolve a superintendência/diretoria/gerência REAIS de um funcionário
+  // do banco. A maioria (vendedores/gerentes) não tem `superintendencia_id`
+  // nem `diretoria_id` preenchidos direto na tabela — só o superintendente
+  // e o diretor, respectivamente. O vínculo verdadeiro passa por
   // gerencia_id → diretoria_id → superintendencia_id (mesma cadeia usada em
-  // toda consulta correta ao banco). Sem isso, `f.superintendencia_id` vem
-  // null para quase todo mundo e a comparação de escopo abaixo nunca bate
-  // com nada — o que fazia a inativação nunca marcar ninguém, mesmo com a
-  // planilha certa e sem nenhum erro aparente.
+  // toda consulta correta ao banco).
   const gerenciaPorId = new Map(banco.gerencias.map(g => [g.id, g]));
   const diretoriaPorId = new Map(banco.diretorias.map(d => [d.id, d]));
+  function resolverDiretoriaIdDoFuncionario(f) {
+    return f.diretoria_id ?? gerenciaPorId.get(f.gerencia_id)?.diretoria_id ?? null;
+  }
   function resolverSuperintendenciaIdDoFuncionario(f) {
     if (f.superintendencia_id != null) return f.superintendencia_id;
-    const dirId = f.diretoria_id ?? gerenciaPorId.get(f.gerencia_id)?.diretoria_id;
-    return diretoriaPorId.get(dirId)?.superintendencia_id ?? null;
+    return diretoriaPorId.get(resolverDiretoriaIdDoFuncionario(f))?.superintendencia_id ?? null;
   }
+
+  // Resolve a diretoria e a gerência REAIS (ids existentes no banco) que uma
+  // linha da planilha referencia — usado só para montar o escopo, não para
+  // gravar (a criação de diretoria/gerência nova continua acontecendo na
+  // hora de aplicar). Diretoria/gerência novas (ainda sem id) não entram
+  // no escopo por id — mas isso é seguro, pois nesse caso ninguém no banco
+  // pode pertencer a algo que ainda não existe.
+  function resolverDiretoriaIdDaLinha(l) {
+    if (!l.diretoriaNome) return null;
+    const sup = resolverSuperintendencia(l);
+    if (!sup) return null;
+    return dirPorChave.get(`${sup.id}::${l.diretoriaNome.toUpperCase()}`)?.id ?? null;
+  }
+  function resolverGerenciaIdDaLinha(l) {
+    if (!l.gerenciaNome) return null;
+    const dirId = resolverDiretoriaIdDaLinha(l);
+    if (dirId == null) return null;
+    return gerPorChave.get(`${dirId}::${l.gerenciaNome.toUpperCase()}`)?.id ?? null;
+  }
+
+  // Três conjuntos de escopo, do mais específico para o mais amplo.
+  const gerenciaIdsNaPlanilha = new Set(
+    linhasComSup.map(l => resolverGerenciaIdDaLinha(l)).filter(id => id != null)
+  );
+  const diretoriaIdsNaPlanilha = new Set(
+    linhasComSup.map(l => resolverDiretoriaIdDaLinha(l)).filter(id => id != null)
+  );
   const superintendenciaIdsNaPlanilha = new Set(
     linhasComSup.map(l => resolverSuperintendencia(l)).filter(Boolean).map(s => s.id)
   );
+
+  // Um funcionário do banco só entra na comparação de "sumiu" se o escopo
+  // dele foi efetivamente tocado pela planilha, no nível mais específico
+  // disponível: se a gerência dele aparece na planilha, compara só dentro
+  // dessa gerência; senão, se a diretoria dele aparece, compara dentro da
+  // diretoria; senão, cai para superintendência (planilha ampla, sem
+  // filtro por diretoria/gerência).
+  function funcionarioEstaNoEscopoDaPlanilha(f) {
+    if (f.gerencia_id != null && gerenciaIdsNaPlanilha.has(f.gerencia_id)) return true;
+    if (f.gerencia_id != null && gerenciaIdsNaPlanilha.size > 0) {
+      // A gerência dele existe mas não é nenhuma das que a planilha citou.
+      // Só ainda é candidato a "sumiu" se a planilha nem chegou a filtrar
+      // por gerência dentro da diretoria dele (planilha genérica); se a
+      // planilha listou gerências específicas daquela diretoria e a dele
+      // não está entre elas, ele está fora do escopo importado e não deve
+      // ser tocado.
+      const dirId = resolverDiretoriaIdDoFuncionario(f);
+      const planilhaFiltrouGerenciasDestaDiretoria = [...gerenciaIdsNaPlanilha].some(
+        gid => gerenciaPorId.get(gid)?.diretoria_id === dirId
+      );
+      if (planilhaFiltrouGerenciasDestaDiretoria) return false;
+    }
+    const dirId = resolverDiretoriaIdDoFuncionario(f);
+    if (dirId != null && diretoriaIdsNaPlanilha.has(dirId)) return true;
+    if (dirId != null && diretoriaIdsNaPlanilha.size > 0) {
+      const supId = diretoriaPorId.get(dirId)?.superintendencia_id;
+      const planilhaFiltrouDiretoriasDestaSup = [...diretoriaIdsNaPlanilha].some(
+        did => diretoriaPorId.get(did)?.superintendencia_id === supId
+      );
+      if (planilhaFiltrouDiretoriasDestaSup) return false;
+    }
+    const supId = resolverSuperintendenciaIdDoFuncionario(f);
+    return superintendenciaIdsNaPlanilha.has(supId);
+  }
+
   const funcionariosInativados = banco.funcionariosTodos.filter(f =>
     (f.situacao || "ATIVO").toUpperCase() === "ATIVO" &&
-    superintendenciaIdsNaPlanilha.has(resolverSuperintendenciaIdDoFuncionario(f)) &&
+    funcionarioEstaNoEscopoDaPlanilha(f) &&
     !matriculasNaPlanilha.has(String(f.matricula).trim())
   ).filter(f => {
     // Se o funcionário foi "recasado" por e-mail em alguma linha da
@@ -7694,7 +7760,15 @@ function ModalImportarHierarquia({ onClose, onConcluido }) {
     try {
       const planoFiltrado = filtrarPlanoPorSelecao(plano, diretoriasRejeitadas, gerenciasRejeitadas);
       const { falhasRevogacao, revogadosRetroativos } = await aplicarImportacaoHierarquia(planoFiltrado, banco, setEtapaAtual);
-      registrarLogAcessosClient({
+      // IMPORTANTE: este registro precisa ser sempre gravado, mesmo quando a
+      // importação só atualizou funcionários existentes (novos=0,
+      // inativados=0) — é o único jeito de auditoria/histórico saberem que
+      // essa importação aconteceu. `registrarLogAcessosClient` por padrão só
+      // loga erro no console e segue em frente; aqui usamos `await` e
+      // capturamos o resultado para avisar visivelmente na tela de
+      // conclusão se o log não puder ser gravado (ex.: falha de rede ou
+      // RLS), em vez de deixar isso passar despercebido.
+      const logGravado = await registrarLogAcessosClient({
         acao: "importacao_planilha",
         origem: "importacao_planilha",
         detalhe: {
@@ -7713,6 +7787,7 @@ function ModalImportarHierarquia({ onClose, onConcluido }) {
         gerenciasCriadas: planoFiltrado.gerenciasNovas.length,
         falhasRevogacao: falhasRevogacao || [],
         revogadosRetroativos: revogadosRetroativos || [],
+        logFalhou: !logGravado,
         // Listas com nome + matrícula de cada pessoa afetada, para exibir o
         // resumo detalhado após a importação (não só a contagem).
         listaNovos: planoFiltrado.funcionariosNovos.map(f => ({ nome: nomeParaLog(f), matricula: f.matricula })),
@@ -7879,6 +7954,9 @@ function ModalImportarHierarquia({ onClose, onConcluido }) {
         style: { background: "var(--verde-100)", color: "var(--verde-800)", borderRadius: 10, padding: "12px 16px", fontSize: 13, fontWeight: 600 }
       }, "✓ Importação concluída: ", concluido.novos, " novo(s), ", concluido.atualizados, " atualizado(s), ",
         concluido.inativados, " inativado(s), ", concluido.diretoriasCriadas, " diretoria(s) nova(s), ", concluido.gerenciasCriadas, " gerência(s) nova(s)."),
+      concluido.logFalhou && /*#__PURE__*/React.createElement("div", {
+        style: { background: "var(--amber-100)", color: "var(--amber-800)", borderRadius: 10, padding: "10px 14px", fontSize: 12.5, fontWeight: 600 }
+      }, "⚠️ As alterações acima foram aplicadas normalmente, mas não foi possível registrar esta importação no Log de auditoria (falha de conexão ou permissão). Ela não vai aparecer lá."),
       // Resumo detalhado: nome + matrícula de cada pessoa afetada, não só a
       // contagem — cada bloco vem como um <details> nativo (recolhido por
       // padrão) para não sobrecarregar a tela quando forem centenas de
@@ -12453,9 +12531,14 @@ async function registrarLogAcessosClient({ acao, funcionario_comercial_id, funci
       origem: origem || "manual",
       detalhe: detalhe || null
     });
-    if (error) console.error("registrarLogAcessosClient:", error);
+    if (error) {
+      console.error("registrarLogAcessosClient:", error);
+      return false;
+    }
+    return true;
   } catch (e) {
     console.error("registrarLogAcessosClient (exceção):", e);
+    return false;
   }
 }
 
