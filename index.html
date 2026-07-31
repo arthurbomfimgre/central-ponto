@@ -7386,15 +7386,38 @@ function analisarImportacaoHierarquia(linhasExcel, banco) {
     linhasComSup.map(l => resolverSuperintendencia(l)).filter(Boolean).map(s => s.id)
   );
 
+  // Uma linha "cobre a diretoria inteira" quando ela não tem gerência (ex.:
+  // a linha do próprio diretor) — sinal de que aquela pessoa está acima do
+  // nível de gerência dentro da diretoria. Da mesma forma, uma linha "cobre
+  // a superintendência inteira" quando não tem diretoria (linha do próprio
+  // superintendente). Usamos isso para saber se a planilha só tocou
+  // diretorias/gerências específicas (import parcial) ou trouxe o nível
+  // acima também (import mais amplo, incluindo o responsável daquele nível).
+  const diretoriaIdsCobertasPorCompleto = new Set(
+    linhasComSup.filter(l => l.diretoriaNome && !l.gerenciaNome)
+      .map(l => resolverDiretoriaIdDaLinha(l)).filter(id => id != null)
+  );
+  const superintendenciaIdsCobertasPorCompleto = new Set(
+    linhasComSup.filter(l => !l.diretoriaNome)
+      .map(l => resolverSuperintendencia(l)).filter(Boolean).map(s => s.id)
+  );
+
   // Um funcionário do banco só entra na comparação de "sumiu" se o escopo
   // dele foi efetivamente tocado pela planilha, no nível mais específico
   // disponível: se a gerência dele aparece na planilha, compara só dentro
-  // dessa gerência; senão, se a diretoria dele aparece, compara dentro da
-  // diretoria; senão, cai para superintendência (planilha ampla, sem
-  // filtro por diretoria/gerência).
+  // dessa gerência; senão, se a diretoria dele aparece (como diretoria
+  // citada OU coberta por completo), compara dentro da diretoria; senão,
+  // cai para superintendência — mas só se a planilha realmente cobriu a
+  // superintendência por completo (não apenas uma diretoria/gerência
+  // isolada dela). Isso vale também para quem está no topo de cada nível
+  // (o diretor não tem gerencia_id; o superintendente não tem
+  // diretoria_id nem gerencia_id) — sem esse cuidado, importar só a
+  // diretoria da Lara Reis fazia o sistema tratar a superintendente Simone
+  // Lago como "fora do escopo mais específico" e cair direto no escopo de
+  // superintendência, inativando-a por engano.
   function funcionarioEstaNoEscopoDaPlanilha(f) {
-    if (f.gerencia_id != null && gerenciaIdsNaPlanilha.has(f.gerencia_id)) return true;
-    if (f.gerencia_id != null && gerenciaIdsNaPlanilha.size > 0) {
+    if (f.gerencia_id != null) {
+      if (gerenciaIdsNaPlanilha.has(f.gerencia_id)) return true;
       // A gerência dele existe mas não é nenhuma das que a planilha citou.
       // Só ainda é candidato a "sumiu" se a planilha nem chegou a filtrar
       // por gerência dentro da diretoria dele (planilha genérica); se a
@@ -7408,8 +7431,8 @@ function analisarImportacaoHierarquia(linhasExcel, banco) {
       if (planilhaFiltrouGerenciasDestaDiretoria) return false;
     }
     const dirId = resolverDiretoriaIdDoFuncionario(f);
-    if (dirId != null && diretoriaIdsNaPlanilha.has(dirId)) return true;
-    if (dirId != null && diretoriaIdsNaPlanilha.size > 0) {
+    if (dirId != null) {
+      if (diretoriaIdsNaPlanilha.has(dirId) || diretoriaIdsCobertasPorCompleto.has(dirId)) return true;
       const supId = diretoriaPorId.get(dirId)?.superintendencia_id;
       const planilhaFiltrouDiretoriasDestaSup = [...diretoriaIdsNaPlanilha].some(
         did => diretoriaPorId.get(did)?.superintendencia_id === supId
@@ -7417,7 +7440,7 @@ function analisarImportacaoHierarquia(linhasExcel, banco) {
       if (planilhaFiltrouDiretoriasDestaSup) return false;
     }
     const supId = resolverSuperintendenciaIdDoFuncionario(f);
-    return superintendenciaIdsNaPlanilha.has(supId);
+    return superintendenciaIdsCobertasPorCompleto.has(supId);
   }
 
   const funcionariosInativados = banco.funcionariosTodos.filter(f =>
@@ -7777,7 +7800,8 @@ function ModalImportarHierarquia({ onClose, onConcluido }) {
           inativados: planoFiltrado.funcionariosInativados.length,
           diretoriasCriadas: planoFiltrado.diretoriasNovas.length,
           gerenciasCriadas: planoFiltrado.gerenciasNovas.length
-        }
+        },
+        _debug: true
       });
       setConcluido({
         novos: planoFiltrado.funcionariosNovos.length,
@@ -12518,10 +12542,10 @@ const RUBRICA_ACAO_LOG = {
 // passam pela Edge Function admin-gerenciar-acesso. Por design, erros aqui
 // só vão pro console — não travam o fluxo principal (importação/criação de
 // login), mas também não avisam visivelmente o usuário se o log falhar.
-async function registrarLogAcessosClient({ acao, funcionario_comercial_id, funcionario_nome, funcionario_matricula, origem, detalhe }) {
+async function registrarLogAcessosClient({ acao, funcionario_comercial_id, funcionario_nome, funcionario_matricula, origem, detalhe, _debug }) {
   try {
     const { data: { user } } = await supa.auth.getUser();
-    const { error } = await supa.from("log_acessos").insert({
+    const payload = {
       ator_email: user?.email || null,
       ator_user_id: user?.id || null,
       funcionario_comercial_id: funcionario_comercial_id || null,
@@ -12530,7 +12554,17 @@ async function registrarLogAcessosClient({ acao, funcionario_comercial_id, funci
       acao,
       origem: origem || "manual",
       detalhe: detalhe || null
-    });
+    };
+    const query = _debug ? supa.from("log_acessos").insert(payload).select() : supa.from("log_acessos").insert(payload);
+    const { data, error } = await query;
+    if (_debug) {
+      // Diagnóstico temporário: confirma no console exatamente o que foi
+      // (ou não foi) gravado, incluindo o id/criado_em retornado pelo
+      // banco quando a inserção teve sucesso — para investigar por que a
+      // entrada de resumo da importação não aparecia no Log de auditoria.
+      console.log("[registrarLogAcessosClient][debug] payload enviado:", payload);
+      console.log("[registrarLogAcessosClient][debug] resultado do insert:", { data, error });
+    }
     if (error) {
       console.error("registrarLogAcessosClient:", error);
       return false;
