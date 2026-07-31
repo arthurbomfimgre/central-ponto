@@ -7652,14 +7652,34 @@ async function aplicarImportacaoHierarquia(plano, banco, onProgresso) {
   progresso(`Atualizando ${plano.funcionariosAtualizados.length} funcionário(s)…`);
   for (const at of plano.funcionariosAtualizados) {
     const ids = resolverIds(at);
-    // Só sobrescreve os ids de hierarquia quando eles puderam ser resolvidos
-    // — evita zerar um vínculo válido por causa de um nome momentaneamente
-    // não encontrado (o que não deveria ocorrer, já que diretorias/
-    // gerências novas são criadas antes deste passo).
+    const novoNivel = at.campos?.nivel; // presente sempre que a linha trouxe cargo — regra 5 não remove esse campo
+    // Sobrescreve os ids de hierarquia quando eles puderam ser resolvidos a
+    // partir da planilha — evita zerar um vínculo válido só porque um nome
+    // ficou momentaneamente não encontrado (não deveria ocorrer, já que
+    // diretorias/gerências novas são criadas antes deste passo).
     const idsResolvidos = {};
     if (ids.superintendencia_id != null) idsResolvidos.superintendencia_id = ids.superintendencia_id;
     if (at._diretoriaNome) { if (ids.diretoria_id != null) idsResolvidos.diretoria_id = ids.diretoria_id; }
     if (at._gerenciaNome) { if (ids.gerencia_id != null) idsResolvidos.gerencia_id = ids.gerencia_id; }
+    // Além de preencher o que veio na planilha, zera explicitamente os
+    // vínculos que o NOVO nível não usa mais — sem isso, uma promoção ou
+    // despromoção (ex.: gerente virando diretor, diretor virando gerente)
+    // podia deixar gerencia_id/diretoria_id "sujos" de quando a pessoa
+    // ocupava o nível anterior, já que a planilha normalmente não traz mais
+    // esses nomes para o cargo novo (regra 5 nunca apagaria isso sozinha).
+    // Só entra em ação quando o nível é conhecido nesta importação — sem
+    // isso, uma linha sem coluna de cargo não deveria mexer em vínculos.
+    if (novoNivel) {
+      if (novoNivel === "superintendente") {
+        idsResolvidos.diretoria_id = null;
+        idsResolvidos.gerencia_id = null;
+      } else if (novoNivel === "diretor") {
+        idsResolvidos.gerencia_id = null;
+      }
+      // gerente e vendedor podem legitimamente ter diretoria_id/gerencia_id
+      // (vendedor pode estar vinculado direto à diretoria, sem gerência) —
+      // nesses casos os valores já resolvidos ou omitidos acima prevalecem.
+    }
     const { error } = await supa.from("funcionarios_comercial")
       .update({ ...at.campos, ...idsResolvidos })
       .eq("id", at.id);
