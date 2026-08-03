@@ -3987,6 +3987,156 @@ function normalizarFuncComercial(fc) {
 const ADMIN_FUNCIONARIO_ID = 1; // mantido para compatibilidade
 const ADMIN_IDS = [1, 4, 5];
 
+// ─── PERMISSÕES POR PAPEL ───────────────────────────────────────────────────
+// Sistema de controle de acesso configurável pelo admin_geral: cada papel da
+// hierarquia comercial (vendedor/gerente/diretor/superintendente) tem um
+// conjunto de permissões (chave_permissao → true/false) gravado na tabela
+// Supabase `permissoes_papel`. O admin_geral NUNCA é configurável aqui — ele
+// sempre tem tudo liberado, fixo no código, para não haver risco de alguém
+// se trancar para fora do próprio Painel de Acessos por erro de configuração.
+//
+// PERMISSOES_PADRAO é o fallback usado (a) antes da tabela carregar e (b)
+// para qualquer chave que não tenha uma linha explícita no banco — assim a
+// tela de Permissões pode nascer vazia no Supabase e o app continua
+// funcionando com as regras combinadas nesta sessão:
+//   - todos os papéis veem todas as abas, exceto "hierarquia" (Painel de
+//     Acessos), exclusiva do admin_geral;
+//   - todos os papéis podem criar e excluir pendência/ocorrência;
+//   - todo o resto de ações administrativas (editar perfil, importar
+//     planilha, ver log de acessos, revogar/reativar acesso, resetar senha)
+//     é exclusivo do admin_geral.
+const NIVEIS_CONFIGURAVEIS = ["vendedor", "gerente", "diretor", "superintendente"];
+const PERMISSOES_CATALOGO = [
+  { chave: "ver_dashboard", label: "Ver Dashboard", grupo: "Abas" },
+  { chave: "ver_funcionarios", label: "Ver Funcionários", grupo: "Abas" },
+  { chave: "ver_aprovacao", label: "Ver Verificações", grupo: "Abas" },
+  { chave: "ver_relatorios", label: "Ver Relatórios", grupo: "Abas" },
+  { chave: "pendencias", label: "Criar / excluir pendência", grupo: "Ações" },
+  { chave: "editar_perfil", label: "Editar perfil", grupo: "Ações" },
+  { chave: "importar_planilha", label: "Importar planilha", grupo: "Ações" },
+  { chave: "ver_log_acessos", label: "Ver log de auditoria", grupo: "Ações" },
+  { chave: "gerenciar_acesso", label: "Revogar / reativar acesso, resetar senha", grupo: "Ações" }
+];
+const PERMISSOES_PADRAO = {
+  ver_dashboard: true,
+  ver_funcionarios: true,
+  ver_aprovacao: true,
+  ver_relatorios: true,
+  pendencias: true,
+  editar_perfil: false,
+  importar_planilha: false,
+  ver_log_acessos: false,
+  gerenciar_acesso: false
+};
+// Carrega `permissoes_papel` do Supabase e devolve `pode(chave)` já
+// resolvido para o nível do usuário logado. admin_geral sempre true, sem
+// consultar tabela nenhuma. Enquanto carrega (ou se a tabela não tiver a
+// linha), cai no default combinado acima — nunca bloqueia por ausência de
+// configuração, só por configuração explícita como `false`.
+function usePermissoes(usuario, sessaoPronta = true) {
+  const [tabela, setTabela] = useState({}); // { [nivel]: { [chave]: bool } }
+  // Exceções individuais: sobrepõem o padrão do papel para uma pessoa
+  // específica. Chave por funcionario_id, não por usuario.id do app —
+  // funcionario_id é o mesmo id estável usado em funcionarios_comercial,
+  // então a exceção sobrevive a troca de nível/nome/etc.
+  const [excecoes, setExcecoes] = useState({}); // { [funcionario_id]: { [chave]: bool } }
+  const [carregando, setCarregando] = useState(true);
+  async function buscar() {
+    try {
+      const [papelRes, excecaoRes] = await Promise.all([
+        supa.from("permissoes_papel").select("*"),
+        supa.from("permissoes_excecao").select("*")
+      ]);
+      if (papelRes.error) throw papelRes.error;
+      if (excecaoRes.error) throw excecaoRes.error;
+      const agrupado = {};
+      for (const linha of papelRes.data || []) {
+        if (!agrupado[linha.papel]) agrupado[linha.papel] = {};
+        agrupado[linha.papel][linha.chave_permissao] = !!linha.permitido;
+      }
+      const agrupadoExcecao = {};
+      for (const linha of excecaoRes.data || []) {
+        if (!agrupadoExcecao[linha.funcionario_id]) agrupadoExcecao[linha.funcionario_id] = {};
+        agrupadoExcecao[linha.funcionario_id][linha.chave_permissao] = !!linha.permitido;
+      }
+      setTabela(agrupado);
+      setExcecoes(agrupadoExcecao);
+    } catch (e) {
+      // Falha ao carregar (ex.: tabela ainda não criada) — segue só com o
+      // default combinado, sem travar o app.
+      setTabela({});
+      setExcecoes({});
+    } finally {
+      setCarregando(false);
+    }
+  }
+  useEffect(() => {
+    if (!sessaoPronta) return;
+    buscar();
+  }, [sessaoPronta]);
+  // Ordem de resolução para uma chave de permissão, do mais específico para
+  // o mais genérico: (1) exceção individual do funcionário logado, (2)
+  // regra do papel dele, (3) default combinado no código. admin_geral
+  // sempre vence tudo isso, sem exceção — nem uma linha em
+  // permissoes_excecao consegue tirar acesso do admin_geral.
+  function pode(chave) {
+    if (usuario?.nivel === "admin_geral" || usuario?.role === "admin") return true;
+    const funcId = usuario?.funcionario_id;
+    const doIndividuo = funcId != null ? excecoes[funcId]?.[chave] : undefined;
+    if (doIndividuo !== undefined) return doIndividuo;
+    const nivel = usuario?.nivel;
+    if (!nivel) return false;
+    const doNivel = tabela[nivel]?.[chave];
+    if (doNivel !== undefined) return doNivel;
+    return !!PERMISSOES_PADRAO[chave];
+  }
+  // Grava/atualiza uma permissão de um papel específico (upsert por
+  // papel+chave_permissao) e atualiza o estado local na hora, sem esperar
+  // um refetch — a tela de Permissões usa isto a cada toggle.
+  async function definirPermissao(papel, chave, permitido) {
+    setTabela(prev => ({ ...prev, [papel]: { ...(prev[papel] || {}), [chave]: permitido } }));
+    const { error } = await supa.from("permissoes_papel")
+      .upsert({ papel, chave_permissao: chave, permitido }, { onConflict: "papel,chave_permissao" });
+    if (error) {
+      // Reverte em memória se a gravação falhar, para a UI não mentir sobre
+      // o estado real salvo no banco.
+      await buscar();
+      throw error;
+    }
+  }
+  // Grava/atualiza uma exceção individual (upsert por
+  // funcionario_id+chave_permissao). Usada pela busca de pessoa dentro da
+  // tela de Permissões, para o caso do funcionário específico que foge da
+  // regra geral do papel dele.
+  async function definirExcecao(funcionarioId, chave, permitido) {
+    setExcecoes(prev => ({ ...prev, [funcionarioId]: { ...(prev[funcionarioId] || {}), [chave]: permitido } }));
+    const { error } = await supa.from("permissoes_excecao")
+      .upsert({ funcionario_id: funcionarioId, chave_permissao: chave, permitido }, { onConflict: "funcionario_id,chave_permissao" });
+    if (error) {
+      await buscar();
+      throw error;
+    }
+  }
+  // Remove uma exceção individual, voltando aquela pessoa a seguir a regra
+  // padrão do papel dela para aquela chave.
+  async function removerExcecao(funcionarioId, chave) {
+    setExcecoes(prev => {
+      const copia = { ...(prev[funcionarioId] || {}) };
+      delete copia[chave];
+      return { ...prev, [funcionarioId]: copia };
+    });
+    const { error } = await supa.from("permissoes_excecao")
+      .delete()
+      .eq("funcionario_id", funcionarioId)
+      .eq("chave_permissao", chave);
+    if (error) {
+      await buscar();
+      throw error;
+    }
+  }
+  return { pode, carregando, tabela, excecoes, definirPermissao, definirExcecao, removerExcecao, refetch: buscar };
+}
+
 // ─── HIERARQUIA COMERCIAL ──────────────────────────────────────────────────
 // Resolve o nível de acesso de um funcionário dentro da nova hierarquia
 // (admin_geral > superintendente > diretor > gerente > vendedor).
@@ -8077,7 +8227,12 @@ function PerfilFuncionario({
   addNotif,
   mesFiltro,
   setMesFiltro,
-  somenteLeitura = false,
+  // Duas permissões independentes (antes eram um único flag `somenteLeitura`
+  // que bloqueava tudo junto): editar perfil é ação administrativa restrita
+  // ao admin_geral; criar/excluir pendência é liberado a todos os papéis
+  // por padrão, configurável na tela de Permissões.
+  somenteLeituraPerfil = false,
+  somenteLeituraPendencias = false,
   sessaoPronta = true,
   contaTesteAtivaAgora = false
 }) {
@@ -8324,7 +8479,7 @@ function PerfilFuncionario({
       fontSize: 12,
       color: "var(--cinza-400)"
     }
-  }, "Esquecimentos no mês"))), !somenteLeitura && /*#__PURE__*/React.createElement("button", {
+  }, "Esquecimentos no mês"))), !somenteLeituraPendencias && /*#__PURE__*/React.createElement("button", {
     onClick: () => setModalCriar(true),
     style: {
       padding: "10px 18px",
@@ -8339,7 +8494,7 @@ function PerfilFuncionario({
       alignItems: "center",
       gap: 6
     }
-  }, "➕ Pendência do dia"), !somenteLeitura && /*#__PURE__*/React.createElement("button", {
+  }, "➕ Pendência do dia"), !somenteLeituraPerfil && /*#__PURE__*/React.createElement("button", {
     onClick: abrirEditar,
     style: {
       padding: "10px 18px",
@@ -8544,7 +8699,7 @@ function PerfilFuncionario({
       }
     }, /*#__PURE__*/React.createElement(Badge, {
       status: o.status
-    })), !somenteLeitura && /*#__PURE__*/React.createElement("td", {
+    })), !somenteLeituraPendencias && /*#__PURE__*/React.createElement("td", {
       style: {
         padding: "12px 16px"
       }
@@ -8577,7 +8732,7 @@ function PerfilFuncionario({
         cursor: "pointer"
       }
     }, "🗑️"))));
-  })))), !somenteLeitura && modalCriar && /*#__PURE__*/React.createElement(ModalCriarPendencia, {
+  })))), !somenteLeituraPendencias && modalCriar && /*#__PURE__*/React.createElement(ModalCriarPendencia, {
     funcionarios: funcionarios,
     onCriar: criarPendencia,
     onClose: () => setModalCriar(false),
@@ -12304,7 +12459,9 @@ function NoSuperintendencia({ superintendencia, aberta, onToggle, estadoAberto, 
 // onAtualizado(pessoaAtualizada) é chamado após salvar/mudar acesso com
 // sucesso, para o chamador atualizar sua cópia em memória sem precisar
 // recarregar a página inteira.
-function ModalPerfilComercial({ pessoa, onClose, onAtualizado, nomeExibicao: nomeExibicaoProp, superintendencias, diretorias, gerencias }) {
+function ModalPerfilComercial({ pessoa, onClose, onAtualizado, nomeExibicao: nomeExibicaoProp, superintendencias, diretorias, gerencias, pode = () => true }) {
+  const podeEditarPerfil = pode("editar_perfil");
+  const podeGerenciarAcesso = pode("gerenciar_acesso");
   const nomeParaTitulo = nomeExibicaoProp || pessoa.nome_completo;
   const [editando, setEditando] = useState({
     nome_completo: pessoa.nome_completo || "",
@@ -12374,6 +12531,10 @@ function ModalPerfilComercial({ pessoa, onClose, onAtualizado, nomeExibicao: nom
   const temLogin = !!pessoa.auth_user_id;
 
   async function salvar() {
+    if (!podeEditarPerfil) {
+      setErroSalvar("Você não tem permissão para editar perfil.");
+      return;
+    }
     if (!editando.nome_completo.trim() || !editando.cargo_origem.trim() || !editando.matricula.trim()) {
       setErroSalvar("Nome, cargo e matrícula são obrigatórios.");
       return;
@@ -12476,6 +12637,10 @@ function ModalPerfilComercial({ pessoa, onClose, onAtualizado, nomeExibicao: nom
   }
 
   async function executarAcaoAcesso(acao) {
+    if (!podeGerenciarAcesso) {
+      setResultadoAcao({ ok: false, erro: "Você não tem permissão para gerenciar acesso." });
+      return;
+    }
     if (acaoEmAndamento) return;
     setAcaoEmAndamento(acao);
     setResultadoAcao(null);
@@ -12514,6 +12679,20 @@ function ModalPerfilComercial({ pessoa, onClose, onAtualizado, nomeExibicao: nom
     onClose,
     maxWidth: 560
   }, /*#__PURE__*/React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 16 } },
+
+    !podeEditarPerfil && /*#__PURE__*/React.createElement("div", {
+      style: { background: "var(--cinza-100)", borderRadius: 10, padding: "10px 14px", fontSize: 12.5, color: "var(--cinza-600)", fontWeight: 600 }
+    }, "🔒 Você não tem permissão para editar dados cadastrais. Exibindo em modo somente leitura."),
+
+    // Envolve todos os campos cadastrais num wrapper que bloqueia
+    // interação (pointerEvents: none) quando falta a permissão
+    // "editar_perfil" — mais seguro que desabilitar campo por campo, já
+    // que cobre qualquer input/select adicionado aqui no futuro sem
+    // precisar lembrar de marcar `disabled` em cada um.
+    /*#__PURE__*/React.createElement("div", {
+      style: podeEditarPerfil ? {} : { opacity: 0.6, pointerEvents: "none" }
+    },
+    /*#__PURE__*/React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 16 } },
 
     /*# Nome #*/
     /*#__PURE__*/React.createElement("div", null,
@@ -12649,10 +12828,14 @@ function ModalPerfilComercial({ pessoa, onClose, onAtualizado, nomeExibicao: nom
     }, erroSalvar),
     sucessoSalvar && /*#__PURE__*/React.createElement("div", {
       style: { background: "var(--verde-100)", borderRadius: 10, padding: "10px 14px", fontSize: 13, color: "var(--verde-800)" }
-    }, "✅ ", sucessoSalvar),
+    }, "✅ ", sucessoSalvar)
+    ) // fecha o wrapper interno de campos
+    ), // fecha o wrapper pointerEvents (podeEditarPerfil)
 
-    /*# Botão salvar dos dados cadastrais #*/
-    /*#__PURE__*/React.createElement("div", { style: { display: "flex", justifyContent: "flex-end" } },
+    /*# Botão salvar dos dados cadastrais — só existe se a pessoa tem
+        permissão de editar_perfil; sem ela, nem mostramos o botão, já que
+        o wrapper acima já bloqueia a interação com os campos. #*/
+    podeEditarPerfil && /*#__PURE__*/React.createElement("div", { style: { display: "flex", justifyContent: "flex-end" } },
       /*#__PURE__*/React.createElement("button", {
         onClick: salvar,
         disabled: salvando,
@@ -12682,7 +12865,7 @@ function ModalPerfilComercial({ pessoa, onClose, onAtualizado, nomeExibicao: nom
         style: { fontSize: 12.5, color: "var(--cinza-400)", background: "var(--cinza-50)", borderRadius: 10, padding: "10px 12px" }
       }, "Esta pessoa ainda não tem login criado — nada para gerenciar no Auth até que um login seja criado (ver aviso na tela de Hierarquia)."),
 
-      temLogin && /*#__PURE__*/React.createElement("div", { style: { display: "flex", gap: 8, flexWrap: "wrap" } },
+      temLogin && podeGerenciarAcesso && /*#__PURE__*/React.createElement("div", { style: { display: "flex", gap: 8, flexWrap: "wrap" } },
         /*#__PURE__*/React.createElement("button", {
           onClick: () => executarAcaoAcesso("resetar_senha"),
           disabled: !!acaoEmAndamento,
@@ -12693,6 +12876,9 @@ function ModalPerfilComercial({ pessoa, onClose, onAtualizado, nomeExibicao: nom
           }
         }, acaoEmAndamento === "resetar_senha" ? "⏳ Gerando..." : "🔑 Gerar nova senha")
       ),
+      temLogin && !podeGerenciarAcesso && /*#__PURE__*/React.createElement("div", {
+        style: { fontSize: 12, color: "var(--cinza-400)" }
+      }, "🔒 Você não tem permissão para gerenciar acesso (resetar senha)."),
 
       resultadoAcao && /*#__PURE__*/React.createElement("div", {
         style: {
@@ -12925,8 +13111,236 @@ function ModalLogAcessos({ onClose }) {
   ));
 }
 
-function ArvoreHierarquia() {
+// Tela de configuração de permissões por papel (dentro do Painel de
+// Acessos). Mostra uma matriz: linhas = permissões do catálogo, colunas =
+// os 4 papéis configuráveis (vendedor/gerente/diretor/superintendente).
+// admin_geral não aparece aqui de propósito — ver comentário em
+// PERMISSOES_PADRAO acima. Cada célula é um toggle que grava direto no
+// Supabase via definirPermissao (upsert), sem precisar de botão "salvar".
+function PainelPermissoes() {
+  const { tabela, excecoes, carregando, definirPermissao, definirExcecao, removerExcecao } = usePermissoes({ nivel: "admin_geral" }, true);
+  const [salvando, setSalvando] = useState(null); // `${papel}:${chave}` ou `${funcId}:${chave}` em voo
+  const [erro, setErro] = useState("");
+  // Dados de pessoas, só para a busca de exceção individual — mesma fonte
+  // que a árvore usa, então os funcionario_id batem com os de
+  // permissoes_excecao.
+  const dadosPessoas = useArvoreComercialData(true);
+  const [busca, setBusca] = useState("");
+  const [pessoaExcecao, setPessoaExcecao] = useState(null);
+  const nomesExibicaoPessoas = useMemo(() => calcularNomesExibicao(dadosPessoas.funcionarios), [dadosPessoas.funcionarios]);
+  const resultadosBusca = useMemo(() => {
+    const termo = busca.trim().toLowerCase();
+    if (termo.length < 2) return [];
+    return dadosPessoas.funcionarios
+      .filter(f => (f.nome_completo || "").toLowerCase().includes(termo) || (f.matricula || "").toLowerCase().includes(termo))
+      .slice(0, 8);
+  }, [busca, dadosPessoas.funcionarios]);
+
+  async function toggle(papel, chave, valorAtual) {
+    const chaveOp = `${papel}:${chave}`;
+    setSalvando(chaveOp);
+    setErro("");
+    try {
+      await definirPermissao(papel, chave, !valorAtual);
+    } catch (e) {
+      setErro(`Não foi possível salvar "${chave}" para ${papel}: ${e.message || e}`);
+    } finally {
+      setSalvando(null);
+    }
+  }
+
+  function valorEfetivo(papel, chave) {
+    const doNivel = tabela[papel]?.[chave];
+    return doNivel !== undefined ? doNivel : !!PERMISSOES_PADRAO[chave];
+  }
+
+  // Valor efetivo para a pessoa em exceção: (1) exceção dela, se existir,
+  // (2) senão a regra do papel dela, (3) senão o default combinado.
+  function valorEfetivoPessoa(pessoa, chave) {
+    const doIndividuo = excecoes[pessoa.id]?.[chave];
+    if (doIndividuo !== undefined) return doIndividuo;
+    return valorEfetivo(pessoa.nivel || "vendedor", chave);
+  }
+  function temExcecao(pessoa, chave) {
+    return excecoes[pessoa.id]?.[chave] !== undefined;
+  }
+
+  async function togglePessoa(pessoa, chave, valorAtual) {
+    const chaveOp = `${pessoa.id}:${chave}`;
+    setSalvando(chaveOp);
+    setErro("");
+    try {
+      await definirExcecao(pessoa.id, chave, !valorAtual);
+    } catch (e) {
+      setErro(`Não foi possível salvar exceção de "${chave}" para ${pessoa.nome_completo}: ${e.message || e}`);
+    } finally {
+      setSalvando(null);
+    }
+  }
+
+  async function voltarAoPadrao(pessoa, chave) {
+    const chaveOp = `${pessoa.id}:${chave}`;
+    setSalvando(chaveOp);
+    setErro("");
+    try {
+      await removerExcecao(pessoa.id, chave);
+    } catch (e) {
+      setErro(`Não foi possível remover exceção de "${chave}" para ${pessoa.nome_completo}: ${e.message || e}`);
+    } finally {
+      setSalvando(null);
+    }
+  }
+
+  const grupos = [...new Set(PERMISSOES_CATALOGO.map(p => p.grupo))];
+
+  if (carregando) {
+    return /*#__PURE__*/React.createElement("div", { style: { padding: 24, textAlign: "center", color: "var(--cinza-400)", fontSize: 13 } }, "Carregando permissões…");
+  }
+
+  return /*#__PURE__*/React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 18 } },
+    /*#__PURE__*/React.createElement("div", { style: { fontSize: 13, color: "var(--cinza-400)", lineHeight: 1.5 } },
+      "Define o que cada papel da hierarquia comercial pode ver e fazer no painel. ",
+      /*#__PURE__*/React.createElement("strong", null, "admin_geral"), " sempre tem acesso total e não aparece aqui — isso evita que uma configuração errada tranque o próprio administrador para fora do Painel de Acessos."),
+    erro && /*#__PURE__*/React.createElement("div", {
+      style: { background: "var(--vermelho-100)", color: "var(--vermelho-700)", padding: "10px 14px", borderRadius: 10, fontSize: 12.5 }
+    }, `❌ ${erro}`),
+    /*#__PURE__*/React.createElement("div", {
+      style: { background: "var(--cor-branco)", border: "1px solid var(--cinza-200)", borderRadius: 14, overflow: "hidden" }
+    },
+      /*#__PURE__*/React.createElement("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: 12.5 } },
+        /*#__PURE__*/React.createElement("thead", null,
+          /*#__PURE__*/React.createElement("tr", { style: { background: "var(--cinza-50)" } },
+            /*#__PURE__*/React.createElement("th", { style: { textAlign: "left", padding: "10px 16px", fontWeight: 700, color: "var(--cinza-700)" } }, "Permissão"),
+            NIVEIS_CONFIGURAVEIS.map(nivel => /*#__PURE__*/React.createElement("th", {
+              key: nivel,
+              style: { textAlign: "center", padding: "10px 12px", fontWeight: 700, color: "var(--cinza-700)", textTransform: "capitalize" }
+            }, nivel))
+          )
+        ),
+        /*#__PURE__*/React.createElement("tbody", null,
+          grupos.flatMap(grupo => ([
+            /*#__PURE__*/React.createElement("tr", { key: `grupo_${grupo}` },
+              /*#__PURE__*/React.createElement("td", {
+                colSpan: NIVEIS_CONFIGURAVEIS.length + 1,
+                style: { padding: "8px 16px", background: "var(--cinza-50)", fontWeight: 700, color: "var(--cinza-500)", fontSize: 11.5, textTransform: "uppercase", letterSpacing: 0.4 }
+              }, grupo)
+            ),
+            ...PERMISSOES_CATALOGO.filter(p => p.grupo === grupo).map(p =>
+              /*#__PURE__*/React.createElement("tr", { key: p.chave, style: { borderTop: "1px solid var(--cinza-100)" } },
+                /*#__PURE__*/React.createElement("td", { style: { padding: "10px 16px", color: "var(--cinza-800)" } }, p.label),
+                NIVEIS_CONFIGURAVEIS.map(nivel => {
+                  const ligado = valorEfetivo(nivel, p.chave);
+                  const emVoo = salvando === `${nivel}:${p.chave}`;
+                  return /*#__PURE__*/React.createElement("td", { key: nivel, style: { textAlign: "center", padding: "8px 12px" } },
+                    /*#__PURE__*/React.createElement("button", {
+                      onClick: () => toggle(nivel, p.chave, ligado),
+                      disabled: emVoo,
+                      title: ligado ? "Permitido — clique para bloquear" : "Bloqueado — clique para permitir",
+                      style: {
+                        width: 42, height: 24, borderRadius: 20, border: "none", cursor: emVoo ? "default" : "pointer",
+                        background: ligado ? "var(--verde-500)" : "var(--cinza-200)",
+                        position: "relative", transition: "background .15s", opacity: emVoo ? 0.6 : 1
+                      }
+                    }, /*#__PURE__*/React.createElement("span", {
+                      style: {
+                        position: "absolute", top: 2, left: ligado ? 20 : 2, width: 20, height: 20, borderRadius: "50%",
+                        background: "var(--cor-branco)", boxShadow: "0 1px 3px rgba(0,0,0,.25)", transition: "left .15s"
+                      }
+                    }))
+                  );
+                })
+              )
+            )
+          ]))
+        )
+      )
+    ),
+    // ── Exceções individuais ───────────────────────────────────────────
+    // Sobrepõe o padrão do papel só para uma pessoa específica. Ex.: um
+    // gerente que, por regra do papel, poderia ver Relatórios, mas para
+    // essa pessoa em particular você quer bloquear.
+    /*#__PURE__*/React.createElement("div", {
+      style: { background: "var(--cor-branco)", border: "1px solid var(--cinza-200)", borderRadius: 14, padding: "18px 20px", display: "flex", flexDirection: "column", gap: 14 }
+    },
+      /*#__PURE__*/React.createElement("div", null,
+        /*#__PURE__*/React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: "var(--cinza-900)" } }, "Exceções individuais"),
+        /*#__PURE__*/React.createElement("div", { style: { fontSize: 12.5, color: "var(--cinza-400)", marginTop: 2 } },
+          "Busque uma pessoa para dar ou tirar uma permissão específica, sem mudar a regra do papel dela.")
+      ),
+      /*#__PURE__*/React.createElement("input", {
+        value: busca,
+        onChange: e => { setBusca(e.target.value); setPessoaExcecao(null); },
+        placeholder: "Buscar por nome ou matrícula…",
+        style: {
+          padding: "10px 14px", borderRadius: 12, border: "1px solid var(--cinza-200)",
+          fontSize: 13, outline: "none", background: "var(--cinza-50)", color: "var(--cinza-900)"
+        }
+      }),
+      !pessoaExcecao && resultadosBusca.length > 0 && /*#__PURE__*/React.createElement("div", {
+        style: { display: "flex", flexDirection: "column", gap: 4, maxHeight: 220, overflow: "auto" }
+      },
+        resultadosBusca.map(f => /*#__PURE__*/React.createElement("button", {
+          key: f.id,
+          onClick: () => { setPessoaExcecao(f); setBusca(""); },
+          style: {
+            textAlign: "left", padding: "8px 12px", borderRadius: 10, border: "1px solid var(--cinza-100)",
+            background: "var(--cor-branco)", cursor: "pointer", fontSize: 12.5, color: "var(--cinza-800)"
+          }
+        }, `${nomeExibicao(f, nomesExibicaoPessoas)} — ${f.cargo_origem || f.nivel || ""} · mat. ${f.matricula || "—"}`))
+      ),
+      pessoaExcecao && /*#__PURE__*/React.createElement("div", {
+        style: { border: "1px solid var(--cinza-200)", borderRadius: 12, padding: "14px 16px", display: "flex", flexDirection: "column", gap: 10 }
+      },
+        /*#__PURE__*/React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 } },
+          /*#__PURE__*/React.createElement("div", null,
+            /*#__PURE__*/React.createElement("div", { style: { fontSize: 13, fontWeight: 700, color: "var(--cinza-900)" } }, nomeExibicao(pessoaExcecao, nomesExibicaoPessoas)),
+            /*#__PURE__*/React.createElement("div", { style: { fontSize: 11.5, color: "var(--cinza-400)" } }, `Papel: ${pessoaExcecao.nivel || "vendedor"} · mat. ${pessoaExcecao.matricula || "—"}`)
+          ),
+          /*#__PURE__*/React.createElement("button", {
+            onClick: () => setPessoaExcecao(null),
+            style: { background: "none", border: "none", color: "var(--cinza-400)", fontSize: 12, cursor: "pointer", fontWeight: 600 }
+          }, "✕ Fechar")
+        ),
+        PERMISSOES_CATALOGO.map(p => {
+          const ligado = valorEfetivoPessoa(pessoaExcecao, p.chave);
+          const excecaoAtiva = temExcecao(pessoaExcecao, p.chave);
+          const emVoo = salvando === `${pessoaExcecao.id}:${p.chave}`;
+          return /*#__PURE__*/React.createElement("div", {
+            key: p.chave,
+            style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "6px 0", borderTop: "1px solid var(--cinza-100)" }
+          },
+            /*#__PURE__*/React.createElement("div", null,
+              /*#__PURE__*/React.createElement("div", { style: { fontSize: 12.5, color: "var(--cinza-800)" } }, p.label),
+              excecaoAtiva && /*#__PURE__*/React.createElement("button", {
+                onClick: () => voltarAoPadrao(pessoaExcecao, p.chave),
+                disabled: emVoo,
+                style: { background: "none", border: "none", color: "var(--indigo-500)", fontSize: 11, cursor: emVoo ? "default" : "pointer", padding: 0, fontWeight: 600 }
+              }, "exceção ativa — voltar ao padrão do papel")
+            ),
+            /*#__PURE__*/React.createElement("button", {
+              onClick: () => togglePessoa(pessoaExcecao, p.chave, ligado),
+              disabled: emVoo,
+              title: ligado ? "Permitido — clique para bloquear" : "Bloqueado — clique para permitir",
+              style: {
+                width: 42, height: 24, borderRadius: 20, border: "none", cursor: emVoo ? "default" : "pointer", flexShrink: 0,
+                background: ligado ? "var(--verde-500)" : "var(--cinza-200)",
+                position: "relative", transition: "background .15s", opacity: emVoo ? 0.6 : 1
+              }
+            }, /*#__PURE__*/React.createElement("span", {
+              style: {
+                position: "absolute", top: 2, left: ligado ? 20 : 2, width: 20, height: 20, borderRadius: "50%",
+                background: "var(--cor-branco)", boxShadow: "0 1px 3px rgba(0,0,0,.25)", transition: "left .15s"
+              }
+            }))
+          );
+        })
+      )
+    )
+  );
+}
+function ArvoreHierarquia({ pode = () => true } = {}) {
   const { carregando, erro, superintendencias, diretorias, gerencias, funcionarios, atualizarFuncionarioLocal, refetch } = useArvoreComercialData();
+  const [aba, setAba] = useState("estrutura"); // "estrutura" | "permissoes"
   const [busca, setBusca] = useState("");
   const [aberto, setAberto] = useState({});
   const toggle = chave => setAberto(prev => ({ ...prev, [chave]: !prev[chave] }));
@@ -13053,7 +13467,7 @@ function ArvoreHierarquia() {
           totais.diretorias, " diretorias · ", totais.gerencias, " gerências · ", totais.vendedores, " vendedores")
       ),
       /*#__PURE__*/React.createElement("div", { style: { display: "flex", gap: 8, flexShrink: 0 } },
-        /*#__PURE__*/React.createElement("button", {
+        pode("ver_log_acessos") && /*#__PURE__*/React.createElement("button", {
           onClick: () => setModalLog(true),
           style: {
             padding: "9px 16px", borderRadius: 10, border: "1px solid var(--cinza-200)",
@@ -13061,7 +13475,7 @@ function ArvoreHierarquia() {
             fontSize: 12.5, fontWeight: 700, cursor: "pointer"
           }
         }, "📋 Log de auditoria"),
-        /*#__PURE__*/React.createElement("button", {
+        pode("importar_planilha") && /*#__PURE__*/React.createElement("button", {
           onClick: () => setModalImportar(true),
           style: {
             padding: "9px 16px", borderRadius: 10, border: "none",
@@ -13071,6 +13485,22 @@ function ArvoreHierarquia() {
         }, "📥 Importar planilha")
       )
     ),
+    // ── Abas internas do Painel de Acessos: Estrutura (árvore original) e
+    // Permissões (nova tela de configuração por papel). Mantido simples —
+    // dois botões de alternância, sem depender de mais nenhuma lib de rota.
+    /*#__PURE__*/React.createElement("div", { style: { display: "flex", gap: 8 } },
+      ["estrutura", "permissoes"].map(a => /*#__PURE__*/React.createElement("button", {
+        key: a,
+        onClick: () => setAba(a),
+        style: {
+          padding: "8px 16px", borderRadius: 10, border: "none", cursor: "pointer",
+          fontSize: 12.5, fontWeight: 700,
+          background: aba === a ? "var(--marca-gradiente)" : "var(--cinza-100)",
+          color: aba === a ? "var(--cor-branco)" : "var(--cinza-600)"
+        }
+      }, a === "estrutura" ? "🌳 Estrutura" : "🛡️ Permissões"))
+    ),
+    aba === "permissoes" && /*#__PURE__*/React.createElement(PainelPermissoes, null),
     modalLog && /*#__PURE__*/React.createElement(ModalLogAcessos, {
       onClose: () => setModalLog(false)
     }),
@@ -13086,6 +13516,7 @@ function ArvoreHierarquia() {
       onConcluido: () => refetch()
     }),
 
+    aba === "estrutura" && /*#__PURE__*/React.createElement(React.Fragment, null,
     // ── Card de resumo de acesso ──────────────────────────────────────────
     // Ponto central da tela: em vez da árvore organizacional ser o primeiro
     // assunto ao abrir (como na antiga "Hierarquia Comercial"), o status de
@@ -13192,13 +13623,15 @@ function ArvoreHierarquia() {
               onToggleChave: toggle
             }))
       )
-    ),
+    )
+    ), // fecha o Fragment de aba === "estrutura"
     pessoaSelecionada && /*#__PURE__*/React.createElement(ModalPerfilComercial, {
       pessoa: pessoaSelecionada,
       nomeExibicao: nomeExibicao(pessoaSelecionada, nomesExibicao),
       superintendencias,
       diretorias,
       gerencias,
+      pode,
       onClose: () => setPessoaSelecionada(null),
       onAtualizado: pessoaAtualizada => {
         atualizarFuncionarioLocal(pessoaAtualizada);
@@ -13368,6 +13801,8 @@ function App() {
   // construídas num passo seguinte. Exposto aqui desde já para as próximas
   // mudanças não precisarem recalcular isso em vários lugares.
   const isGestor = ["superintendente", "diretor", "gerente"].includes(usuario?.nivel);
+  const permissoes = usePermissoes(usuario, sessaoPronta);
+  const pode = permissoes.pode;
   // Controla quem vê a sidebar/nav de gestão (Dashboard, Funcionários,
   // Verificações, Relatórios): admin_geral e os 3 níveis de gestão
   // comercial. Vendedor comum continua só com Tela Inicial + Meu Portal.
@@ -13480,9 +13915,13 @@ function App() {
     label: "Relatórios",
     icon: "📈"
   },
-  // Só aparece para a conta de teste comercial@portovale.com.br enquanto a
-  // hierarquia comercial estiver em preview — ver previewHierarquia acima.
-  ...(previewHierarquia ? [{
+  // Painel de Acessos: só aparece (a) enquanto a hierarquia comercial
+  // estiver em preview — ver previewHierarquia acima — e (b) para
+  // admin_geral. Esta permissão NUNCA é configurável na tela de
+  // Permissões: é fixa no código para todo mundo, exatamente para não
+  // haver risco de alguém remover o próprio acesso ao painel que
+  // controla as permissões.
+  ...(previewHierarquia && isAdmin ? [{
     id: "hierarquia",
     label: "Painel de Acessos",
     icon: "🔐"
@@ -13544,7 +13983,8 @@ function App() {
         addNotif: addNotif,
         mesFiltro: mesFiltro,
         setMesFiltro: setMesFiltro,
-        somenteLeitura: ["diretor", "superintendente"].includes(usuario?.nivel),
+        somenteLeituraPerfil: !pode("editar_perfil"),
+        somenteLeituraPendencias: !pode("pendencias"),
         sessaoPronta: sessaoPronta,
         contaTesteAtivaAgora: contaTesteAtivaAgora
       });
@@ -13572,7 +14012,9 @@ function App() {
           setSelecionadas: setGerenciasEscopoRelatorio
         })
       });
-      if (view === "hierarquia" && previewHierarquia) return /*#__PURE__*/React.createElement(ArvoreHierarquia, null);
+      if (view === "hierarquia" && previewHierarquia && isAdmin) return /*#__PURE__*/React.createElement(ArvoreHierarquia, {
+        pode: pode
+      });
       if (view === "mural") return /*#__PURE__*/React.createElement(ProcessosPonto, { usuario: usuario, setView: setView });
       if (view === "portal") return /*#__PURE__*/React.createElement(PortalFuncionario, {
         ocorrencias: ocorrenciasExibidas,
