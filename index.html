@@ -12680,6 +12680,13 @@ function ModalPerfilComercial({ pessoa, onClose, onAtualizado, nomeExibicao: nom
     maxWidth: 560
   }, /*#__PURE__*/React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 16 } },
 
+    // Cabeçalho de identidade: confirma matrícula + hierarquia atual da
+    // pessoa antes de qualquer edição, para não haver dúvida de "quem" está
+    // sendo editado quando há nomes parecidos na base.
+    /*#__PURE__*/React.createElement("div", {
+      style: { background: "var(--cinza-50)", borderRadius: 10, padding: "10px 14px", fontSize: 12, color: "var(--cinza-500)" }
+    }, `Matrícula ${pessoa.matricula || "—"} · ${(diretorias || []).find(d => d.id === pessoa.diretoria_id)?.nome || "sem diretoria"}${(gerencias || []).find(g => g.id === pessoa.gerencia_id) ? " · " + gerencias.find(g => g.id === pessoa.gerencia_id).nome : ""}`),
+
     !podeEditarPerfil && /*#__PURE__*/React.createElement("div", {
       style: { background: "var(--cinza-100)", borderRadius: 10, padding: "10px 14px", fontSize: 12.5, color: "var(--cinza-600)", fontWeight: 600 }
     }, "🔒 Você não tem permissão para editar dados cadastrais. Exibindo em modo somente leitura."),
@@ -13128,6 +13135,30 @@ function PainelPermissoes() {
   const [busca, setBusca] = useState("");
   const [pessoaExcecao, setPessoaExcecao] = useState(null);
   const nomesExibicaoPessoas = useMemo(() => calcularNomesExibicao(dadosPessoas.funcionarios), [dadosPessoas.funcionarios]);
+  // Caminho da pessoa na hierarquia (ex.: "Diretoria X · Gerência Y"), para
+  // deixar claro QUEM é quem quando há nomes parecidos ou mesmo cargo —
+  // sem isso, a busca só mostrava nome/cargo/matrícula, insuficiente para
+  // diferenciar duas pessoas homônimas em setores diferentes.
+  function caminhoHierarquico(pessoa) {
+    const partes = [];
+    const dir = dadosPessoas.diretorias.find(d => d.id === pessoa.diretoria_id);
+    const ger = dadosPessoas.gerencias.find(g => g.id === pessoa.gerencia_id);
+    if (dir) partes.push(dir.nome);
+    if (ger) partes.push(ger.nome);
+    return partes.length ? partes.join(" · ") : "sem vínculo de hierarquia";
+  }
+  // Quantas pessoas ativas cada papel afeta hoje — contexto essencial para
+  // saber o alcance real de um toggle na matriz antes de clicar nele.
+  const contagemPorPapel = useMemo(() => {
+    const c = {};
+    for (const nivel of NIVEIS_CONFIGURAVEIS) c[nivel] = 0;
+    for (const f of dadosPessoas.funcionarios) {
+      const nivel = f.nivel || "vendedor";
+      const ativo = (f.situacao || "ATIVO").toUpperCase() === "ATIVO";
+      if (ativo && c[nivel] !== undefined) c[nivel]++;
+    }
+    return c;
+  }, [dadosPessoas.funcionarios]);
   const resultadosBusca = useMemo(() => {
     const termo = busca.trim().toLowerCase();
     if (termo.length < 2) return [];
@@ -13213,8 +13244,11 @@ function PainelPermissoes() {
             /*#__PURE__*/React.createElement("th", { style: { textAlign: "left", padding: "10px 16px", fontWeight: 700, color: "var(--cinza-700)" } }, "Permissão"),
             NIVEIS_CONFIGURAVEIS.map(nivel => /*#__PURE__*/React.createElement("th", {
               key: nivel,
-              style: { textAlign: "center", padding: "10px 12px", fontWeight: 700, color: "var(--cinza-700)", textTransform: "capitalize" }
-            }, nivel))
+              style: { textAlign: "center", padding: "10px 12px", fontWeight: 700, color: "var(--cinza-700)" }
+            }, /*#__PURE__*/React.createElement("div", { style: { textTransform: "capitalize" } }, nivel),
+               /*#__PURE__*/React.createElement("div", { style: { fontSize: 10.5, fontWeight: 600, color: "var(--cinza-400)", textTransform: "none" } },
+                 `${contagemPorPapel[nivel] ?? 0} ${contagemPorPapel[nivel] === 1 ? "pessoa" : "pessoas"}`)
+            ))
           )
         ),
         /*#__PURE__*/React.createElement("tbody", null,
@@ -13284,9 +13318,15 @@ function PainelPermissoes() {
           onClick: () => { setPessoaExcecao(f); setBusca(""); },
           style: {
             textAlign: "left", padding: "8px 12px", borderRadius: 10, border: "1px solid var(--cinza-100)",
-            background: "var(--cor-branco)", cursor: "pointer", fontSize: 12.5, color: "var(--cinza-800)"
+            background: "var(--cor-branco)", cursor: "pointer", fontSize: 12.5, color: "var(--cinza-800)",
+            display: "flex", flexDirection: "column", gap: 2
           }
-        }, `${nomeExibicao(f, nomesExibicaoPessoas)} — ${f.cargo_origem || f.nivel || ""} · mat. ${f.matricula || "—"}`))
+        },
+          /*#__PURE__*/React.createElement("div", { style: { fontWeight: 700 } },
+            `${nomeExibicao(f, nomesExibicaoPessoas)} — ${f.cargo_origem || f.nivel || ""}`),
+          /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, color: "var(--cinza-400)" } },
+            `${caminhoHierarquico(f)} · mat. ${f.matricula || "—"}`)
+        ))
       ),
       pessoaExcecao && /*#__PURE__*/React.createElement("div", {
         style: { border: "1px solid var(--cinza-200)", borderRadius: 12, padding: "14px 16px", display: "flex", flexDirection: "column", gap: 10 }
@@ -13294,7 +13334,9 @@ function PainelPermissoes() {
         /*#__PURE__*/React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 } },
           /*#__PURE__*/React.createElement("div", null,
             /*#__PURE__*/React.createElement("div", { style: { fontSize: 13, fontWeight: 700, color: "var(--cinza-900)" } }, nomeExibicao(pessoaExcecao, nomesExibicaoPessoas)),
-            /*#__PURE__*/React.createElement("div", { style: { fontSize: 11.5, color: "var(--cinza-400)" } }, `Papel: ${pessoaExcecao.nivel || "vendedor"} · mat. ${pessoaExcecao.matricula || "—"}`)
+            /*#__PURE__*/React.createElement("div", { style: { fontSize: 11.5, color: "var(--cinza-400)" } },
+              `${pessoaExcecao.cargo_origem || ""} · Papel: ${pessoaExcecao.nivel || "vendedor"} · mat. ${pessoaExcecao.matricula || "—"}`),
+            /*#__PURE__*/React.createElement("div", { style: { fontSize: 11.5, color: "var(--cinza-400)" } }, caminhoHierarquico(pessoaExcecao))
           ),
           /*#__PURE__*/React.createElement("button", {
             onClick: () => setPessoaExcecao(null),
