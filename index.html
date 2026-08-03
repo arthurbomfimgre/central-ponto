@@ -13234,6 +13234,7 @@ function PainelPermissoes() {
     }
   }
 
+  const [matrizAberta, setMatrizAberta] = useState(false);
   const grupos = [...new Set(PERMISSOES_CATALOGO.map(p => p.grupo))];
 
   if (carregando) {
@@ -13241,67 +13242,17 @@ function PainelPermissoes() {
   }
 
   return /*#__PURE__*/React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 18 } },
-    /*#__PURE__*/React.createElement("div", { style: { fontSize: 13, color: "var(--cinza-400)", lineHeight: 1.5 } },
-      "Define o que cada papel da hierarquia comercial pode ver e fazer no painel. ",
-      /*#__PURE__*/React.createElement("strong", null, "admin_geral"), " sempre tem acesso total e não aparece aqui — isso evita que uma configuração errada tranque o próprio administrador para fora do Painel de Acessos."),
     erro && /*#__PURE__*/React.createElement("div", {
       style: { background: "var(--vermelho-100)", color: "var(--vermelho-700)", padding: "10px 14px", borderRadius: 10, fontSize: 12.5 }
     }, `❌ ${erro}`),
-    /*#__PURE__*/React.createElement("div", {
-      style: { background: "var(--cor-branco)", border: "1px solid var(--cinza-200)", borderRadius: 14, overflow: "hidden" }
-    },
-      /*#__PURE__*/React.createElement("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: 12.5 } },
-        /*#__PURE__*/React.createElement("thead", null,
-          /*#__PURE__*/React.createElement("tr", { style: { background: "var(--cinza-50)" } },
-            /*#__PURE__*/React.createElement("th", { style: { textAlign: "left", padding: "10px 16px", fontWeight: 700, color: "var(--cinza-700)" } }, "Permissão"),
-            NIVEIS_CONFIGURAVEIS.map(nivel => /*#__PURE__*/React.createElement("th", {
-              key: nivel,
-              style: { textAlign: "center", padding: "10px 12px", fontWeight: 700, color: "var(--cinza-700)" }
-            }, /*#__PURE__*/React.createElement("div", { style: { textTransform: "capitalize" } }, nivel),
-               /*#__PURE__*/React.createElement("div", { style: { fontSize: 10.5, fontWeight: 600, color: "var(--cinza-400)", textTransform: "none" } },
-                 `${contagemPorPapel[nivel] ?? 0} ${contagemPorPapel[nivel] === 1 ? "pessoa" : "pessoas"}`)
-            ))
-          )
-        ),
-        /*#__PURE__*/React.createElement("tbody", null,
-          grupos.flatMap(grupo => ([
-            /*#__PURE__*/React.createElement("tr", { key: `grupo_${grupo}` },
-              /*#__PURE__*/React.createElement("td", {
-                colSpan: NIVEIS_CONFIGURAVEIS.length + 1,
-                style: { padding: "8px 16px", background: "var(--cinza-50)", fontWeight: 700, color: "var(--cinza-500)", fontSize: 11.5, textTransform: "uppercase", letterSpacing: 0.4 }
-              }, grupo)
-            ),
-            ...PERMISSOES_CATALOGO.filter(p => p.grupo === grupo).map(p =>
-              /*#__PURE__*/React.createElement("tr", { key: p.chave, style: { borderTop: "1px solid var(--cinza-100)" } },
-                /*#__PURE__*/React.createElement("td", { style: { padding: "10px 16px", color: "var(--cinza-900)" } }, p.label),
-                NIVEIS_CONFIGURAVEIS.map(nivel => {
-                  const ligado = valorEfetivo(nivel, p.chave);
-                  const emVoo = salvando === `${nivel}:${p.chave}`;
-                  return /*#__PURE__*/React.createElement("td", { key: nivel, style: { textAlign: "center", padding: "8px 12px" } },
-                    /*#__PURE__*/React.createElement("button", {
-                      onClick: () => toggle(nivel, p.chave, ligado),
-                      disabled: emVoo,
-                      title: ligado ? "Permitido — clique para bloquear" : "Bloqueado — clique para permitir",
-                      style: {
-                        minWidth: 88, padding: "6px 14px", borderRadius: 8, border: "none", cursor: emVoo ? "default" : "pointer",
-                        background: ligado ? "var(--verde-600)" : "var(--vermelho-600)",
-                        color: "var(--cor-branco)", fontSize: 12, fontWeight: 700,
-                        opacity: emVoo ? 0.6 : 1, transition: "background .15s"
-                      }
-                    }, ligado ? "Permitido" : "Negado")
-                  );
-                })
-              )
-            )
-          ]))
-        )
-      )
-    ),
     // ── Exceções individuais — layout de duas colunas ───────────────────
     // Esquerda: busca + lista de pessoas ativas para selecionar. Direita:
     // painel de permissões da pessoa selecionada. Substituiu o formato
     // anterior (busca solta + card colado embaixo) para deixar a seleção
-    // e a edição lado a lado, sempre visíveis ao mesmo tempo.
+    // e a edição lado a lado, sempre visíveis ao mesmo tempo. Fica em
+    // primeiro na tela por ser o ajuste do dia-a-dia (caso específico de
+    // uma pessoa); a matriz por papel, mexida com menos frequência, vem
+    // depois, recolhida.
     /*#__PURE__*/React.createElement("div", null,
       /*#__PURE__*/React.createElement("div", { style: { marginBottom: 10 } },
         /*#__PURE__*/React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: "var(--cinza-900)" } }, "Exceções individuais"),
@@ -13409,6 +13360,79 @@ function PainelPermissoes() {
               );
             })
           ))
+        )
+      )
+    ),
+    // ── Matriz por papel — expansível, colapsada por padrão ─────────────
+    // Ajuste feito com bem menos frequência que exceções individuais, então
+    // fica recolhida para não competir por espaço/atenção na tela.
+    /*#__PURE__*/React.createElement("div", {
+      style: { background: "var(--cor-branco)", border: "1px solid var(--cinza-200)", borderRadius: 14, overflow: "hidden" }
+    },
+      /*#__PURE__*/React.createElement("button", {
+        onClick: () => setMatrizAberta(a => !a),
+        style: {
+          width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
+          padding: "14px 18px", background: "none", border: "none", cursor: "pointer", textAlign: "left"
+        }
+      },
+        /*#__PURE__*/React.createElement("div", null,
+          /*#__PURE__*/React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: "var(--cinza-900)" } }, "Permissões por papel"),
+          /*#__PURE__*/React.createElement("div", { style: { fontSize: 12.5, color: "var(--cinza-400)", marginTop: 2 } },
+            "Define o padrão que cada papel da hierarquia segue quando não há exceção individual.")
+        ),
+        /*#__PURE__*/React.createElement("span", {
+          style: { fontSize: 13, color: "var(--cinza-400)", transform: matrizAberta ? "rotate(180deg)" : "none", transition: "transform .15s" }
+        }, "▾")
+      ),
+      matrizAberta && /*#__PURE__*/React.createElement("div", { style: { borderTop: "1px solid var(--cinza-100)" } },
+        /*#__PURE__*/React.createElement("div", { style: { padding: "12px 18px 0", fontSize: 12.5, color: "var(--cinza-400)", lineHeight: 1.5 } },
+          /*#__PURE__*/React.createElement("strong", null, "admin_geral"), " sempre tem acesso total e não aparece aqui — isso evita que uma configuração errada tranque o próprio administrador para fora do Painel de Acessos."),
+        /*#__PURE__*/React.createElement("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: 12.5, marginTop: 12 } },
+          /*#__PURE__*/React.createElement("thead", null,
+            /*#__PURE__*/React.createElement("tr", { style: { background: "var(--cinza-50)" } },
+              /*#__PURE__*/React.createElement("th", { style: { textAlign: "left", padding: "10px 16px", fontWeight: 700, color: "var(--cinza-700)" } }, "Permissão"),
+              NIVEIS_CONFIGURAVEIS.map(nivel => /*#__PURE__*/React.createElement("th", {
+                key: nivel,
+                style: { textAlign: "center", padding: "10px 12px", fontWeight: 700, color: "var(--cinza-700)" }
+              }, /*#__PURE__*/React.createElement("div", { style: { textTransform: "capitalize" } }, nivel),
+                 /*#__PURE__*/React.createElement("div", { style: { fontSize: 10.5, fontWeight: 600, color: "var(--cinza-400)", textTransform: "none" } },
+                   `${contagemPorPapel[nivel] ?? 0} ${contagemPorPapel[nivel] === 1 ? "pessoa" : "pessoas"}`)
+              ))
+            )
+          ),
+          /*#__PURE__*/React.createElement("tbody", null,
+            grupos.flatMap(grupo => ([
+              /*#__PURE__*/React.createElement("tr", { key: `grupo_${grupo}` },
+                /*#__PURE__*/React.createElement("td", {
+                  colSpan: NIVEIS_CONFIGURAVEIS.length + 1,
+                  style: { padding: "8px 16px", background: "var(--cinza-50)", fontWeight: 700, color: "var(--cinza-500)", fontSize: 11.5, textTransform: "uppercase", letterSpacing: 0.4 }
+                }, grupo)
+              ),
+              ...PERMISSOES_CATALOGO.filter(p => p.grupo === grupo).map(p =>
+                /*#__PURE__*/React.createElement("tr", { key: p.chave, style: { borderTop: "1px solid var(--cinza-100)" } },
+                  /*#__PURE__*/React.createElement("td", { style: { padding: "10px 16px", color: "var(--cinza-900)" } }, p.label),
+                  NIVEIS_CONFIGURAVEIS.map(nivel => {
+                    const ligado = valorEfetivo(nivel, p.chave);
+                    const emVoo = salvando === `${nivel}:${p.chave}`;
+                    return /*#__PURE__*/React.createElement("td", { key: nivel, style: { textAlign: "center", padding: "8px 12px" } },
+                      /*#__PURE__*/React.createElement("button", {
+                        onClick: () => toggle(nivel, p.chave, ligado),
+                        disabled: emVoo,
+                        title: ligado ? "Permitido — clique para bloquear" : "Bloqueado — clique para permitir",
+                        style: {
+                          minWidth: 88, padding: "6px 14px", borderRadius: 8, border: "none", cursor: emVoo ? "default" : "pointer",
+                          background: ligado ? "var(--verde-600)" : "var(--vermelho-600)",
+                          color: "var(--cor-branco)", fontSize: 12, fontWeight: 700,
+                          opacity: emVoo ? 0.6 : 1, transition: "background .15s"
+                        }
+                      }, ligado ? "Permitido" : "Negado")
+                    );
+                  })
+                )
+              )
+            ]))
+          )
         )
       )
     )
