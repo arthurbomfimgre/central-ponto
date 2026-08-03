@@ -13159,13 +13159,25 @@ function PainelPermissoes() {
     }
     return c;
   }, [dadosPessoas.funcionarios]);
-  const resultadosBusca = useMemo(() => {
+  // Lista da coluna esquerda: todas as pessoas ATIVAS por padrão (busca
+  // vazia), filtrada por nome ou matrícula conforme o admin digita.
+  // Diferente da versão anterior (que só mostrava algo a partir de 2
+  // caracteres digitados), aqui a lista já nasce navegável — pedido
+  // explícito do Arthur para poder "selecionar qualquer pessoa ativa no
+  // sistema" sem precisar saber o nome de cor. Limitada a 60 itens por vez
+  // para não pesar a tela com ~581 pessoas renderizadas de uma vez; a
+  // busca por nome/matrícula é o caminho para achar quem não aparece de
+  // cara na lista.
+  const listaPessoasSelecao = useMemo(() => {
     const termo = busca.trim().toLowerCase();
-    if (termo.length < 2) return [];
-    return dadosPessoas.funcionarios
-      .filter(f => (f.nome_completo || "").toLowerCase().includes(termo) || (f.matricula || "").toLowerCase().includes(termo))
-      .slice(0, 8);
-  }, [busca, dadosPessoas.funcionarios]);
+    const ativas = dadosPessoas.funcionarios.filter(f => (f.situacao || "ATIVO").toUpperCase() === "ATIVO");
+    const filtradas = termo
+      ? ativas.filter(f => (f.nome_completo || "").toLowerCase().includes(termo) || (f.matricula || "").toLowerCase().includes(termo))
+      : ativas;
+    return [...filtradas]
+      .sort((a, b) => nomeExibicao(a, nomesExibicaoPessoas).localeCompare(nomeExibicao(b, nomesExibicaoPessoas), "pt-BR", { sensitivity: "base" }))
+      .slice(0, 60);
+  }, [busca, dadosPessoas.funcionarios, nomesExibicaoPessoas]);
 
   async function toggle(papel, chave, valorAtual) {
     const chaveOp = `${papel}:${chave}`;
@@ -13289,93 +13301,119 @@ function PainelPermissoes() {
         )
       )
     ),
-    // ── Exceções individuais ───────────────────────────────────────────
-    // Sobrepõe o padrão do papel só para uma pessoa específica. Ex.: um
-    // gerente que, por regra do papel, poderia ver Relatórios, mas para
-    // essa pessoa em particular você quer bloquear.
-    /*#__PURE__*/React.createElement("div", {
-      style: { background: "var(--cor-branco)", border: "1px solid var(--cinza-200)", borderRadius: 14, padding: "18px 20px", display: "flex", flexDirection: "column", gap: 14 }
-    },
-      /*#__PURE__*/React.createElement("div", null,
+    // ── Exceções individuais — layout de duas colunas ───────────────────
+    // Esquerda: busca + lista de pessoas ativas para selecionar. Direita:
+    // painel de permissões da pessoa selecionada. Substituiu o formato
+    // anterior (busca solta + card colado embaixo) para deixar a seleção
+    // e a edição lado a lado, sempre visíveis ao mesmo tempo.
+    /*#__PURE__*/React.createElement("div", null,
+      /*#__PURE__*/React.createElement("div", { style: { marginBottom: 10 } },
         /*#__PURE__*/React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: "var(--cinza-900)" } }, "Exceções individuais"),
         /*#__PURE__*/React.createElement("div", { style: { fontSize: 12.5, color: "var(--cinza-400)", marginTop: 2 } },
-          "Busque uma pessoa para dar ou tirar uma permissão específica, sem mudar a regra do papel dela.")
+          "Selecione uma pessoa para dar ou tirar uma permissão específica, sem mudar a regra do papel dela.")
       ),
-      /*#__PURE__*/React.createElement("input", {
-        value: busca,
-        onChange: e => { setBusca(e.target.value); setPessoaExcecao(null); },
-        placeholder: "Buscar por nome ou matrícula…",
-        style: {
-          padding: "10px 14px", borderRadius: 12, border: "1px solid var(--cinza-200)",
-          fontSize: 13, outline: "none", background: "var(--cinza-50)", color: "var(--cinza-900)"
-        }
-      }),
-      !pessoaExcecao && resultadosBusca.length > 0 && /*#__PURE__*/React.createElement("div", {
-        style: { display: "flex", flexDirection: "column", gap: 4, maxHeight: 220, overflow: "auto" }
+      /*#__PURE__*/React.createElement("div", {
+        style: { display: "grid", gridTemplateColumns: "300px 1fr", gap: 16, alignItems: "start" }
       },
-        resultadosBusca.map(f => /*#__PURE__*/React.createElement("button", {
-          key: f.id,
-          onClick: () => { setPessoaExcecao(f); setBusca(""); },
-          style: {
-            textAlign: "left", padding: "8px 12px", borderRadius: 10, border: "1px solid var(--cinza-100)",
-            background: "var(--cor-branco)", cursor: "pointer", fontSize: 12.5, color: "var(--cinza-800)",
-            display: "flex", flexDirection: "column", gap: 2
-          }
+        // ── Coluna esquerda: busca + lista de pessoas ──────────────────
+        /*#__PURE__*/React.createElement("div", {
+          style: { background: "var(--cor-branco)", border: "1px solid var(--cinza-200)", borderRadius: 14, padding: 14, display: "flex", flexDirection: "column", gap: 10, maxHeight: 480 }
         },
-          /*#__PURE__*/React.createElement("div", { style: { fontWeight: 700 } },
-            `${nomeExibicao(f, nomesExibicaoPessoas)} — ${f.cargo_origem || f.nivel || ""}`),
-          /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, color: "var(--cinza-400)" } },
-            `${caminhoHierarquico(f)} · mat. ${f.matricula || "—"}`)
-        ))
-      ),
-      pessoaExcecao && /*#__PURE__*/React.createElement("div", {
-        style: { border: "1px solid var(--cinza-200)", borderRadius: 12, padding: "14px 16px", display: "flex", flexDirection: "column", gap: 10 }
-      },
-        /*#__PURE__*/React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 } },
-          /*#__PURE__*/React.createElement("div", null,
-            /*#__PURE__*/React.createElement("div", { style: { fontSize: 13, fontWeight: 700, color: "var(--cinza-900)" } }, nomeExibicao(pessoaExcecao, nomesExibicaoPessoas)),
-            /*#__PURE__*/React.createElement("div", { style: { fontSize: 11.5, color: "var(--cinza-400)" } },
-              `${pessoaExcecao.cargo_origem || ""} · Papel: ${pessoaExcecao.nivel || "vendedor"} · mat. ${pessoaExcecao.matricula || "—"}`),
-            /*#__PURE__*/React.createElement("div", { style: { fontSize: 11.5, color: "var(--cinza-400)" } }, caminhoHierarquico(pessoaExcecao))
-          ),
-          /*#__PURE__*/React.createElement("button", {
-            onClick: () => setPessoaExcecao(null),
-            style: { background: "none", border: "none", color: "var(--cinza-400)", fontSize: 12, cursor: "pointer", fontWeight: 600 }
-          }, "✕ Fechar")
+          /*#__PURE__*/React.createElement("input", {
+            value: busca,
+            onChange: e => setBusca(e.target.value),
+            placeholder: "Buscar por nome ou matrícula…",
+            style: {
+              padding: "10px 14px", borderRadius: 12, border: "1px solid var(--cinza-200)",
+              fontSize: 13, outline: "none", background: "var(--cinza-50)", color: "var(--cinza-900)"
+            }
+          }),
+          /*#__PURE__*/React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 4, overflow: "auto" } },
+            listaPessoasSelecao.length === 0 && /*#__PURE__*/React.createElement("div", {
+              style: { fontSize: 12, color: "var(--cinza-300)", padding: "8px 4px" }
+            }, "Nenhuma pessoa encontrada."),
+            listaPessoasSelecao.map(f => {
+              const selecionada = pessoaExcecao?.id === f.id;
+              return /*#__PURE__*/React.createElement("button", {
+                key: f.id,
+                onClick: () => setPessoaExcecao(f),
+                style: {
+                  textAlign: "left", padding: "8px 12px", borderRadius: 10,
+                  border: selecionada ? "1px solid var(--indigo-300)" : "1px solid var(--cinza-100)",
+                  background: selecionada ? "var(--indigo-50)" : "var(--cor-branco)",
+                  cursor: "pointer", fontSize: 12.5, color: "var(--cinza-800)",
+                  display: "flex", flexDirection: "column", gap: 2
+                }
+              },
+                /*#__PURE__*/React.createElement("div", { style: { fontWeight: 700 } },
+                  `${nomeExibicao(f, nomesExibicaoPessoas)}`),
+                /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, color: "var(--cinza-400)" } },
+                  `${f.cargo_origem || f.nivel || ""} · ${caminhoHierarquico(f)}`)
+              );
+            })
+          )
         ),
-        PERMISSOES_CATALOGO.map(p => {
-          const ligado = valorEfetivoPessoa(pessoaExcecao, p.chave);
-          const excecaoAtiva = temExcecao(pessoaExcecao, p.chave);
-          const emVoo = salvando === `${pessoaExcecao.id}:${p.chave}`;
-          return /*#__PURE__*/React.createElement("div", {
-            key: p.chave,
-            style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "6px 0", borderTop: "1px solid var(--cinza-100)" }
-          },
+        // ── Coluna direita: permissões da pessoa selecionada ───────────
+        !pessoaExcecao && /*#__PURE__*/React.createElement("div", {
+          style: {
+            background: "var(--cinza-50)", border: "1px dashed var(--cinza-200)", borderRadius: 14,
+            padding: 40, textAlign: "center", color: "var(--cinza-300)", fontSize: 13
+          }
+        }, "Selecione uma pessoa à esquerda para ver e editar as permissões dela."),
+        pessoaExcecao && /*#__PURE__*/React.createElement("div", {
+          style: { background: "var(--cor-branco)", border: "1px solid var(--cinza-200)", borderRadius: 14, padding: "18px 20px", display: "flex", flexDirection: "column", gap: 12 }
+        },
+          /*#__PURE__*/React.createElement("div", { style: { display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8, paddingBottom: 12, borderBottom: "1px solid var(--cinza-100)" } },
             /*#__PURE__*/React.createElement("div", null,
-              /*#__PURE__*/React.createElement("div", { style: { fontSize: 12.5, color: "var(--cinza-800)" } }, p.label),
-              excecaoAtiva && /*#__PURE__*/React.createElement("button", {
-                onClick: () => voltarAoPadrao(pessoaExcecao, p.chave),
-                disabled: emVoo,
-                style: { background: "none", border: "none", color: "var(--indigo-500)", fontSize: 11, cursor: emVoo ? "default" : "pointer", padding: 0, fontWeight: 600 }
-              }, "exceção ativa — voltar ao padrão do papel")
+              /*#__PURE__*/React.createElement("div", { style: { fontSize: 15, fontWeight: 700, color: "var(--cinza-900)" } }, nomeExibicao(pessoaExcecao, nomesExibicaoPessoas)),
+              /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: "var(--cinza-400)", marginTop: 2 } },
+                `${pessoaExcecao.cargo_origem || ""} · Papel: ${pessoaExcecao.nivel || "vendedor"} · mat. ${pessoaExcecao.matricula || "—"}`),
+              /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: "var(--cinza-400)" } }, caminhoHierarquico(pessoaExcecao))
             ),
             /*#__PURE__*/React.createElement("button", {
-              onClick: () => togglePessoa(pessoaExcecao, p.chave, ligado),
-              disabled: emVoo,
-              title: ligado ? "Permitido — clique para bloquear" : "Bloqueado — clique para permitir",
-              style: {
-                width: 42, height: 24, borderRadius: 20, border: "none", cursor: emVoo ? "default" : "pointer", flexShrink: 0,
-                background: ligado ? "var(--verde-500)" : "var(--cinza-200)",
-                position: "relative", transition: "background .15s", opacity: emVoo ? 0.6 : 1
-              }
-            }, /*#__PURE__*/React.createElement("span", {
-              style: {
-                position: "absolute", top: 2, left: ligado ? 20 : 2, width: 20, height: 20, borderRadius: "50%",
-                background: "var(--cor-branco)", boxShadow: "0 1px 3px rgba(0,0,0,.25)", transition: "left .15s"
-              }
-            }))
-          );
-        })
+              onClick: () => setPessoaExcecao(null),
+              style: { background: "none", border: "none", color: "var(--cinza-400)", fontSize: 12, cursor: "pointer", fontWeight: 600, flexShrink: 0 }
+            }, "✕ Fechar")
+          ),
+          grupos.map(grupo => /*#__PURE__*/React.createElement("div", { key: grupo, style: { display: "flex", flexDirection: "column", gap: 2 } },
+            /*#__PURE__*/React.createElement("div", {
+              style: { fontSize: 11, fontWeight: 700, color: "var(--cinza-400)", textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 4 }
+            }, grupo),
+            PERMISSOES_CATALOGO.filter(p => p.grupo === grupo).map(p => {
+              const ligado = valorEfetivoPessoa(pessoaExcecao, p.chave);
+              const excecaoAtiva = temExcecao(pessoaExcecao, p.chave);
+              const emVoo = salvando === `${pessoaExcecao.id}:${p.chave}`;
+              return /*#__PURE__*/React.createElement("div", {
+                key: p.chave,
+                style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "8px 0", borderTop: "1px solid var(--cinza-100)" }
+              },
+                /*#__PURE__*/React.createElement("div", null,
+                  /*#__PURE__*/React.createElement("div", { style: { fontSize: 13, color: "var(--cinza-800)" } }, p.label),
+                  excecaoAtiva && /*#__PURE__*/React.createElement("button", {
+                    onClick: () => voltarAoPadrao(pessoaExcecao, p.chave),
+                    disabled: emVoo,
+                    style: { background: "none", border: "none", color: "var(--indigo-500)", fontSize: 11, cursor: emVoo ? "default" : "pointer", padding: 0, fontWeight: 600 }
+                  }, "exceção ativa — voltar ao padrão do papel")
+                ),
+                /*#__PURE__*/React.createElement("button", {
+                  onClick: () => togglePessoa(pessoaExcecao, p.chave, ligado),
+                  disabled: emVoo,
+                  title: ligado ? "Permitido — clique para bloquear" : "Bloqueado — clique para permitir",
+                  style: {
+                    width: 42, height: 24, borderRadius: 20, border: "none", cursor: emVoo ? "default" : "pointer", flexShrink: 0,
+                    background: ligado ? "var(--verde-500)" : "var(--cinza-200)",
+                    position: "relative", transition: "background .15s", opacity: emVoo ? 0.6 : 1
+                  }
+                }, /*#__PURE__*/React.createElement("span", {
+                  style: {
+                    position: "absolute", top: 2, left: ligado ? 20 : 2, width: 20, height: 20, borderRadius: "50%",
+                    background: "var(--cor-branco)", boxShadow: "0 1px 3px rgba(0,0,0,.25)", transition: "left .15s"
+                  }
+                }))
+              );
+            })
+          ))
+        )
       )
     )
   );
