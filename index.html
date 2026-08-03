@@ -13393,7 +13393,7 @@ function PainelPermissoes() {
                     onClick: () => voltarAoPadrao(pessoaExcecao, p.chave),
                     disabled: emVoo,
                     style: { background: "none", border: "none", color: "var(--indigo-500)", fontSize: 11, cursor: emVoo ? "default" : "pointer", padding: 0, fontWeight: 600 }
-                  }, "exceção ativa — voltar ao padrão do papel")
+                  }, `exceção ativa (${ligado ? "permite" : "bloqueia"}, diferente do papel) — voltar ao padrão`)
                 ),
                 /*#__PURE__*/React.createElement("button", {
                   onClick: () => togglePessoa(pessoaExcecao, p.chave, ligado),
