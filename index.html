@@ -10233,12 +10233,182 @@ function Relatorios({
 }
 
 // ─── MURAL DE RECADOS ─────────────────────────────────────────────────────────
-function ProcessosPonto({ usuario, setView }) {
-  const [aberto, setAberto] = useState(null);
+function ProcessosPonto({ usuario, setView, ocorrencias = [], funcionarios = [] }) {
   const nomeFirst = usuario ? usuario.nome.split(" ")[0].charAt(0).toUpperCase() + usuario.nome.split(" ")[0].slice(1).toLowerCase() : "Colaborador";
 
   const hora = new Date().getHours();
   const saudacao = hora < 12 ? "Bom dia" : hora < 18 ? "Boa tarde" : "Boa noite";
+
+  // Pendências recentes do próprio funcionário logado — mesmo critério do
+  // Portal (Pendente ou Corrigido aguardando verificação), mais recentes
+  // primeiro, limitado a um punhado para o carrossel da tela inicial.
+  const funcLogado = useMemo(
+    () => funcionarios.find(f => f.id === usuario?.funcionario_id),
+    [funcionarios, usuario]
+  );
+  const pendenciasRecentes = useMemo(() => {
+    if (!funcLogado) return [];
+    return ocorrencias
+      .filter(o => o.funcionario_id === funcLogado.id && (o.status === "Pendente" || o.status === "Corrigido"))
+      .sort((a, b) => (b.atualizadoEm || b.data || "").localeCompare(a.atualizadoEm || a.data || ""));
+  }, [ocorrencias, funcLogado]);
+
+  const [indiceCarrossel, setIndiceCarrossel] = useState(0);
+  useEffect(() => {
+    if (pendenciasRecentes.length < 2) return;
+    const t = setInterval(() => {
+      setIndiceCarrossel(i => (i + 1) % pendenciasRecentes.length);
+    }, 4000);
+    return () => clearInterval(t);
+  }, [pendenciasRecentes.length]);
+  // Se a lista encolher (ex: pendência resolvida em outra aba), evita
+  // apontar para um índice que não existe mais.
+  useEffect(() => {
+    if (indiceCarrossel >= pendenciasRecentes.length) setIndiceCarrossel(0);
+  }, [pendenciasRecentes.length, indiceCarrossel]);
+
+  const pendenciaAtual = pendenciasRecentes[indiceCarrossel];
+
+  return /*#__PURE__*/React.createElement("div", { style: { maxWidth: 720, margin: "0 auto" } },
+
+    /* ── Hero de boas-vindas ── */
+    /*#__PURE__*/React.createElement("div", {
+      style: {
+        background: "var(--marca-gradiente)",
+        borderRadius: 20,
+        padding: "36px 32px 32px",
+        marginBottom: 24,
+        position: "relative",
+        overflow: "hidden"
+      }
+    },
+      /*#__PURE__*/React.createElement("div", {
+        style: {
+          position: "absolute", top: -30, right: -30,
+          width: 160, height: 160,
+          borderRadius: "50%",
+          background: "rgba(255,255,255,.06)"
+        }
+      }),
+      /*#__PURE__*/React.createElement("div", {
+        style: {
+          position: "absolute", bottom: -20, right: 60,
+          width: 90, height: 90,
+          borderRadius: "50%",
+          background: "rgba(255,255,255,.05)"
+        }
+      }),
+      /*#__PURE__*/React.createElement("div", { style: { position: "relative" } },
+        /*#__PURE__*/React.createElement("div", {
+          style: { fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,.7)", marginBottom: 6, letterSpacing: ".04em" }
+        }, saudacao + "! 👋"),
+        /*#__PURE__*/React.createElement("h1", {
+          style: { fontSize: 26, fontWeight: 800, color: "#fff", margin: "0 0 10px", lineHeight: 1.2 }
+        }, "Bem-vindo, ", nomeFirst, "!"),
+        /*#__PURE__*/React.createElement("p", {
+          style: { fontSize: 14, color: "rgba(255,255,255,.8)", lineHeight: 1.65, margin: "0 0 24px", maxWidth: 480 }
+        },
+          "Esta é a Central de Ponto do time Porto Vale. Aqui você acompanha suas pendências, sobe correções e mantém seu histórico em dia."
+        ),
+        /*#__PURE__*/React.createElement("div", { style: { display: "flex", gap: 10, flexWrap: "wrap" } },
+          /*#__PURE__*/React.createElement("button", {
+            onClick: () => setView("portal"),
+            style: {
+              padding: "11px 22px",
+              borderRadius: 12,
+              border: "none",
+              background: "#fff",
+              color: "var(--marca-600)",
+              fontSize: 13,
+              fontWeight: 700,
+              cursor: "pointer",
+              boxShadow: "0 2px 8px rgba(0,0,0,.15)"
+            }
+          }, "Ver minhas pendências →"),
+          /*#__PURE__*/React.createElement("button", {
+            onClick: () => setView("duvidas"),
+            style: {
+              padding: "11px 22px",
+              borderRadius: 12,
+              border: "1px solid rgba(255,255,255,.5)",
+              background: "rgba(255,255,255,.12)",
+              color: "#fff",
+              fontSize: 13,
+              fontWeight: 700,
+              cursor: "pointer"
+            }
+          }, "📖 Dúvidas sobre o processo")
+        )
+      )
+    ),
+
+    /* ── Pendências recentes — carrossel ── */
+    /*#__PURE__*/React.createElement("div", {
+      style: {
+        background: "var(--cor-branco)",
+        border: "1px solid var(--cinza-100)",
+        borderRadius: 14,
+        padding: "18px 20px",
+        boxShadow: "0 1px 3px var(--sombra-leve)"
+      }
+    },
+      /*#__PURE__*/React.createElement("div", { style: { fontWeight: 700, fontSize: 14, color: "var(--cinza-900)", marginBottom: 14 } },
+        "Pendências recentes"
+      ),
+      pendenciasRecentes.length === 0
+        ? /*#__PURE__*/React.createElement("div", {
+            style: {
+              display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+              gap: 6, padding: "20px 0", color: "var(--cinza-400)", textAlign: "center"
+            }
+          },
+            /*#__PURE__*/React.createElement("div", { style: { fontSize: 26 } }, "✅"),
+            /*#__PURE__*/React.createElement("div", { style: { fontSize: 13, fontWeight: 600 } }, "Nenhuma pendência no momento"),
+            /*#__PURE__*/React.createElement("div", { style: { fontSize: 12.5 } }, "Tudo certo com o seu ponto por aqui.")
+          )
+        : /*#__PURE__*/React.createElement("div", null,
+            /*#__PURE__*/React.createElement("div", {
+              key: pendenciaAtual?.id,
+              onClick: () => setView("portal"),
+              style: {
+                display: "flex", alignItems: "center", gap: 14, padding: "12px 14px",
+                borderRadius: 12, background: "var(--cinza-50)", cursor: "pointer",
+                animation: "slideIn .3s ease"
+              }
+            },
+              /*#__PURE__*/React.createElement("div", {
+                style: {
+                  width: 38, height: 38, borderRadius: 10, flexShrink: 0,
+                  background: pendenciaAtual.status === "Pendente" ? "var(--vermelho-100)" : "var(--amarelo-100)",
+                  display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16
+                }
+              }, pendenciaAtual.status === "Pendente" ? "⚠️" : "🕐"),
+              /*#__PURE__*/React.createElement("div", { style: { flex: 1, minWidth: 0 } },
+                /*#__PURE__*/React.createElement("div", { style: { fontSize: 13, fontWeight: 700, color: "var(--cinza-900)" } },
+                  pendenciaAtual.tipo || "Ocorrência"),
+                /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: "var(--cinza-500)" } },
+                  new Date(pendenciaAtual.data + "T00:00:00").toLocaleDateString("pt-BR"), " · ", pendenciaAtual.status)
+              )
+            ),
+            pendenciasRecentes.length > 1 && /*#__PURE__*/React.createElement("div", {
+              style: { display: "flex", justifyContent: "center", gap: 6, marginTop: 12 }
+            },
+              pendenciasRecentes.map((p, i) => /*#__PURE__*/React.createElement("button", {
+                key: p.id,
+                onClick: () => setIndiceCarrossel(i),
+                style: {
+                  width: 6, height: 6, borderRadius: "50%", border: "none", padding: 0, cursor: "pointer",
+                  background: i === indiceCarrossel ? "var(--marca-500)" : "var(--cinza-200)"
+                }
+              }))
+            )
+          )
+    )
+  );
+}
+
+function DuvidasProcessos({ setView }) {
+  const [aberto, setAberto] = useState(null);
 
   const secoes = [
     {
@@ -10325,91 +10495,19 @@ function ProcessosPonto({ usuario, setView }) {
 
   return /*#__PURE__*/React.createElement("div", { style: { maxWidth: 720, margin: "0 auto" } },
 
-    /* ── Hero de boas-vindas ── */
-    /*#__PURE__*/React.createElement("div", {
-      style: {
-        background: "var(--marca-gradiente)",
-        borderRadius: 20,
-        padding: "36px 32px 32px",
-        marginBottom: 24,
-        position: "relative",
-        overflow: "hidden"
-      }
-    },
-      /*#__PURE__*/React.createElement("div", {
+    /* ── Cabeçalho com voltar ── */
+    /*#__PURE__*/React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12, marginBottom: 20 } },
+      /*#__PURE__*/React.createElement("button", {
+        onClick: () => setView("mural"),
         style: {
-          position: "absolute", top: -30, right: -30,
-          width: 160, height: 160,
-          borderRadius: "50%",
-          background: "rgba(255,255,255,.06)"
+          width: 36, height: 36, borderRadius: 10, border: "1px solid var(--cinza-200)",
+          background: "var(--cor-branco)", color: "var(--cinza-600)", fontSize: 16,
+          cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0
         }
-      }),
-      /*#__PURE__*/React.createElement("div", {
-        style: {
-          position: "absolute", bottom: -20, right: 60,
-          width: 90, height: 90,
-          borderRadius: "50%",
-          background: "rgba(255,255,255,.05)"
-        }
-      }),
-      /*#__PURE__*/React.createElement("div", { style: { position: "relative" } },
-        /*#__PURE__*/React.createElement("div", {
-          style: { fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,.7)", marginBottom: 6, letterSpacing: ".04em" }
-        }, saudacao + "! 👋"),
-        /*#__PURE__*/React.createElement("h1", {
-          style: { fontSize: 26, fontWeight: 800, color: "#fff", margin: "0 0 10px", lineHeight: 1.2 }
-        }, "Bem-vindo, ", nomeFirst, "!"),
-        /*#__PURE__*/React.createElement("p", {
-          style: { fontSize: 14, color: "rgba(255,255,255,.8)", lineHeight: 1.65, margin: "0 0 24px", maxWidth: 480 }
-        },
-          "Esta é a Central de Ponto do time Porto Vale. Aqui você acompanha suas pendências, sobe correções e mantém seu histórico em dia. Antes de qualquer coisa, vale dar uma olhada nos tópicos abaixo para entender direitinho como o processo funciona."
-        ),
-        /*#__PURE__*/React.createElement("button", {
-          onClick: () => setView("portal"),
-          style: {
-            padding: "11px 22px",
-            borderRadius: 12,
-            border: "none",
-            background: "#fff",
-            color: "var(--marca-600)",
-            fontSize: 13,
-            fontWeight: 700,
-            cursor: "pointer",
-            boxShadow: "0 2px 8px rgba(0,0,0,.15)"
-          }
-        }, "Ver minhas pendências →")
-      )
-    ),
-
-    /* ── Chamada para os tópicos ── */
-    /*#__PURE__*/React.createElement("div", {
-      style: {
-        background: "var(--cor-branco)",
-        border: "1px solid var(--cinza-100)",
-        borderRadius: 14,
-        padding: "18px 20px",
-        marginBottom: 16,
-        display: "flex",
-        alignItems: "center",
-        gap: 14,
-        boxShadow: "0 1px 3px var(--sombra-leve)"
-      }
-    },
-      /*#__PURE__*/React.createElement("div", {
-        style: {
-          width: 40, height: 40, borderRadius: 10, flexShrink: 0,
-          background: "var(--marca-transparente)",
-          display: "flex", alignItems: "center", justifyContent: "center",
-          fontSize: 18
-        }
-      }, "📖"),
+      }, "←"),
       /*#__PURE__*/React.createElement("div", null,
-        /*#__PURE__*/React.createElement("div", { style: { fontWeight: 700, fontSize: 14, color: "var(--cinza-900)", marginBottom: 2 } },
-          "Ficou com alguma dúvida sobre o processo?"
-        ),
-        /*#__PURE__*/React.createElement("div", { style: { fontSize: 13, color: "var(--cinza-500)", lineHeight: 1.5 } },
-          "Expanda os tópicos abaixo — eles cobrem tudo que você precisa saber sobre o ponto eletrônico."
-        )
+        /*#__PURE__*/React.createElement("div", { style: { fontWeight: 800, fontSize: 19, color: "var(--cinza-900)" } }, "Dúvidas sobre o processo"),
+        /*#__PURE__*/React.createElement("div", { style: { fontSize: 13, color: "var(--cinza-500)" } }, "Tudo que você precisa saber sobre o ponto eletrônico")
       )
     ),
 
@@ -10549,6 +10647,7 @@ function ProcessosPonto({ usuario, setView }) {
     )
   );
 }
+
 
 // ── LEGADO: MuralRecados mantido para compatibilidade (não é mais exibido) ──
 function MuralRecados({
@@ -14115,7 +14214,8 @@ function App() {
       if (view === "hierarquia" && previewHierarquia && isAdmin) return /*#__PURE__*/React.createElement(ArvoreHierarquia, {
         pode: pode
       });
-      if (view === "mural") return /*#__PURE__*/React.createElement(ProcessosPonto, { usuario: usuario, setView: setView });
+      if (view === "mural") return /*#__PURE__*/React.createElement(ProcessosPonto, { usuario: usuario, setView: setView, ocorrencias: ocorrenciasExibidas, funcionarios: funcionariosExibidos });
+      if (view === "duvidas") return /*#__PURE__*/React.createElement(DuvidasProcessos, { setView: setView });
       if (view === "portal") return /*#__PURE__*/React.createElement(PortalFuncionario, {
         ocorrencias: ocorrenciasExibidas,
         setOcorrencias: setOcorrencias,
@@ -14129,7 +14229,8 @@ function App() {
         contaTesteAtivaAgora: contaTesteAtivaAgora
       });
     }
-    if (view === "mural") return /*#__PURE__*/React.createElement(ProcessosPonto, { usuario: usuario, setView: setView });
+    if (view === "mural") return /*#__PURE__*/React.createElement(ProcessosPonto, { usuario: usuario, setView: setView, ocorrencias: ocorrenciasExibidas, funcionarios: funcionariosExibidos });
+    if (view === "duvidas") return /*#__PURE__*/React.createElement(DuvidasProcessos, { setView: setView });
     return /*#__PURE__*/React.createElement(PortalFuncionario, {
       ocorrencias: ocorrenciasExibidas,
       setOcorrencias: setOcorrencias,
