@@ -10233,25 +10233,54 @@ function Relatorios({
 }
 
 // ─── MURAL DE RECADOS ─────────────────────────────────────────────────────────
-function ProcessosPonto({ usuario, setView, ocorrencias = [], funcionarios = [] }) {
+function ProcessosPonto({ usuario, setView, ocorrencias = [], funcionarios = [], gerencias = [], diretorias = [] }) {
   const nomeFirst = usuario ? usuario.nome.split(" ")[0].charAt(0).toUpperCase() + usuario.nome.split(" ")[0].slice(1).toLowerCase() : "Colaborador";
 
   const hora = new Date().getHours();
   const saudacao = hora < 12 ? "Bom dia" : hora < 18 ? "Boa tarde" : "Boa noite";
 
-  // Pendências recentes do próprio funcionário logado — mesmo critério do
-  // Portal (Pendente ou Corrigido aguardando verificação), mais recentes
-  // primeiro, limitado a um punhado para o carrossel da tela inicial.
+  // Gestores (gerente/diretor/superintendente/admin_geral) veem as
+  // pendências de toda a equipe sob seu escopo — `funcionarios` já chega
+  // filtrado hierarquicamente por filtrarPorEscopoGestor() lá no App, então
+  // aqui só precisamos decidir se olhamos para "a própria pessoa" (vendedor)
+  // ou "todo mundo da lista recebida" (gestor).
+  const ehGestor = ["gerente", "diretor", "superintendente", "admin_geral"].includes(usuario?.nivel);
+
   const funcLogado = useMemo(
     () => funcionarios.find(f => f.id === usuario?.funcionario_id),
     [funcionarios, usuario]
   );
+
+  // Mapas de apoio para exibir nome de gerência/diretoria ao lado de cada
+  // pendência, no caso do gestor.
+  const gerenciaPorId = useMemo(() => new Map(gerencias.map(g => [g.id, g])), [gerencias]);
+  const diretoriaPorId = useMemo(() => new Map(diretorias.map(d => [d.id, d])), [diretorias]);
+  const funcionarioPorId = useMemo(() => new Map(funcionarios.map(f => [f.id, f])), [funcionarios]);
+
+  function infoEquipe(funcionarioId) {
+    const f = funcionarioPorId.get(funcionarioId);
+    if (!f) return { nome: "—", gerencia: null, diretoria: null };
+    const ger = gerenciaPorId.get(f.gerencia_id);
+    const dirId = f.diretoria_id || ger?.diretoria_id;
+    const dir = diretoriaPorId.get(dirId);
+    return { nome: f.nome, gerencia: ger?.nome || null, diretoria: dir?.nome || null };
+  }
+
+  // Pendências recentes — do próprio funcionário (vendedor) ou de toda a
+  // equipe sob escopo (gestor). Mesmo critério do Portal (Pendente ou
+  // Corrigido aguardando verificação), mais recentes primeiro.
   const pendenciasRecentes = useMemo(() => {
+    if (ehGestor) {
+      const idsEquipe = new Set(funcionarios.map(f => f.id));
+      return ocorrencias
+        .filter(o => idsEquipe.has(o.funcionario_id) && (o.status === "Pendente" || o.status === "Corrigido"))
+        .sort((a, b) => (b.atualizadoEm || b.data || "").localeCompare(a.atualizadoEm || a.data || ""));
+    }
     if (!funcLogado) return [];
     return ocorrencias
       .filter(o => o.funcionario_id === funcLogado.id && (o.status === "Pendente" || o.status === "Corrigido"))
       .sort((a, b) => (b.atualizadoEm || b.data || "").localeCompare(a.atualizadoEm || a.data || ""));
-  }, [ocorrencias, funcLogado]);
+  }, [ocorrencias, funcLogado, ehGestor, funcionarios]);
 
   const [indiceCarrossel, setIndiceCarrossel] = useState(0);
   useEffect(() => {
@@ -10267,7 +10296,17 @@ function ProcessosPonto({ usuario, setView, ocorrencias = [], funcionarios = [] 
     if (indiceCarrossel >= pendenciasRecentes.length) setIndiceCarrossel(0);
   }, [pendenciasRecentes.length, indiceCarrossel]);
 
+  function irParaAnterior() {
+    if (pendenciasRecentes.length < 2) return;
+    setIndiceCarrossel(i => (i - 1 + pendenciasRecentes.length) % pendenciasRecentes.length);
+  }
+  function irParaProxima() {
+    if (pendenciasRecentes.length < 2) return;
+    setIndiceCarrossel(i => (i + 1) % pendenciasRecentes.length);
+  }
+
   const pendenciaAtual = pendenciasRecentes[indiceCarrossel];
+  const infoAtual = ehGestor && pendenciaAtual ? infoEquipe(pendenciaAtual.funcionario_id) : null;
 
   return /*#__PURE__*/React.createElement("div", { style: { maxWidth: 720, margin: "0 auto" } },
 
@@ -10352,8 +10391,16 @@ function ProcessosPonto({ usuario, setView, ocorrencias = [], funcionarios = [] 
         boxShadow: "0 1px 3px var(--sombra-leve)"
       }
     },
-      /*#__PURE__*/React.createElement("div", { style: { fontWeight: 700, fontSize: 14, color: "var(--cinza-900)", marginBottom: 14 } },
-        "Pendências recentes"
+      /*#__PURE__*/React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 } },
+        /*#__PURE__*/React.createElement("div", { style: { fontWeight: 700, fontSize: 14, color: "var(--cinza-900)" } },
+          ehGestor ? "Pendências da equipe" : "Pendências recentes"
+        ),
+        pendenciasRecentes.length > 0 && /*#__PURE__*/React.createElement("div", {
+          style: {
+            fontSize: 11.5, fontWeight: 700, color: "var(--marca-600)", background: "var(--marca-transparente)",
+            padding: "3px 10px", borderRadius: 20
+          }
+        }, `${pendenciasRecentes.length} ${pendenciasRecentes.length === 1 ? "pendência" : "pendências"}`)
       ),
       pendenciasRecentes.length === 0
         ? /*#__PURE__*/React.createElement("div", {
@@ -10363,17 +10410,28 @@ function ProcessosPonto({ usuario, setView, ocorrencias = [], funcionarios = [] 
             }
           },
             /*#__PURE__*/React.createElement("div", { style: { fontSize: 26 } }, "✅"),
-            /*#__PURE__*/React.createElement("div", { style: { fontSize: 13, fontWeight: 600 } }, "Nenhuma pendência no momento"),
-            /*#__PURE__*/React.createElement("div", { style: { fontSize: 12.5 } }, "Tudo certo com o seu ponto por aqui.")
+            /*#__PURE__*/React.createElement("div", { style: { fontSize: 13, fontWeight: 600 } },
+              ehGestor ? "Nenhuma pendência na equipe" : "Nenhuma pendência no momento"),
+            /*#__PURE__*/React.createElement("div", { style: { fontSize: 12.5 } },
+              ehGestor ? "Tudo certo com o ponto do time por aqui." : "Tudo certo com o seu ponto por aqui.")
           )
-        : /*#__PURE__*/React.createElement("div", null,
+        : /*#__PURE__*/React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10 } },
+            pendenciasRecentes.length > 1 && /*#__PURE__*/React.createElement("button", {
+              onClick: irParaAnterior,
+              title: "Anterior",
+              style: {
+                width: 32, height: 32, borderRadius: "50%", border: "1px solid var(--cinza-200)",
+                background: "var(--cor-branco)", color: "var(--cinza-600)", fontSize: 15, cursor: "pointer",
+                display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0
+              }
+            }, "‹"),
             /*#__PURE__*/React.createElement("div", {
               key: pendenciaAtual?.id,
-              onClick: () => setView("portal"),
+              onClick: () => setView(ehGestor ? "relatorios" : "portal"),
               style: {
-                display: "flex", alignItems: "center", gap: 14, padding: "12px 14px",
+                flex: 1, display: "flex", alignItems: "center", gap: 14, padding: "12px 14px",
                 borderRadius: 12, background: "var(--cinza-50)", cursor: "pointer",
-                animation: "slideIn .3s ease"
+                animation: "slideIn .3s ease", minWidth: 0
               }
             },
               /*#__PURE__*/React.createElement("div", {
@@ -10384,24 +10442,26 @@ function ProcessosPonto({ usuario, setView, ocorrencias = [], funcionarios = [] 
                 }
               }, pendenciaAtual.status === "Pendente" ? "⚠️" : "🕐"),
               /*#__PURE__*/React.createElement("div", { style: { flex: 1, minWidth: 0 } },
-                /*#__PURE__*/React.createElement("div", { style: { fontSize: 13, fontWeight: 700, color: "var(--cinza-900)" } },
-                  pendenciaAtual.tipo || "Ocorrência"),
-                /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: "var(--cinza-500)" } },
-                  new Date(pendenciaAtual.data + "T00:00:00").toLocaleDateString("pt-BR"), " · ", pendenciaAtual.status)
+                /*#__PURE__*/React.createElement("div", { style: { fontSize: 13, fontWeight: 700, color: "var(--cinza-900)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } },
+                  ehGestor && infoAtual ? infoAtual.nome : (pendenciaAtual.tipo || "Ocorrência")),
+                /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: "var(--cinza-500)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } },
+                  ehGestor && infoAtual
+                    ? [infoAtual.gerencia, infoAtual.diretoria].filter(Boolean).join(" · ") || "Sem gerência/diretoria"
+                    : (new Date(pendenciaAtual.data + "T00:00:00").toLocaleDateString("pt-BR") + " · " + pendenciaAtual.status)
+                ),
+                ehGestor && /*#__PURE__*/React.createElement("div", { style: { fontSize: 11.5, color: "var(--cinza-400)", marginTop: 1 } },
+                  (pendenciaAtual.tipo || "Ocorrência") + " · " + new Date(pendenciaAtual.data + "T00:00:00").toLocaleDateString("pt-BR") + " · " + pendenciaAtual.status)
               )
             ),
-            pendenciasRecentes.length > 1 && /*#__PURE__*/React.createElement("div", {
-              style: { display: "flex", justifyContent: "center", gap: 6, marginTop: 12 }
-            },
-              pendenciasRecentes.map((p, i) => /*#__PURE__*/React.createElement("button", {
-                key: p.id,
-                onClick: () => setIndiceCarrossel(i),
-                style: {
-                  width: 6, height: 6, borderRadius: "50%", border: "none", padding: 0, cursor: "pointer",
-                  background: i === indiceCarrossel ? "var(--marca-500)" : "var(--cinza-200)"
-                }
-              }))
-            )
+            pendenciasRecentes.length > 1 && /*#__PURE__*/React.createElement("button", {
+              onClick: irParaProxima,
+              title: "Próxima",
+              style: {
+                width: 32, height: 32, borderRadius: "50%", border: "1px solid var(--cinza-200)",
+                background: "var(--cor-branco)", color: "var(--cinza-600)", fontSize: 15, cursor: "pointer",
+                display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0
+              }
+            }, "›")
           )
     )
   );
@@ -14214,7 +14274,7 @@ function App() {
       if (view === "hierarquia" && previewHierarquia && isAdmin) return /*#__PURE__*/React.createElement(ArvoreHierarquia, {
         pode: pode
       });
-      if (view === "mural") return /*#__PURE__*/React.createElement(ProcessosPonto, { usuario: usuario, setView: setView, ocorrencias: ocorrenciasExibidas, funcionarios: funcionariosExibidos });
+      if (view === "mural") return /*#__PURE__*/React.createElement(ProcessosPonto, { usuario: usuario, setView: setView, ocorrencias: ocorrenciasExibidas, funcionarios: funcionariosExibidos, gerencias: dadosComercial.gerencias, diretorias: dadosComercial.diretorias });
       if (view === "duvidas") return /*#__PURE__*/React.createElement(DuvidasProcessos, { setView: setView });
       if (view === "portal") return /*#__PURE__*/React.createElement(PortalFuncionario, {
         ocorrencias: ocorrenciasExibidas,
@@ -14229,7 +14289,7 @@ function App() {
         contaTesteAtivaAgora: contaTesteAtivaAgora
       });
     }
-    if (view === "mural") return /*#__PURE__*/React.createElement(ProcessosPonto, { usuario: usuario, setView: setView, ocorrencias: ocorrenciasExibidas, funcionarios: funcionariosExibidos });
+    if (view === "mural") return /*#__PURE__*/React.createElement(ProcessosPonto, { usuario: usuario, setView: setView, ocorrencias: ocorrenciasExibidas, funcionarios: funcionariosExibidos, gerencias: dadosComercial.gerencias, diretorias: dadosComercial.diretorias });
     if (view === "duvidas") return /*#__PURE__*/React.createElement(DuvidasProcessos, { setView: setView });
     return /*#__PURE__*/React.createElement(PortalFuncionario, {
       ocorrencias: ocorrenciasExibidas,
