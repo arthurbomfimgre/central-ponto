@@ -67,11 +67,11 @@ const supa      = window.supabase.createClient(SUPA_URL, SUPA_KEY);
 const EDGE_CRIAR_USUARIO = `${SUPA_URL}/functions/v1/criar-usuario-funcionario`;
 // Cria em lote os usuários Auth de todos os funcionários comerciais que
 // ainda não têm auth_user_id (ver componente ArvoreHierarquia). Só a conta
-// de teste comercial@portovale.com.br vê o botão que dispara isso.
+// de teste gre@portovale.com.br vê o botão que dispara isso.
 const EDGE_CRIAR_USUARIOS_COMERCIAL_LOTE = `${SUPA_URL}/functions/v1/criar-usuarios-comercial-lote`;
 // Edge Function do painel de acessos (resetar_senha/revogar_acesso/
 // reativar_acesso) — protegida no servidor, só aceita chamadas autenticadas
-// como comercial@portovale.com.br (ver comentário de segurança na própria
+// como gre@portovale.com.br (ver comentário de segurança na própria
 // function). Usada tanto pelas ações manuais do painel quanto pela
 // auto-revogação ao importar planilha (ver aplicarImportacaoHierarquia).
 const EDGE_GERENCIAR_ACESSO = `${SUPA_URL}/functions/v1/admin-gerenciar-acesso`;
@@ -111,7 +111,7 @@ const _cache = {};
 // deslogar/logar de novo. Os dados reais de produção nunca são lidos nem
 // alterados por essa conta.
 const CONTAS_TESTE = {
-  "comercial@portovale.com.br": { nome: "Conta Teste", cargo: "Ambiente de Teste" }
+  "gre@portovale.com.br": { nome: "GRE", cargo: "Gestão de Relacionamento Estratégico" }
 };
 const LS_FLAG_CONTA_TESTE = "cp_conta_teste_ativa";
 function contaTesteAtiva() {
@@ -4933,7 +4933,7 @@ function TelaLogin({
         nivel: "admin_geral",
         funcionario_id: "teste",
         contaTeste: true,
-        // Só esta conta (comercial@portovale.com.br) vê as telas novas da
+        // Só esta conta (gre@portovale.com.br) vê as telas novas da
         // hierarquia comercial enquanto elas ainda estão em construção —
         // nenhum outro admin/funcionário real é afetado até decidirmos
         // liberar de vez.
@@ -7670,7 +7670,7 @@ function filtrarPlanoPorSelecao(plano, diretoriasRejeitadas, gerenciasRejeitadas
 // onProgresso(etapa) é opcional, só para feedback textual no modal.
 // Chama a Edge Function do painel de acessos (admin-gerenciar-acesso) com o
 // token real da sessão logada — a function exige isso no servidor e rejeita
-// qualquer chamada sem um token válido de comercial@portovale.com.br (ver
+// qualquer chamada sem um token válido de gre@portovale.com.br (ver
 // comentário de segurança na própria function). Retorna { ok, ...resto } ou
 // { ok: false, erro }.
 // - acao: "resetar_senha" | "revogar_acesso" | "reativar_acesso"
@@ -11851,7 +11851,7 @@ function PortalFuncionario({
 
 // ─── APP PRINCIPAL ────────────────────────────────────────────────────────────
 // ─── ÁRVORE HIERÁRQUICA COMERCIAL — Superintendente → Diretor → Gerente → Vendedor ──
-// Visível apenas para a conta de teste comercial@portovale.com.br (gate via
+// Visível apenas para a conta de teste gre@portovale.com.br (gate via
 // previewHierarquia no App). Lê diretamente das tabelas normalizadas do
 // Supabase (funcionarios_comercial, gerencias, diretorias, superintendencias)
 // em vez do mecanismo useSharedState/chave-valor usado pelo resto do app,
@@ -13099,7 +13099,7 @@ const RUBRICA_ACAO_LOG = {
 };
 
 // Grava um evento de log diretamente do client, usando a sessão real do
-// admin logado (RLS restringe insert a comercial@portovale.com.br — ver
+// admin logado (RLS restringe insert a gre@portovale.com.br — ver
 // passo1c_policy_insert_client.sql). Usado para eventos que acontecem
 // inteiramente no client durante a importação de planilha (criação de
 // funcionário/estrutura) e no fluxo de criação de logins em lote, que não
@@ -13597,9 +13597,130 @@ function PainelPermissoes() {
     )
   );
 }
-function ArvoreHierarquia({ pode = () => true } = {}) {
+// ── Painel de Pendências (aba "📋 Pendências" do Painel de Acessos) ────────
+// Lista TODAS as ocorrências do sistema (qualquer status, qualquer
+// funcionário), com busca por nome/matrícula e filtros de status/tipo —
+// pensado para o GRE localizar rapidamente uma pendência específica sem
+// precisar navegar pela árvore ou pelos relatórios por mês.
+function PainelPendenciasGeral({ ocorrencias = [], funcionarios = [] }) {
+  const [busca, setBusca] = useState("");
+  const [filtroStatus, setFiltroStatus] = useState("todos");
+  const [filtroTipo, setFiltroTipo] = useState("todos");
+
+  const funcionarioPorId = useMemo(() => new Map(funcionarios.map(f => [f.id, f])), [funcionarios]);
+
+  const tiposPresentes = useMemo(
+    () => [...new Set(ocorrencias.map(o => o.tipo).filter(Boolean))].sort(),
+    [ocorrencias]
+  );
+
+  const listaFiltrada = useMemo(() => {
+    const termo = normalizarBusca(busca.trim());
+    return ocorrencias
+      .filter(o => filtroStatus === "todos" || o.status === filtroStatus)
+      .filter(o => filtroTipo === "todos" || o.tipo === filtroTipo)
+      .filter(o => {
+        if (!termo) return true;
+        const f = funcionarioPorId.get(o.funcionario_id);
+        const alvo = normalizarBusca(`${f?.nome || ""} ${f?.matricula || ""}`);
+        return alvo.includes(termo);
+      })
+      .sort((a, b) => (b.atualizadoEm || b.data || "").localeCompare(a.atualizadoEm || a.data || ""));
+  }, [ocorrencias, filtroStatus, filtroTipo, busca, funcionarioPorId]);
+
+  const corStatus = status => {
+    if (status === "Pendente") return { bg: "var(--vermelho-100)", fg: "var(--vermelho-600)" };
+    if (status === "Corrigido") return { bg: "var(--amarelo-100)", fg: "var(--amarelo-700)" };
+    if (status === "Verificado") return { bg: "var(--verde-100)", fg: "var(--verde-700)" };
+    return { bg: "var(--cinza-100)", fg: "var(--cinza-600)" };
+  };
+
+  return /*#__PURE__*/React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 14 } },
+    /*#__PURE__*/React.createElement("div", { style: { fontSize: 13, color: "var(--cinza-400)", lineHeight: 1.5 } },
+      "Busca todas as pendências já criadas no sistema, de qualquer funcionário e qualquer status."),
+
+    /* ── Filtros ── */
+    /*#__PURE__*/React.createElement("div", {
+      style: { display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }
+    },
+      /*#__PURE__*/React.createElement("input", {
+        value: busca,
+        onChange: e => setBusca(e.target.value),
+        placeholder: "Buscar por nome ou matrícula…",
+        style: {
+          flex: "1 1 240px", padding: "9px 14px", borderRadius: 10, border: "1px solid var(--cinza-200)",
+          fontSize: 13, outline: "none", background: "var(--cor-branco)", color: "var(--cinza-900)"
+        }
+      }),
+      /*#__PURE__*/React.createElement("select", {
+        value: filtroStatus,
+        onChange: e => setFiltroStatus(e.target.value),
+        style: {
+          padding: "9px 12px", borderRadius: 10, border: "1px solid var(--cinza-200)",
+          fontSize: 12.5, fontWeight: 600, background: "var(--cor-branco)", color: "var(--cinza-900)", cursor: "pointer"
+        }
+      },
+        /*#__PURE__*/React.createElement("option", { value: "todos" }, "Todos os status"),
+        ["Pendente", "Corrigido", "Verificado", "Rejeitado"].map(s =>
+          /*#__PURE__*/React.createElement("option", { key: s, value: s }, s))
+      ),
+      /*#__PURE__*/React.createElement("select", {
+        value: filtroTipo,
+        onChange: e => setFiltroTipo(e.target.value),
+        style: {
+          padding: "9px 12px", borderRadius: 10, border: "1px solid var(--cinza-200)",
+          fontSize: 12.5, fontWeight: 600, background: "var(--cor-branco)", color: "var(--cinza-900)", cursor: "pointer"
+        }
+      },
+        /*#__PURE__*/React.createElement("option", { value: "todos" }, "Todos os tipos"),
+        tiposPresentes.map(t => /*#__PURE__*/React.createElement("option", { key: t, value: t }, t))
+      ),
+      /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: "var(--cinza-400)", marginLeft: "auto" } },
+        `${listaFiltrada.length} ${listaFiltrada.length === 1 ? "resultado" : "resultados"}`)
+    ),
+
+    /* ── Lista ── */
+    /*#__PURE__*/React.createElement("div", {
+      style: { background: "var(--cor-branco)", border: "1px solid var(--cinza-200)", borderRadius: 14, overflow: "hidden" }
+    },
+      listaFiltrada.length === 0
+        ? /*#__PURE__*/React.createElement("div", {
+            style: { padding: "32px 20px", textAlign: "center", color: "var(--cinza-400)", fontSize: 13 }
+          }, "Nenhuma pendência encontrada com esses filtros.")
+        : /*#__PURE__*/React.createElement("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: 12.5 } },
+            /*#__PURE__*/React.createElement("thead", null,
+              /*#__PURE__*/React.createElement("tr", { style: { background: "var(--cinza-50)" } },
+                /*#__PURE__*/React.createElement("th", { style: { textAlign: "left", padding: "10px 16px", fontWeight: 700, color: "var(--cinza-700)" } }, "Funcionário"),
+                /*#__PURE__*/React.createElement("th", { style: { textAlign: "left", padding: "10px 16px", fontWeight: 700, color: "var(--cinza-700)" } }, "Tipo"),
+                /*#__PURE__*/React.createElement("th", { style: { textAlign: "left", padding: "10px 16px", fontWeight: 700, color: "var(--cinza-700)" } }, "Data"),
+                /*#__PURE__*/React.createElement("th", { style: { textAlign: "left", padding: "10px 16px", fontWeight: 700, color: "var(--cinza-700)" } }, "Status")
+              )
+            ),
+            /*#__PURE__*/React.createElement("tbody", null,
+              listaFiltrada.map(o => {
+                const f = funcionarioPorId.get(o.funcionario_id);
+                const cor = corStatus(o.status);
+                return /*#__PURE__*/React.createElement("tr", { key: o.id, style: { borderTop: "1px solid var(--cinza-100)" } },
+                  /*#__PURE__*/React.createElement("td", { style: { padding: "10px 16px", color: "var(--cinza-900)", fontWeight: 600 } },
+                    f?.nome || "—", f?.matricula ? /*#__PURE__*/React.createElement("span", { style: { color: "var(--cinza-400)", fontWeight: 500 } }, ` · ${f.matricula}`) : null),
+                  /*#__PURE__*/React.createElement("td", { style: { padding: "10px 16px", color: "var(--cinza-700)" } }, o.tipo || "—"),
+                  /*#__PURE__*/React.createElement("td", { style: { padding: "10px 16px", color: "var(--cinza-700)" } },
+                    o.data ? new Date(o.data + "T00:00:00").toLocaleDateString("pt-BR") : "—"),
+                  /*#__PURE__*/React.createElement("td", { style: { padding: "10px 16px" } },
+                    /*#__PURE__*/React.createElement("span", {
+                      style: { padding: "3px 10px", borderRadius: 20, fontSize: 11, fontWeight: 700, background: cor.bg, color: cor.fg }
+                    }, o.status || "—"))
+                );
+              })
+            )
+          )
+    )
+  );
+}
+
+function ArvoreHierarquia({ pode = () => true, ocorrencias = [], funcionariosUnificados = [] } = {}) {
   const { carregando, erro, superintendencias, diretorias, gerencias, funcionarios, atualizarFuncionarioLocal, refetch } = useArvoreComercialData();
-  const [aba, setAba] = useState("estrutura"); // "estrutura" | "permissoes"
+  const [aba, setAba] = useState("estrutura"); // "estrutura" | "permissoes" | "pendencias"
   const [busca, setBusca] = useState("");
   const [aberto, setAberto] = useState({});
   const toggle = chave => setAberto(prev => ({ ...prev, [chave]: !prev[chave] }));
@@ -13744,11 +13865,12 @@ function ArvoreHierarquia({ pode = () => true } = {}) {
         }, "📥 Importar planilha")
       )
     ),
-    // ── Abas internas do Painel de Acessos: Estrutura (árvore original) e
-    // Permissões (nova tela de configuração por papel). Mantido simples —
-    // dois botões de alternância, sem depender de mais nenhuma lib de rota.
+    // ── Abas internas do Painel de Acessos: Estrutura (árvore original),
+    // Permissões (configuração por papel) e Pendências (busca de todas as
+    // ocorrências criadas no sistema). Mantido simples — botões de
+    // alternância, sem depender de mais nenhuma lib de rota.
     /*#__PURE__*/React.createElement("div", { style: { display: "flex", gap: 8 } },
-      ["estrutura", "permissoes"].map(a => /*#__PURE__*/React.createElement("button", {
+      ["estrutura", "permissoes", "pendencias"].map(a => /*#__PURE__*/React.createElement("button", {
         key: a,
         onClick: () => setAba(a),
         style: {
@@ -13757,9 +13879,13 @@ function ArvoreHierarquia({ pode = () => true } = {}) {
           background: aba === a ? "var(--marca-gradiente)" : "var(--cinza-100)",
           color: aba === a ? "var(--cor-branco)" : "var(--cinza-600)"
         }
-      }, a === "estrutura" ? "🌳 Estrutura" : "🛡️ Permissões"))
+      }, a === "estrutura" ? "🌳 Estrutura" : a === "permissoes" ? "🛡️ Permissões" : "📋 Pendências"))
     ),
     aba === "permissoes" && /*#__PURE__*/React.createElement(PainelPermissoes, null),
+    aba === "pendencias" && /*#__PURE__*/React.createElement(PainelPendenciasGeral, {
+      ocorrencias: ocorrencias,
+      funcionarios: funcionariosUnificados
+    }),
     modalLog && /*#__PURE__*/React.createElement(ModalLogAcessos, {
       onClose: () => setModalLog(false)
     }),
@@ -14089,7 +14215,7 @@ function App() {
     return ocorrenciasFiltradas.filter(o => idsDoEscopo.has(o.funcionario_id));
   }, [ocorrenciasFiltradas, usuario, gerenciasEscopoRelatorio, funcionariosRelatorio]);
   // Gate explícito: enquanto as telas da hierarquia comercial nova estão em
-  // construção, só a conta comercial@portovale.com.br (CONTAS_TESTE) as
+  // construção, só a conta gre@portovale.com.br (CONTAS_TESTE) as
   // enxerga. Nenhum admin/funcionário real vê nada diferente até este flag
   // ser removido de propósito, quando as telas estiverem prontas para todo
   // mundo.
@@ -14272,7 +14398,9 @@ function App() {
         })
       });
       if (view === "hierarquia" && previewHierarquia && isAdmin) return /*#__PURE__*/React.createElement(ArvoreHierarquia, {
-        pode: pode
+        pode: pode,
+        ocorrencias: ocorrencias,
+        funcionariosUnificados: funcionariosExibidos
       });
       if (view === "mural") return /*#__PURE__*/React.createElement(ProcessosPonto, { usuario: usuario, setView: setView, ocorrencias: ocorrenciasExibidas, funcionarios: funcionariosExibidos, gerencias: dadosComercial.gerencias, diretorias: dadosComercial.diretorias });
       if (view === "duvidas") return /*#__PURE__*/React.createElement(DuvidasProcessos, { setView: setView });
