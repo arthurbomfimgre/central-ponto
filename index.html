@@ -13602,10 +13602,48 @@ function PainelPermissoes() {
 // funcionário), com busca por nome/matrícula e filtros de status/tipo —
 // pensado para o GRE localizar rapidamente uma pendência específica sem
 // precisar navegar pela árvore ou pelos relatórios por mês.
-function PainelPendenciasGeral({ ocorrencias = [], funcionarios = [] }) {
+function PainelPendenciasGeral() {
   const [busca, setBusca] = useState("");
   const [filtroStatus, setFiltroStatus] = useState("todos");
   const [filtroTipo, setFiltroTipo] = useState("todos");
+
+  // Busca ocorrências E funcionários direto do Supabase, ignorando o
+  // isolamento de localStorage que useSharedState aplicaria para a conta
+  // gre@ (sandbox) e o filtro de escopo hierárquico usado no resto do app.
+  // Esta aba é a única exceção deliberada: mostra o banco real por inteiro,
+  // combinando as duas fontes de funcionário (a tabela legada `funcionarios`
+  // e a nova `funcionarios_comercial`) — uma pendência pode referenciar
+  // qualquer uma das duas, dependendo de onde/quando foi criada.
+  const [ocorrencias, setOcorrencias] = useState([]);
+  const [funcionarios, setFuncionarios] = useState([]);
+  const [carregando, setCarregando] = useState(true);
+  const [erroCarga, setErroCarga] = useState(null);
+  useEffect(() => {
+    let ativo = true;
+    (async () => {
+      try {
+        const [ocRes, funcRes, funcComRes] = await Promise.all([
+          supa.from("ocorrencias").select("data"),
+          supa.from("funcionarios").select("data"),
+          supa.from("funcionarios_comercial").select("*")
+        ]);
+        if (ocRes.error) throw ocRes.error;
+        if (funcRes.error) throw funcRes.error;
+        if (funcComRes.error) throw funcComRes.error;
+        if (!ativo) return;
+        const legados = (funcRes.data || []).map(r => r.data);
+        const comerciais = (funcComRes.data || []).map(normalizarFuncComercial);
+        setOcorrencias((ocRes.data || []).map(r => r.data));
+        setFuncionarios([...legados, ...comerciais]);
+        setCarregando(false);
+      } catch (e) {
+        if (!ativo) return;
+        setErroCarga(e.message || "Erro ao carregar pendências.");
+        setCarregando(false);
+      }
+    })();
+    return () => { ativo = false; };
+  }, []);
 
   const funcionarioPorId = useMemo(() => new Map(funcionarios.map(f => [f.id, f])), [funcionarios]);
 
@@ -13634,6 +13672,13 @@ function PainelPendenciasGeral({ ocorrencias = [], funcionarios = [] }) {
     if (status === "Verificado") return { bg: "var(--verde-100)", fg: "var(--verde-700)" };
     return { bg: "var(--cinza-100)", fg: "var(--cinza-600)" };
   };
+
+  if (carregando) {
+    return /*#__PURE__*/React.createElement("div", { style: { padding: 24, textAlign: "center", color: "var(--cinza-400)", fontSize: 13 } }, "Carregando pendências…");
+  }
+  if (erroCarga) {
+    return /*#__PURE__*/React.createElement("div", { style: { padding: 24, textAlign: "center", color: "var(--vermelho-600)", fontSize: 13 } }, "Não foi possível carregar as pendências: ", erroCarga);
+  }
 
   return /*#__PURE__*/React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 14 } },
     /*#__PURE__*/React.createElement("div", { style: { fontSize: 13, color: "var(--cinza-400)", lineHeight: 1.5 } },
@@ -13882,10 +13927,7 @@ function ArvoreHierarquia({ pode = () => true, ocorrencias = [], funcionariosUni
       }, a === "estrutura" ? "🌳 Estrutura" : a === "permissoes" ? "🛡️ Permissões" : "📋 Pendências"))
     ),
     aba === "permissoes" && /*#__PURE__*/React.createElement(PainelPermissoes, null),
-    aba === "pendencias" && /*#__PURE__*/React.createElement(PainelPendenciasGeral, {
-      ocorrencias: ocorrencias,
-      funcionarios: funcionariosUnificados
-    }),
+    aba === "pendencias" && /*#__PURE__*/React.createElement(PainelPendenciasGeral, null),
     modalLog && /*#__PURE__*/React.createElement(ModalLogAcessos, {
       onClose: () => setModalLog(false)
     }),
