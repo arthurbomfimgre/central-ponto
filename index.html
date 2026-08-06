@@ -14433,6 +14433,11 @@ function App() {
     icon: "🔐"
   }] : []),
   {
+    id: "duvidas",
+    label: "Ajuda",
+    icon: "📖"
+  },
+  {
     id: "portal",
     label: "Meu Portal",
     icon: "🏠"
@@ -14732,6 +14737,18 @@ function App() {
       borderRadius: 20
     }
   }, "🔔 ", minhasPendentes, " pendência", minhasPendentes > 1 ? "s" : ""), /*#__PURE__*/React.createElement("button", {
+    onClick: () => setView("duvidas"),
+    style: {
+      padding: "6px 14px",
+      borderRadius: 20,
+      border: "none",
+      fontSize: 12,
+      fontWeight: 600,
+      cursor: "pointer",
+      background: view === "duvidas" ? "var(--indigo-500)" : "var(--cinza-100)",
+      color: view === "duvidas" ? "var(--cor-branco)" : "var(--cinza-500)"
+    }
+  }, "📖 Ajuda"), /*#__PURE__*/React.createElement("button", {
     onClick: () => setView("portal"),
     style: {
       padding: "6px 14px",
