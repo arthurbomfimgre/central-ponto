@@ -3969,6 +3969,22 @@ function emailFuncionario(func) {
 // nome_completo/gerencia_id/etc) para o mesmo formato que o resto do app
 // espera de `funcionarios` (tabela antiga, campo nome). Mantém os IDs de
 // hierarquia intactos para o cálculo de escopo (ver resolverNivel/NAV).
+// ── Resolve o funcionário de uma ocorrência em uma lista unificada
+// (legado + comercial) sem cair na colisão de id entre as duas tabelas —
+// `funcionarios` e `funcionarios_comercial` usam sequências independentes
+// que colidem entre si (ex: id 4 é uma pessoa diferente em cada uma).
+// Usa o campo origemFuncionario (gravado em toda pendência criada a partir
+// desta correção) quando presente; senão, cai no `.find()` simples (a
+// mesma ambiguidade que sempre existiu antes desta correção — mantido só
+// como fallback para não quebrar pendências antigas sem o campo).
+function resolverFuncionarioDaOcorrencia(funcionarios, o) {
+  if (o?.origemFuncionario) {
+    const querComercial = o.origemFuncionario === "comercial";
+    const achado = funcionarios.find(f => f.id === o.funcionario_id && !!f.origemComercial === querComercial);
+    if (achado) return achado;
+  }
+  return funcionarios.find(f => f.id === o?.funcionario_id);
+}
 function normalizarFuncComercial(fc) {
   return {
     ...fc,
@@ -4970,7 +4986,11 @@ function TelaLogin({
       diretoria_id: func.diretoria_id ?? null,
       gerencia_id: func.gerencia_id ?? null,
       modalidade: func.modalidade ?? "presencial",
-      funcionario_id: func.id
+      funcionario_id: func.id,
+      // Ver comentário equivalente na restauração de sessão (mais abaixo):
+      // necessário para resolver funcionario_id sem ambiguidade entre as
+      // duas tabelas de funcionário, que colidem em id.
+      origemComercial: !!func.origemComercial
     };
     onLogin(user);
     setLoading(false);
@@ -5799,6 +5819,12 @@ function Dashboard({
     const oc = {
       id: Date.now(),
       funcionario_id,
+      // Distingue de qual tabela (legada `funcionarios` ou nova
+      // `funcionarios_comercial`) este funcionario_id veio — as duas usam
+      // sequências de id independentes e colidem entre si (ex: id 5 é uma
+      // pessoa em cada tabela), então sem este campo é impossível saber com
+      // certeza a quem uma pendência pertence. Ver PainelPendenciasGeral.
+      origemFuncionario: func?.origemComercial ? "comercial" : "legado",
       tipo: TIPO_PENDENTE_ESPECIFICACAO,
       data,
       status: "Pendente",
@@ -6049,7 +6075,7 @@ function Dashboard({
       gap: 8
     }
   }, recentes.map(o => {
-    const func = funcionarios.find(f => f.id === o.funcionario_id);
+    const func = resolverFuncionarioDaOcorrencia(funcionarios, o);
     if (!func) return null;
     return /*#__PURE__*/React.createElement("div", {
       key: o.id,
@@ -8356,6 +8382,10 @@ function PerfilFuncionario({
     const oc = {
       id: Date.now(),
       funcionario_id,
+      // Ver comentário equivalente em Dashboard.criarPendencia: distingue
+      // de qual tabela (legada `funcionarios` ou nova `funcionarios_comercial`)
+      // este funcionario_id veio, já que as duas colidem entre si.
+      origemFuncionario: func?.origemComercial ? "comercial" : "legado",
       tipo: TIPO_PENDENTE_ESPECIFICACAO,
       data,
       status: "Pendente",
@@ -9108,7 +9138,7 @@ function PainelAprovacao({
   })), [funcionarios]);
   const lista = ocorrencias.filter(o => {
     if (filtro !== "Todos" && o.status !== filtro) return false;
-    const func = funcionarios.find(f => f.id === o.funcionario_id);
+    const func = resolverFuncionarioDaOcorrencia(funcionarios, o);
     if (!func) return false;
     if (filtroCargo !== "Todos" && func.cargo !== filtroCargo) return false;
     return true;
@@ -9124,7 +9154,7 @@ function PainelAprovacao({
     const agora = agoraISO();
     const oc = ocorrencias.find(o => o.id === id);
     if (!oc) return;
-    const func = funcionarios.find(f => f.id === oc.funcionario_id);
+    const func = resolverFuncionarioDaOcorrencia(funcionarios, oc);
     setOcorrencias(prev => prev.map(o => o.id === id ? {
       ...o,
       status: "Verificado",
@@ -9148,7 +9178,7 @@ function PainelAprovacao({
     const agora = agoraISO();
     const oc = ocorrencias.find(o => o.id === id);
     if (!oc) return;
-    const func = funcionarios.find(f => f.id === oc.funcionario_id);
+    const func = resolverFuncionarioDaOcorrencia(funcionarios, oc);
     setOcorrencias(prev => prev.map(o => o.id === id ? {
       ...o,
       status: "Rejeitado",
@@ -9173,7 +9203,7 @@ function PainelAprovacao({
     setObs("");
   }
   const ocorrenciasFiltroSC = ocorrencias.filter(o => {
-    const func = funcionarios.find(f => f.id === o.funcionario_id);
+    const func = resolverFuncionarioDaOcorrencia(funcionarios, o);
     if (!func) return false;
     if (filtroCargo !== "Todos" && func.cargo !== filtroCargo) return false;
     return true;
@@ -9314,7 +9344,7 @@ function PainelAprovacao({
       border: "1px solid var(--cinza-100)"
     }
   }, "Nenhuma ocorrência neste filtro."), lista.map(o => {
-    const func = funcionarios.find(f => f.id === o.funcionario_id);
+    const func = resolverFuncionarioDaOcorrencia(funcionarios, o);
     if (!func) return null;
     const al = getAlert(contarOcorrencias(ocorrencias, func.id).esquecimentos);
     const podeVerif = o.status === "Corrigido" || (o.status === "Pendente" && o.criadoPor === "funcionario");
@@ -9576,7 +9606,7 @@ function PainelAprovacao({
       fontWeight: 700,
       color: "var(--cinza-900)"
     }
-  }, funcionarios.find(f => f.id === modal.funcionario_id)?.nome), /*#__PURE__*/React.createElement("div", {
+  }, resolverFuncionarioDaOcorrencia(funcionarios, modal)?.nome), /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 13,
       color: "var(--cinza-500)"
@@ -9683,7 +9713,7 @@ function Relatorios({
 
   // ocorrencias já chega filtrada pelo mês selecionado globalmente (via App)
   const ocs = ocorrencias.filter(o => {
-    const func = funcionarios.find(f => f.id === o.funcionario_id);
+    const func = resolverFuncionarioDaOcorrencia(funcionarios, o);
     const matchCargo = cargoFiltro === "Todos" || func && func.cargo === cargoFiltro;
     return matchCargo;
   });
@@ -9710,7 +9740,7 @@ function Relatorios({
   const topMenos = [...funcStatsBase].filter(f => f.totalOcs === 0).sort((a, b) => a.nome.localeCompare(b.nome));
   function exportarXLSX() {
     const rows = ocs.map(o => {
-      const func = funcionarios.find(f => f.id === o.funcionario_id);
+      const func = resolverFuncionarioDaOcorrencia(funcionarios, o);
       return {
         "Data": fmtDate(o.data),
         "Funcionário": func?.nome || "—",
@@ -10158,7 +10188,7 @@ function Relatorios({
       whiteSpace: "nowrap"
     }
   }, h)))), /*#__PURE__*/React.createElement("tbody", null, ocs.sort((a, b) => b.data.localeCompare(a.data)).map((o, i) => {
-    const func = funcionarios.find(f => f.id === o.funcionario_id);
+    const func = resolverFuncionarioDaOcorrencia(funcionarios, o);
     return /*#__PURE__*/React.createElement("tr", {
       key: o.id,
       style: {
@@ -10246,8 +10276,10 @@ function ProcessosPonto({ usuario, setView, ocorrencias = [], funcionarios = [],
   // ou "todo mundo da lista recebida" (gestor).
   const ehGestor = ["gerente", "diretor", "superintendente", "admin_geral"].includes(usuario?.nivel);
 
+  // Comparar id sozinho não basta: funcionarios (legada) e
+  // funcionarios_comercial colidem em id. origemComercial desambigua.
   const funcLogado = useMemo(
-    () => funcionarios.find(f => f.id === usuario?.funcionario_id),
+    () => funcionarios.find(f => f.id === usuario?.funcionario_id && !!f.origemComercial === !!usuario?.origemComercial),
     [funcionarios, usuario]
   );
 
@@ -11164,7 +11196,11 @@ function PortalFuncionario({
   sessaoPronta = true,
   contaTesteAtivaAgora = false
 }) {
-  const funcLogado = funcionarios.find(f => f.id === usuarioLogado.funcionario_id) || funcionarios[0];
+  // Comparar id sozinho não basta: funcionarios (legada) e
+  // funcionarios_comercial usam sequências de id independentes que colidem
+  // entre si (ex: id 4 é uma pessoa completamente diferente em cada
+  // tabela). origemComercial em usuarioLogado desambigua qual é a certa.
+  const funcLogado = funcionarios.find(f => f.id === usuarioLogado.funcionario_id && !!f.origemComercial === !!usuarioLogado.origemComercial) || funcionarios[0];
   // Conta de teste (ou qualquer cenário sem nenhum funcionário cadastrado):
   // não há dono do portal para exibir. Em vez de deixar o restante do
   // componente quebrar tentando ler `funcLogado.id`/`.nome` de undefined
@@ -11336,6 +11372,8 @@ function PortalFuncionario({
     const oc = {
       id: Date.now(),
       funcionario_id: funcLogado.id,
+      // Ver comentário equivalente em Dashboard.criarPendencia.
+      origemFuncionario: funcLogado?.origemComercial ? "comercial" : "legado",
       tipo,
       data,
       status: "Pendente",
@@ -13645,7 +13683,36 @@ function PainelPendenciasGeral() {
     return () => { ativo = false; };
   }, []);
 
-  const funcionarioPorId = useMemo(() => new Map(funcionarios.map(f => [f.id, f])), [funcionarios]);
+  // Dois mapas SEPARADOS por origem — nunca um Map único indexado só por
+  // `id`, porque `funcionarios` e `funcionarios_comercial` usam sequências
+  // de id independentes e colidem maciçamente entre si (ex: id 5 é uma
+  // pessoa completamente diferente em cada tabela). Resolver uma ocorrência
+  // exige saber a origem explicitamente, não só o número do id.
+  const legadoPorId = useMemo(
+    () => new Map(funcionarios.filter(f => !f.origemComercial).map(f => [f.id, f])),
+    [funcionarios]
+  );
+  const comercialPorId = useMemo(
+    () => new Map(funcionarios.filter(f => f.origemComercial).map(f => [f.id, f])),
+    [funcionarios]
+  );
+  // Resolve o funcionário de uma ocorrência: usa o campo origemFuncionario
+  // quando presente (gravado em toda pendência criada a partir desta
+  // correção). Pendências mais antigas, criadas antes desse campo existir,
+  // não têm como saber a origem com certeza — usamos como paliativo a
+  // regra combinada com o Arthur: tudo até o mês 06/2026 é sempre da tabela
+  // legada `funcionarios` (é o que existia até então); só a partir de
+  // 07/2026 pode haver ocorrência de funcionarios_comercial. Isso é uma
+  // aproximação, não uma garantia — se um dia surgir mistura real dentro do
+  // mesmo mês em dados antigos sem o campo, este critério para de bastar.
+  function resolverFuncionario(o) {
+    const origem = o.origemFuncionario || (o.data && o.data.slice(0, 7) <= "2026-06" ? "legado" : null);
+    if (origem === "comercial") return comercialPorId.get(o.funcionario_id);
+    if (origem === "legado") return legadoPorId.get(o.funcionario_id);
+    // Sem informação suficiente para decidir: tenta legado primeiro (é a
+    // origem historicamente mais comum), sinalizando a incerteza no nome.
+    return legadoPorId.get(o.funcionario_id) || comercialPorId.get(o.funcionario_id);
+  }
 
   const tiposPresentes = useMemo(
     () => [...new Set(ocorrencias.map(o => o.tipo).filter(Boolean))].sort(),
@@ -13659,12 +13726,12 @@ function PainelPendenciasGeral() {
       .filter(o => filtroTipo === "todos" || o.tipo === filtroTipo)
       .filter(o => {
         if (!termo) return true;
-        const f = funcionarioPorId.get(o.funcionario_id);
+        const f = resolverFuncionario(o);
         const alvo = normalizarBusca(`${f?.nome || ""} ${f?.matricula || ""}`);
         return alvo.includes(termo);
       })
       .sort((a, b) => (b.atualizadoEm || b.data || "").localeCompare(a.atualizadoEm || a.data || ""));
-  }, [ocorrencias, filtroStatus, filtroTipo, busca, funcionarioPorId]);
+  }, [ocorrencias, filtroStatus, filtroTipo, busca, legadoPorId, comercialPorId]);
 
   const corStatus = status => {
     if (status === "Pendente") return { bg: "var(--vermelho-100)", fg: "var(--vermelho-600)" };
@@ -13743,11 +13810,16 @@ function PainelPendenciasGeral() {
             ),
             /*#__PURE__*/React.createElement("tbody", null,
               listaFiltrada.map(o => {
-                const f = funcionarioPorId.get(o.funcionario_id);
+                const f = resolverFuncionario(o);
+                const origemIncerta = !o.origemFuncionario && !(o.data && o.data.slice(0, 7) <= "2026-06");
                 const cor = corStatus(o.status);
                 return /*#__PURE__*/React.createElement("tr", { key: o.id, style: { borderTop: "1px solid var(--cinza-100)" } },
                   /*#__PURE__*/React.createElement("td", { style: { padding: "10px 16px", color: "var(--cinza-900)", fontWeight: 600 } },
-                    f?.nome || "—", f?.matricula ? /*#__PURE__*/React.createElement("span", { style: { color: "var(--cinza-400)", fontWeight: 500 } }, ` · ${f.matricula}`) : null),
+                    f?.nome || "—", f?.matricula ? /*#__PURE__*/React.createElement("span", { style: { color: "var(--cinza-400)", fontWeight: 500 } }, ` · ${f.matricula}`) : null,
+                    origemIncerta && /*#__PURE__*/React.createElement("span", {
+                      title: "Pendência antiga sem origem registrada — o funcionário pode estar incorreto devido a IDs coincidentes entre as tabelas.",
+                      style: { marginLeft: 6, fontSize: 11, color: "var(--amarelo-700)", cursor: "help" }
+                    }, "⚠️")),
                   /*#__PURE__*/React.createElement("td", { style: { padding: "10px 16px", color: "var(--cinza-700)" } }, o.tipo || "—"),
                   /*#__PURE__*/React.createElement("td", { style: { padding: "10px 16px", color: "var(--cinza-700)" } },
                     o.data ? new Date(o.data + "T00:00:00").toLocaleDateString("pt-BR") : "—"),
@@ -14210,7 +14282,12 @@ function App() {
             diretoria_id: func.diretoria_id ?? null,
             gerencia_id: func.gerencia_id ?? null,
             modalidade: func.modalidade ?? "presencial",
-            funcionario_id: func.id
+            funcionario_id: func.id,
+            // Necessário para resolver `funcionario_id` sem ambiguidade:
+            // `funcionarios` (legada) e `funcionarios_comercial` usam
+            // sequências de id independentes que colidem entre si (ex: id 4
+            // é uma pessoa diferente em cada tabela). Ver funcionariosExibidos.
+            origemComercial: !!func.origemComercial
           });
         }
       }
@@ -14291,7 +14368,9 @@ function App() {
   }, [notifsExibidas]);
   const pendentesNovos = ocorrenciasExibidas.filter(o => o.status === "Corrigido" && o.novo).length;
   const minhasPendentes = ocorrenciasExibidas.filter(o => {
-    const f = funcionariosExibidos.find(f => f.id === usuario?.funcionario_id);
+    // Comparar id sozinho não basta: funcionarios (legada) e
+    // funcionarios_comercial colidem em id. origemComercial desambigua.
+    const f = funcionariosExibidos.find(f => f.id === usuario?.funcionario_id && !!f.origemComercial === !!usuario?.origemComercial);
     return f && o.funcionario_id === f.id && o.status === "Pendente";
   }).length;
   if (verificandoSessao) return /*#__PURE__*/React.createElement("div", {
