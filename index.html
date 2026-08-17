@@ -5377,8 +5377,15 @@ function ModalCriarPendencia({
       setErr("Informe a data da ocorrência.");
       return;
     }
+    // Resolve a origem AQUI, a partir do objeto já correto que populou o
+    // <select> (funcAtivos), e manda junto no payload. Não dá pra deixar
+    // para criarPendencia descobrir isso depois só pelo id: funcionarios e
+    // funcionarios_comercial colidem em id, então um .find() por id lá
+    // poderia pegar a pessoa errada.
+    const funcSelecionado = funcPreSelecionado || funcAtivos.find(f => f.id === Number(funcId));
     onCriar({
       funcionario_id: Number(funcId),
+      origemFuncionario: funcSelecionado?.origemComercial ? "comercial" : "legado",
       data,
       obs
     });
@@ -5811,10 +5818,15 @@ function Dashboard({
   const recentes = [...ocorrenciasMes].filter(o => o.status === "Pendente" || o.status === "Corrigido").sort((a, b) => (b.atualizadoEm || b.data || "").localeCompare(a.atualizadoEm || a.data || "")).slice(0, 6);
   function criarPendencia({
     funcionario_id,
+    origemFuncionario,
     data,
     obs
   }) {
     const agora = agoraISO();
+    // Preferimos a origem já resolvida pelo ModalCriarPendencia (a partir do
+    // objeto de funcionário certo, sem ambiguidade). Só cai no .find() por
+    // id como fallback para chamadas antigas que ainda não mandam o campo —
+    // esse fallback pode colidir entre funcionarios/funcionarios_comercial.
     const func = funcionarios.find(f => f.id === funcionario_id);
     const oc = {
       id: Date.now(),
@@ -5824,7 +5836,7 @@ function Dashboard({
       // sequências de id independentes e colidem entre si (ex: id 5 é uma
       // pessoa em cada tabela), então sem este campo é impossível saber com
       // certeza a quem uma pendência pertence. Ver PainelPendenciasGeral.
-      origemFuncionario: func?.origemComercial ? "comercial" : "legado",
+      origemFuncionario: origemFuncionario || (func?.origemComercial ? "comercial" : "legado"),
       tipo: TIPO_PENDENTE_ESPECIFICACAO,
       data,
       status: "Pendente",
@@ -8375,17 +8387,24 @@ function PerfilFuncionario({
   }
   function criarPendencia({
     funcionario_id,
+    origemFuncionario,
     data,
     obs
   }) {
     const agora = agoraISO();
+    // Preferimos a origem já resolvida pelo ModalCriarPendencia. Antes desta
+    // correção, este bloco usava uma variável `func` que não existia neste
+    // escopo — origemFuncionario sempre saía "legado" por padrão
+    // (undefined?.origemComercial é falsy), gravando origem errada mesmo
+    // quando o funcionário escolhido era do comercial.
+    const func = funcionarios.find(f => f.id === funcionario_id);
     const oc = {
       id: Date.now(),
       funcionario_id,
       // Ver comentário equivalente em Dashboard.criarPendencia: distingue
       // de qual tabela (legada `funcionarios` ou nova `funcionarios_comercial`)
       // este funcionario_id veio, já que as duas colidem entre si.
-      origemFuncionario: func?.origemComercial ? "comercial" : "legado",
+      origemFuncionario: origemFuncionario || (func?.origemComercial ? "comercial" : "legado"),
       tipo: TIPO_PENDENTE_ESPECIFICACAO,
       data,
       status: "Pendente",
