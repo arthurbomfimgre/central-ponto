@@ -4031,7 +4031,8 @@ const PERMISSOES_CATALOGO = [
   { chave: "editar_perfil", label: "Editar perfil", grupo: "Ações" },
   { chave: "importar_planilha", label: "Importar planilha", grupo: "Ações" },
   { chave: "ver_log_acessos", label: "Ver log de auditoria", grupo: "Ações" },
-  { chave: "gerenciar_acesso", label: "Revogar / reativar acesso, resetar senha", grupo: "Ações" }
+  { chave: "gerenciar_acesso", label: "Revogar / reativar acesso, resetar senha", grupo: "Ações" },
+  { chave: "editar_pendencias", label: "Editar / excluir qualquer pendência (Painel de Acessos)", grupo: "Ações" }
 ];
 const PERMISSOES_PADRAO = {
   ver_dashboard: true,
@@ -4042,8 +4043,16 @@ const PERMISSOES_PADRAO = {
   editar_perfil: false,
   importar_planilha: false,
   ver_log_acessos: false,
-  gerenciar_acesso: false
+  gerenciar_acesso: false,
+  editar_pendencias: false
 };
+// E-mails com acesso fixo a editar_pendencias, independente do que estiver
+// configurado em permissoes_papel/permissoes_excecao — hoje só o GRE. Isto
+// é só um piso mínimo, não um teto: dar `true` para um papel ou uma exceção
+// individual na tela de Permissões também libera o acesso normalmente (ver
+// pode() abaixo). Consulte este array só quando quiser ADICIONAR uma conta
+// fixa; para liberar caso a caso, prefira a tela de Permissões.
+const EMAILS_EDITAR_PENDENCIAS_FIXO = ["gre@portovale.com.br"];
 // Carrega `permissoes_papel` do Supabase e devolve `pode(chave)` já
 // resolvido para o nível do usuário logado. admin_geral sempre true, sem
 // consultar tabela nenhuma. Enquanto carrega (ou se a tabela não tiver a
@@ -4097,6 +4106,10 @@ function usePermissoes(usuario, sessaoPronta = true) {
   // permissoes_excecao consegue tirar acesso do admin_geral.
   function pode(chave) {
     if (usuario?.nivel === "admin_geral" || usuario?.role === "admin") return true;
+    // editar_pendencias tem um piso mínimo fixo por e-mail (hoje só o GRE),
+    // além de poder ser liberado normalmente via papel/exceção abaixo — ver
+    // EMAILS_EDITAR_PENDENCIAS_FIXO.
+    if (chave === "editar_pendencias" && EMAILS_EDITAR_PENDENCIAS_FIXO.includes(usuario?.email)) return true;
     const funcId = usuario?.funcionario_id;
     const doIndividuo = funcId != null ? excecoes[funcId]?.[chave] : undefined;
     if (doIndividuo !== undefined) return doIndividuo;
@@ -4948,6 +4961,7 @@ function TelaLogin({
         role: "admin",
         nivel: "admin_geral",
         funcionario_id: "teste",
+        email,
         contaTeste: true,
         // Só esta conta (gre@portovale.com.br) vê as telas novas da
         // hierarquia comercial enquanto elas ainda estão em construção —
@@ -4987,6 +5001,7 @@ function TelaLogin({
       gerencia_id: func.gerencia_id ?? null,
       modalidade: func.modalidade ?? "presencial",
       funcionario_id: func.id,
+      email,
       // Ver comentário equivalente na restauração de sessão (mais abaixo):
       // necessário para resolver funcionario_id sem ambiguidade entre as
       // duas tabelas de funcionário, que colidem em id.
@@ -13813,7 +13828,7 @@ function ModalEditarPendencia({
   );
 }
 
-function PainelPendenciasGeral() {
+function PainelPendenciasGeral({ podeEditar = false } = {}) {
   const [busca, setBusca] = useState("");
   const [filtroStatus, setFiltroStatus] = useState("todos");
   const [filtroTipo, setFiltroTipo] = useState("todos");
@@ -13947,7 +13962,8 @@ function PainelPendenciasGeral() {
   return /*#__PURE__*/React.createElement(React.Fragment, null,
   /*#__PURE__*/React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 14 } },
     /*#__PURE__*/React.createElement("div", { style: { fontSize: 13, color: "var(--cinza-400)", lineHeight: 1.5 } },
-      "Busca todas as pendências já criadas no sistema, de qualquer funcionário e qualquer status."),
+      "Busca todas as pendências já criadas no sistema, de qualquer funcionário e qualquer status.",
+      !podeEditar && " Você tem acesso somente leitura a esta lista — edição e exclusão são restritas."),
 
     /* ── Filtros ── */
     /*#__PURE__*/React.createElement("div", {
@@ -14013,10 +14029,10 @@ function PainelPendenciasGeral() {
                 const cor = corStatus(o.status);
                 return /*#__PURE__*/React.createElement("tr", {
                   key: o.id,
-                  onClick: () => setOcorrenciaEditando(o),
-                  style: { borderTop: "1px solid var(--cinza-100)", cursor: "pointer" },
-                  onMouseEnter: e => e.currentTarget.style.background = "var(--cinza-50)",
-                  onMouseLeave: e => e.currentTarget.style.background = "transparent"
+                  onClick: podeEditar ? () => setOcorrenciaEditando(o) : undefined,
+                  style: { borderTop: "1px solid var(--cinza-100)", cursor: podeEditar ? "pointer" : "default" },
+                  onMouseEnter: podeEditar ? e => e.currentTarget.style.background = "var(--cinza-50)" : undefined,
+                  onMouseLeave: podeEditar ? e => e.currentTarget.style.background = "transparent" : undefined
                 },
                   /*#__PURE__*/React.createElement("td", { style: { padding: "10px 16px", color: "var(--cinza-900)", fontWeight: 600 } },
                     f?.nome || "—", f?.matricula ? /*#__PURE__*/React.createElement("span", { style: { color: "var(--cinza-400)", fontWeight: 500 } }, ` · ${f.matricula}`) : null,
@@ -14040,7 +14056,7 @@ function PainelPendenciasGeral() {
     erroSalvar && /*#__PURE__*/React.createElement("div", {
       style: { position: "fixed", bottom: 20, left: "50%", transform: "translateX(-50%)", background: "var(--vermelho-600)", color: "#fff", padding: "10px 18px", borderRadius: 10, fontSize: 13, zIndex: 1100 }
     }, erroSalvar),
-    ocorrenciaEditando && /*#__PURE__*/React.createElement(ModalEditarPendencia, {
+    podeEditar && ocorrenciaEditando && /*#__PURE__*/React.createElement(ModalEditarPendencia, {
       ocorrencia: ocorrenciaEditando,
       funcionario: resolverFuncionario(ocorrenciaEditando),
       onClose: () => setOcorrenciaEditando(null),
@@ -14230,7 +14246,7 @@ function ArvoreHierarquia({ pode = () => true, ocorrencias = [], funcionariosUni
       }, a === "estrutura" ? "🌳 Estrutura" : a === "permissoes" ? "🛡️ Permissões" : "📋 Pendências"))
     ),
     aba === "permissoes" && /*#__PURE__*/React.createElement(PainelPermissoes, null),
-    aba === "pendencias" && /*#__PURE__*/React.createElement(PainelPendenciasGeral, null),
+    aba === "pendencias" && /*#__PURE__*/React.createElement(PainelPendenciasGeral, { podeEditar: pode("editar_pendencias") }),
     modalLog && /*#__PURE__*/React.createElement(ModalLogAcessos, {
       onClose: () => setModalLog(false)
     }),
@@ -14490,6 +14506,7 @@ function App() {
           role: "admin",
           nivel: "admin_geral",
           funcionario_id: "teste",
+          email,
           contaTeste: true,
           previewHierarquia: true
         });
@@ -14514,6 +14531,7 @@ function App() {
             gerencia_id: func.gerencia_id ?? null,
             modalidade: func.modalidade ?? "presencial",
             funcionario_id: func.id,
+            email,
             // Necessário para resolver `funcionario_id` sem ambiguidade:
             // `funcionarios` (legada) e `funcionarios_comercial` usam
             // sequências de id independentes que colidem entre si (ex: id 4
