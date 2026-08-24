@@ -13897,11 +13897,45 @@ function App() {
   // admins/funcionários normais, e o estado isolado em localStorage (que
   // começa vazio e cresce conforme a conta de teste importa/cadastra) para
   // o perfil de teste. Não é necessário forçar nada aqui.
+  // Dedup por matrícula: a mesma pessoa pode existir tanto na tabela legada
+  // (`funcionarios`) quanto na nova (`funcionarios_comercial`) — resíduo de
+  // importações antigas que não foram limpas (mesmo problema de fundo do
+  // diagnóstico do comer24.xlsx: divergências na planilha/base, não bug de
+  // leitura). Sem dedup, a pessoa aparece 2-3x na lista, cada cópia com seu
+  // próprio id e sua própria contagem de esquecimentos — o que também
+  // inflava/duplicava o total mostrado no Monitor de Esquecimentos.
+  // Critério: agrupa por matrícula (normalizada — trim + string, pois uma
+  // tabela pode gravar número e outra texto); quando há conflito, mantém o
+  // registro comercial (tabela nova, é para onde a hierarquia está
+  // migrando) e descarta a(s) cópia(s) legada(s). Pendências que
+  // referenciavam o id descartado somem naturalmente da UI (resolverFuncionarioDaOcorrencia
+  // e os .find() por id não acham mais aquele id na lista) — não precisam
+  // ser migradas.
+  function dedupPorMatricula(lista) {
+    const porMatricula = new Map();
+    for (const f of lista) {
+      const chave = f.matricula != null && String(f.matricula).trim() !== ""
+        ? `mat:${String(f.matricula).trim()}`
+        : `id:${f.origemComercial ? "com" : "leg"}:${f.id}`; // sem matrícula: não agrupa, mantém como está
+      const existente = porMatricula.get(chave);
+      if (!existente) {
+        porMatricula.set(chave, f);
+        continue;
+      }
+      // Conflito de matrícula: mantém o comercial se um dos dois for comercial.
+      if (f.origemComercial && !existente.origemComercial) {
+        porMatricula.set(chave, f);
+      }
+      // Se nenhum dos dois é comercial (duplicata dentro da própria tabela
+      // legada) ou o existente já é comercial, mantém o que já está.
+    }
+    return Array.from(porMatricula.values());
+  }
   const funcionariosExibidos = useMemo(() => {
     // Conta de teste continua isolada em seu próprio localStorage — nunca
     // mistura com dados reais da hierarquia comercial.
     if (contaTesteAtivaAgora) return funcionarios;
-    const unificados = [...funcionarios, ...dadosComercial.funcionarios.filter(f => (f.situacao || "ATIVO").toUpperCase() === "ATIVO").map(normalizarFuncComercial)];
+    const unificados = dedupPorMatricula([...funcionarios, ...dadosComercial.funcionarios.filter(f => (f.situacao || "ATIVO").toUpperCase() === "ATIVO").map(normalizarFuncComercial)]);
     return filtrarPorEscopoGestor(unificados, usuario, dadosComercial);
   }, [funcionarios, dadosComercial, usuario, contaTesteAtivaAgora]);
   // Variante COM inativos, usada só pela tela de gestão de Funcionários
@@ -13911,7 +13945,7 @@ function App() {
   // ativos) — não faz sentido inflar essas com gente inativa.
   const funcionariosComInativos = useMemo(() => {
     if (contaTesteAtivaAgora) return funcionarios;
-    const unificados = [...funcionarios, ...dadosComercial.funcionarios.map(normalizarFuncComercial)];
+    const unificados = dedupPorMatricula([...funcionarios, ...dadosComercial.funcionarios.map(normalizarFuncComercial)]);
     return filtrarPorEscopoGestor(unificados, usuario, dadosComercial);
   }, [funcionarios, dadosComercial, usuario, contaTesteAtivaAgora]);
   const ocorrenciasExibidas = ocorrencias;
