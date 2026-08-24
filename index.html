@@ -13931,6 +13931,10 @@ function App() {
     setGerenciasEscopoRelatorio(new Set());
   }, [usuario?.id]);
   const gerenciasDaSuperEscopo = useMemo(() => {
+    // admin_geral (ex: gre@ em previewHierarquia) não tem superintendencia_id
+    // — vê tudo por padrão, então o seletor deve oferecer TODAS as gerências
+    // de TODAS as diretorias/superintendências, não só uma.
+    if (usuario?.nivel === "admin_geral") return dadosComercial.gerencias;
     if (usuario?.nivel !== "superintendente") return [];
     const diretoriasDaSuper = new Set(
       dadosComercial.diretorias.filter(d => d.superintendencia_id === usuario.superintendencia_id).map(d => d.id)
@@ -13941,7 +13945,8 @@ function App() {
   // Dashboard/Relatórios) por cima do escopo hierárquico já presente em
   // `funcionariosExibidos`. Conjunto vazio = sem recorte (vê tudo).
   function aplicarEscopoRelatorio(lista) {
-    if (usuario?.nivel !== "superintendente" || gerenciasEscopoRelatorio.size === 0) return lista;
+    const nivelComEscopo = usuario?.nivel === "superintendente" || usuario?.nivel === "admin_geral";
+    if (!nivelComEscopo || gerenciasEscopoRelatorio.size === 0) return lista;
     return lista.filter(f => gerenciasEscopoRelatorio.has(f.gerencia_id));
   }
   const funcionariosRelatorio = useMemo(
@@ -14167,7 +14172,7 @@ function App() {
         addNotif: addNotif,
         mesFiltro: mesFiltro,
         setMesFiltro: setMesFiltro,
-        seletorEscopo: usuario?.nivel === "superintendente" && /*#__PURE__*/React.createElement(SeletorEscopoRelatorio, {
+        seletorEscopo: (usuario?.nivel === "superintendente" || usuario?.nivel === "admin_geral") && /*#__PURE__*/React.createElement(SeletorEscopoRelatorio, {
           gerencias: gerenciasDaSuperEscopo,
           diretorias: dadosComercial.diretorias,
           selecionadas: gerenciasEscopoRelatorio,
@@ -14223,7 +14228,7 @@ function App() {
         setMesFiltro: setMesFiltro,
         sessaoPronta: sessaoPronta,
         contaTesteAtivaAgora: contaTesteAtivaAgora,
-        seletorEscopo: usuario?.nivel === "superintendente" && /*#__PURE__*/React.createElement(SeletorEscopoRelatorio, {
+        seletorEscopo: (usuario?.nivel === "superintendente" || usuario?.nivel === "admin_geral") && /*#__PURE__*/React.createElement(SeletorEscopoRelatorio, {
           gerencias: gerenciasDaSuperEscopo,
           diretorias: dadosComercial.diretorias,
           selecionadas: gerenciasEscopoRelatorio,
