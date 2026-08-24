@@ -4025,7 +4025,6 @@ const NIVEIS_CONFIGURAVEIS = ["vendedor", "gerente", "diretor", "superintendente
 const PERMISSOES_CATALOGO = [
   { chave: "ver_dashboard", label: "Ver Dashboard", grupo: "Abas" },
   { chave: "ver_funcionarios", label: "Ver Funcionários", grupo: "Abas" },
-  { chave: "ver_aprovacao", label: "Ver Verificações", grupo: "Abas" },
   { chave: "ver_relatorios", label: "Ver Relatórios", grupo: "Abas" },
   { chave: "pendencias", label: "Criar / excluir pendência", grupo: "Ações" },
   { chave: "editar_perfil", label: "Editar perfil", grupo: "Ações" },
@@ -4037,7 +4036,6 @@ const PERMISSOES_CATALOGO = [
 const PERMISSOES_PADRAO = {
   ver_dashboard: true,
   ver_funcionarios: true,
-  ver_aprovacao: true,
   ver_relatorios: true,
   pendencias: true,
   editar_perfil: false,
@@ -6079,7 +6077,7 @@ function Dashboard({
       margin: 0
     }
   }, "Pendências recentes"), /*#__PURE__*/React.createElement("button", {
-    onClick: () => setView("aprovacao"),
+    onClick: () => setView("relatorios"),
     style: {
       background: "none",
       border: "none",
@@ -9368,8 +9366,10 @@ function PerfilFuncionario({
   ))));
 }
 
-// ─── PAINEL DE APROVAÇÃO ──────────────────────────────────────────────────────
-function PainelAprovacao({
+// ─── OCORRÊNCIAS (admin) — unifica antigo PainelAprovacao (fila de
+// verificação) + Relatorios (análise/exportação) numa única view, com
+// toggle entre os dois modos. Rota/label pública continua "Relatórios".
+function PainelOcorrencias({
   ocorrencias,
   setOcorrencias,
   funcionarios,
@@ -9378,27 +9378,53 @@ function PainelAprovacao({
   isAdmin,
   mesFiltro,
   setMesFiltro,
+  seletorEscopo,
   sessaoPronta = true,
   contaTesteAtivaAgora = false
 }) {
+  // Sempre inicia em "fila" — não persiste a última escolha do usuário.
+  const [modoVisualizacao, setModoVisualizacao] = useState("fila");
   const [modal, setModal] = useState(null);
   const [obs, setObs] = useState("");
-  const [filtro, setFiltro] = useState("Corrigido");
+  const [filtroStatus, setFiltroStatus] = useState("Todos");
   const [filtroCargo, setFiltroCargo] = useState("Todos");
   // Sem sessaoPronta/contaTesteAtivaAgora, a carga inicial e o polling de
   // useSharedState nunca disparavam — o print do EasyMob ficava gravado no
   // Supabase mas nunca era buscado para exibição aqui.
   const [easymobMap] = useSharedState(`${SK_EASYMOB}_map`, {}, sessaoPronta, contaTesteAtivaAgora);
-  const cargosDisponiveis = useMemo(() => [...new Set(funcionarios.map(f => f.cargo))].sort((a, b) => a.localeCompare(b, "pt-BR", {
+  const cargosDisponiveis = useMemo(() => [...new Set(funcionarios.map(f => f.cargo).filter(Boolean))].sort((a, b) => a.localeCompare(b, "pt-BR", {
     sensitivity: "base"
   })), [funcionarios]);
-  const lista = ocorrencias.filter(o => {
-    if (filtro !== "Todos" && o.status !== filtro) return false;
+
+  // Base filtrada só por cargo (usada para KPIs e para os contadores dos
+  // botões de status, que devem refletir o universo do cargo selecionado
+  // independente do status escolhido).
+  const ocorrenciasFiltroCargo = ocorrencias.filter(o => {
     const func = resolverFuncionarioDaOcorrencia(funcionarios, o);
     if (!func) return false;
     if (filtroCargo !== "Todos" && func.cargo !== filtroCargo) return false;
     return true;
+  });
+
+  // Base final: cargo + status, fonte única para os dois modos de
+  // visualização (fila e tabela) e para a exportação.
+  const ocorrenciasFiltradas = ocorrenciasFiltroCargo.filter(o => {
+    if (filtroStatus !== "Todos" && o.status !== filtroStatus) return false;
+    return true;
   }).sort((a, b) => (b.atualizadoEm || b.data || "").localeCompare(a.atualizadoEm || a.data || ""));
+
+  const porStatus = {
+    Pendente: ocorrenciasFiltroCargo.filter(o => o.status === "Pendente").length,
+    Corrigido: ocorrenciasFiltroCargo.filter(o => o.status === "Corrigido").length,
+    Verificado: ocorrenciasFiltroCargo.filter(o => o.status === "Verificado").length,
+    Rejeitado: ocorrenciasFiltroCargo.filter(o => o.status === "Rejeitado").length
+  };
+  const contadores = {
+    Todos: ocorrenciasFiltroCargo.length,
+    ...porStatus
+  };
+  const novosCorrigidos = ocorrenciasFiltroCargo.filter(o => o.status === "Corrigido" && o.novo).length;
+
   useEffect(() => {
     const novos = ocorrencias.filter(o => o.novo).map(o => o.id);
     if (novos.length) setTimeout(() => setOcorrencias(prev => prev.map(o => novos.includes(o.id) ? {
@@ -9406,6 +9432,7 @@ function PainelAprovacao({
       novo: false
     } : o)), 2000);
   }, [ocorrencias]);
+
   function verificar(id) {
     const agora = agoraISO();
     const oc = ocorrencias.find(o => o.id === id);
@@ -9458,531 +9485,8 @@ function PainelAprovacao({
     setModal(null);
     setObs("");
   }
-  const ocorrenciasFiltroSC = ocorrencias.filter(o => {
-    const func = resolverFuncionarioDaOcorrencia(funcionarios, o);
-    if (!func) return false;
-    if (filtroCargo !== "Todos" && func.cargo !== filtroCargo) return false;
-    return true;
-  });
-  const contadores = {
-    Todos: ocorrenciasFiltroSC.length,
-    ...Object.fromEntries(STATUS_LIST.map(s => [s, ocorrenciasFiltroSC.filter(o => o.status === s).length]))
-  };
-  const novosCorrigidos = ocorrenciasFiltroSC.filter(o => o.status === "Corrigido" && o.novo).length;
-  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: "flex",
-      alignItems: "flex-start",
-      justifyContent: "space-between",
-      marginBottom: 24,
-      flexWrap: "wrap",
-      gap: 12
-    }
-  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("h1", {
-    style: {
-      fontSize: 24,
-      fontWeight: 700,
-      color: "var(--cinza-900)",
-      margin: 0
-    }
-  }, "Painel de verificação"), /*#__PURE__*/React.createElement("p", {
-    style: {
-      color: "var(--cinza-500)",
-      marginTop: 4,
-      fontSize: 14
-    }
-  }, "Verifique no sistema ", /*#__PURE__*/React.createElement("strong", null, "Vibe"), " se as correções dos colaboradores procedem.")), /*#__PURE__*/React.createElement(SeletorMes, {
-    mesFiltro: mesFiltro,
-    setMesFiltro: setMesFiltro
-  })), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: "flex",
-      gap: 8,
-      marginBottom: 20,
-      flexWrap: "wrap"
-    }
-  }, ["Todos", "Pendente", "Corrigido", "Verificado", "Rejeitado"].map(s => /*#__PURE__*/React.createElement("button", {
-    key: s,
-    onClick: () => setFiltro(s),
-    style: {
-      padding: "7px 16px",
-      borderRadius: 20,
-      fontSize: 12,
-      fontWeight: 700,
-      cursor: "pointer",
-      border: "none",
-      background: filtro === s ? "var(--indigo-500)" : "var(--cinza-100)",
-      color: filtro === s ? "var(--cor-branco)" : "var(--cinza-600)",
-      display: "flex",
-      alignItems: "center",
-      gap: 6
-    }
-  }, s, /*#__PURE__*/React.createElement("span", {
-    style: {
-      background: filtro === s ? "var(--branco-transparente)" : "var(--cinza-200)",
-      color: filtro === s ? "var(--cor-branco)" : "var(--cinza-500)",
-      fontSize: 11,
-      padding: "1px 7px",
-      borderRadius: 20
-    }
-  }, contadores[s] || 0), s === "Corrigido" && novosCorrigidos > 0 && /*#__PURE__*/React.createElement("span", {
-    style: {
-      background: "var(--amber-400)",
-      color: "var(--amber-900)",
-      fontSize: 10,
-      padding: "1px 5px",
-      borderRadius: 20,
-      fontWeight: 700
-    }
-  }, novosCorrigidos, " novo", novosCorrigidos > 1 ? "s" : "")))), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: "flex",
-      gap: 12,
-      marginBottom: 20,
-      flexWrap: "wrap",
-      alignItems: "flex-end"
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: "flex",
-      flexDirection: "column",
-      gap: 4
-    }
-  }, /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontSize: 11,
-      fontWeight: 700,
-      color: "var(--cinza-400)",
-      textTransform: "uppercase",
-      letterSpacing: ".05em"
-    }
-  }, "Cargo"), /*#__PURE__*/React.createElement("select", {
-    value: filtroCargo,
-    onChange: e => setFiltroCargo(e.target.value),
-    style: {
-      padding: "9px 14px",
-      borderRadius: 10,
-      border: "1px solid var(--cinza-200)",
-      fontSize: 13,
-      background: "var(--cor-branco)",
-      cursor: "pointer"
-    }
-  }, ["Todos", ...cargosDisponiveis].map(c => /*#__PURE__*/React.createElement("option", {
-    key: c
-  }, c)))), filtroCargo !== "Todos" && /*#__PURE__*/React.createElement("button", {
-    onClick: () => {
-      setFiltroCargo("Todos");
-    },
-    style: {
-      padding: "9px 14px",
-      borderRadius: 10,
-      border: "1px solid var(--cinza-200)",
-      background: "var(--cinza-50)",
-      fontSize: 12,
-      fontWeight: 600,
-      color: "var(--cinza-500)",
-      cursor: "pointer"
-    }
-  }, "✕ Limpar filtros")), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: "flex",
-      flexDirection: "column",
-      gap: 10
-    }
-  }, lista.length === 0 && /*#__PURE__*/React.createElement("div", {
-    style: {
-      background: "var(--cor-branco)",
-      borderRadius: 16,
-      padding: 40,
-      textAlign: "center",
-      color: "var(--cinza-400)",
-      fontSize: 13,
-      border: "1px solid var(--cinza-100)"
-    }
-  }, "Nenhuma ocorrência neste filtro."), lista.map(o => {
-    const func = resolverFuncionarioDaOcorrencia(funcionarios, o);
-    if (!func) return null;
-    const al = getAlert(contarOcorrencias(ocorrencias, func.id).esquecimentos);
-    const podeVerif = o.status === "Corrigido" || (o.status === "Pendente" && o.criadoPor === "funcionario");
-    const ehErroReg = o.tipo === TIPO_EXIGE_EASYMOB;
-    const easymob = easymobMap[`${func.id}_${o.id}`];
-    return /*#__PURE__*/React.createElement("div", {
-      key: o.id,
-      style: {
-        background: "var(--cor-branco)",
-        border: `1px solid ${o.novo ? "var(--amber-200)" : "var(--cinza-100)"}`,
-        borderRadius: 16,
-        padding: "20px 24px",
-        display: "flex",
-        gap: 16,
-        alignItems: "flex-start",
-        boxShadow: o.novo ? "0 2px 12px var(--amber-transparente)" : "0 1px 3px var(--sombra-leve)",
-        flexWrap: "wrap"
-      }
-    }, /*#__PURE__*/React.createElement("span", {
-      style: {
-        fontSize: 24,
-        flexShrink: 0,
-        marginTop: 2
-      }
-    }, tipoIcon(o.tipo)), /*#__PURE__*/React.createElement(Avatar, {
-      nome: func.nome,
-      id: func.id,
-      size: 42
-    }), /*#__PURE__*/React.createElement("div", {
-      style: {
-        flex: 1,
-        minWidth: 200
-      }
-    }, /*#__PURE__*/React.createElement("div", {
-      style: {
-        display: "flex",
-        alignItems: "center",
-        gap: 10,
-        flexWrap: "wrap"
-      }
-    }, /*#__PURE__*/React.createElement("span", {
-      style: {
-        fontWeight: 700,
-        fontSize: 14,
-        color: "var(--cinza-900)"
-      }
-    }, func.nome), /*#__PURE__*/React.createElement("span", {
-      style: {
-        fontSize: 11,
-        background: al.bg,
-        color: al.cor,
-        padding: "2px 8px",
-        borderRadius: 20,
-        fontWeight: 600
-      }
-    }, al.label), /*#__PURE__*/React.createElement(Badge, {
-      status: o.status
-    }), o.criadoPor === "funcionario" && /*#__PURE__*/React.createElement("span", {
-      style: {
-        fontSize: 11,
-        background: "var(--roxo-100)",
-        color: "var(--roxo-600)",
-        padding: "2px 8px",
-        borderRadius: 20,
-        fontWeight: 700
-      }
-    }, "👤 Aviso do colaborador"), o.novo && /*#__PURE__*/React.createElement("span", {
-      style: {
-        fontSize: 10,
-        background: "var(--amber-400)",
-        color: "var(--amber-900)",
-        padding: "2px 8px",
-        borderRadius: 20,
-        fontWeight: 700
-      }
-    }, "🔔 NOVO")), /*#__PURE__*/React.createElement("div", {
-      style: {
-        fontSize: 13,
-        color: "var(--cinza-500)",
-        marginTop: 4
-      }
-    }, /*#__PURE__*/React.createElement("strong", {
-      style: {
-        color: "var(--cinza-700)"
-      }
-    }, o.tipo), " · ", fmtDate(o.data), " · ", func.setor, o.atualizadoEm && /*#__PURE__*/React.createElement("span", {
-      style: {
-        color: "var(--cinza-400)"
-      }
-    }, " · ", fmtDateHora(o.atualizadoEm))), o.observacaoAdmin && /*#__PURE__*/React.createElement("div", {
-      style: {
-        marginTop: 6,
-        fontSize: 12,
-        background: "var(--cinza-100)",
-        borderRadius: 8,
-        padding: "6px 10px",
-        color: "var(--cinza-600)"
-      }
-    }, /*#__PURE__*/React.createElement("strong", null, "Obs.:"), " ", o.observacaoAdmin), o.observacaoFuncionario && /*#__PURE__*/React.createElement("div", {
-      style: {
-        marginTop: 6,
-        fontSize: 12,
-        background: "var(--roxo-100)",
-        borderRadius: 8,
-        padding: "6px 10px",
-        color: "var(--roxo-600)",
-        borderLeft: "3px solid var(--roxo-500)"
-      }
-    }, /*#__PURE__*/React.createElement("strong", null, "👤 Aviso do colaborador:"), " ", o.observacaoFuncionario), o.resposta && /*#__PURE__*/React.createElement("div", {
-      style: {
-        marginTop: 8,
-        background: "var(--cinza-50)",
-        borderRadius: 10,
-        padding: "10px 14px",
-        fontSize: 13,
-        color: "var(--cinza-700)",
-        borderLeft: "3px solid var(--indigo-500)"
-      }
-    }, /*#__PURE__*/React.createElement("strong", {
-      style: {
-        fontSize: 12,
-        color: "var(--indigo-500)"
-      }
-    }, "Colaborador marcou como corrigido"), o.resposta && o.resposta !== "Corrigido no sistema Vibe." && /*#__PURE__*/React.createElement("span", {
-      style: {
-        display: "block",
-        marginTop: 4,
-        color: "var(--cinza-600)"
-      }
-    }, o.resposta)), !o.resposta && o.status === "Pendente" && /*#__PURE__*/React.createElement("div", {
-      style: {
-        marginTop: 8,
-        fontSize: 12,
-        color: "var(--cinza-400)",
-        fontStyle: "italic"
-      }
-    }, o.tipo === TIPO_PENDENTE_ESPECIFICACAO ? "Aguardando o colaborador especificar o motivo." : "Aguardando ação do colaborador."), ehErroReg && /*#__PURE__*/React.createElement("div", {
-      style: {
-        marginTop: 8,
-        display: "flex",
-        alignItems: "center",
-        gap: 8
-      }
-    }, easymob ? /*#__PURE__*/React.createElement("button", {
-      onClick: () => {
-        // window.open(dataUrl, "_blank") não funciona de forma confiável:
-        // vários navegadores tratam data URLs longas em base64 como
-        // navegação bloqueada/sanitizada e abrem a aba em branco, sem
-        // nenhum erro visível. Em vez de navegar direto para a data URL,
-        // abrimos uma aba com um documento HTML mínimo que apenas exibe a
-        // imagem via <img src="...">, o que funciona em qualquer navegador.
-        const win = window.open("", "_blank");
-        if (!win) return; // pop-up bloqueado pelo navegador
-        win.document.write(
-          '<html><head><title>Print EasyMob</title></head>' +
-          '<body style="margin:0;background:#111;display:flex;align-items:center;justify-content:center;min-height:100vh;">' +
-          '<img src="' + easymob + '" style="max-width:100%;max-height:100vh;" /></body></html>'
-        );
-        win.document.close();
-      },
-      style: {
-        background: "var(--verde-100)",
-        color: "var(--verde-700)",
-        border: "none",
-        borderRadius: 8,
-        padding: "5px 12px",
-        fontSize: 12,
-        fontWeight: 600,
-        cursor: "pointer"
-      }
-    }, "📱 Ver print EasyMob") : o.easymobEnviado ? /*#__PURE__*/React.createElement("span", {
-      style: {
-        fontSize: 12,
-        color: "var(--verde-700)",
-        fontWeight: 600
-      }
-    }, "✅ Print EasyMob enviado") : /*#__PURE__*/React.createElement("span", {
-      style: {
-        fontSize: 12,
-        color: "var(--amber-500)",
-        fontWeight: 600
-      }
-    }, "⚠️ Print EasyMob não enviado."))), /*#__PURE__*/React.createElement("div", {
-      style: {
-        display: "flex",
-        gap: 8,
-        flexShrink: 0,
-        alignItems: "center"
-      }
-    }, podeVerif && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("button", {
-      onClick: () => setModal({
-        ...o,
-        acao: "verificar"
-      }),
-      style: {
-        background: "var(--verde-100)",
-        color: "var(--verde-600)",
-        border: "none",
-        borderRadius: 10,
-        padding: "9px 18px",
-        fontSize: 12,
-        fontWeight: 700,
-        cursor: "pointer"
-      }
-    }, "✓ Verificado"), /*#__PURE__*/React.createElement("button", {
-      onClick: () => setModal({
-        ...o,
-        acao: "rejeitar"
-      }),
-      style: {
-        background: "var(--vermelho-100)",
-        color: "var(--vermelho-600)",
-        border: "none",
-        borderRadius: 10,
-        padding: "9px 18px",
-        fontSize: 12,
-        fontWeight: 700,
-        cursor: "pointer"
-      }
-    }, "✕ Rejeitar")), isAdmin && /*#__PURE__*/React.createElement("button", {
-      onClick: () => setModal({
-        ...o,
-        acao: "excluir"
-      }),
-      title: "Excluir pendência",
-      style: {
-        background: "var(--cinza-100)",
-        color: "var(--cinza-400)",
-        border: "none",
-        borderRadius: 10,
-        padding: "9px 12px",
-        fontSize: 13,
-        fontWeight: 700,
-        cursor: "pointer",
-        flexShrink: 0
-      }
-    }, "🗑")));
-  })), modal && /*#__PURE__*/React.createElement(Modal, {
-    title: modal.acao === "verificar" ? "✓ Confirmar verificação" : modal.acao === "excluir" ? "🗑 Excluir pendência" : "✕ Rejeitar correção",
-    onClose: () => {
-      setModal(null);
-      setObs("");
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: "flex",
-      flexDirection: "column",
-      gap: 14
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      background: "var(--cinza-50)",
-      borderRadius: 12,
-      padding: "14px 16px"
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 13,
-      fontWeight: 700,
-      color: "var(--cinza-900)"
-    }
-  }, resolverFuncionarioDaOcorrencia(funcionarios, modal)?.nome), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 13,
-      color: "var(--cinza-500)"
-    }
-  }, modal.tipo, " · ", fmtDate(modal.data)), modal.resposta && /*#__PURE__*/React.createElement("div", {
-    style: {
-      marginTop: 8,
-      fontSize: 13,
-      color: "var(--cinza-700)",
-      fontStyle: "italic"
-    }
-  }, "\"", modal.resposta, "\"")), modal.acao === "verificar" && /*#__PURE__*/React.createElement("div", {
-    style: {
-      background: "var(--azul-50)",
-      border: "1px solid var(--azul-200)",
-      borderRadius: 10,
-      padding: "10px 14px",
-      fontSize: 13,
-      color: "var(--azul-700)"
-    }
-  }, "Confirme que verificou no sistema ", /*#__PURE__*/React.createElement("strong", null, "Vibe"), " e a correção está correta."), modal.acao === "excluir" && /*#__PURE__*/React.createElement("div", {
-    style: {
-      background: "var(--vermelho-100)",
-      border: "1px solid var(--vermelho-300)",
-      borderRadius: 10,
-      padding: "10px 14px",
-      fontSize: 13,
-      color: "var(--vermelho-600)"
-    }
-  }, "Esta ação remove a pendência permanentemente para todo o time. Não é possível desfazer."), modal.acao !== "excluir" && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
-    style: {
-      fontSize: 13,
-      fontWeight: 600,
-      color: "var(--cinza-700)",
-      display: "block",
-      marginBottom: 6
-    }
-  }, "Observação ", modal.acao === "rejeitar" ? "(obrigatória)" : "(opcional)"), /*#__PURE__*/React.createElement("textarea", {
-    value: obs,
-    onChange: e => setObs(e.target.value),
-    placeholder: modal.acao === "rejeitar" ? "Informe o motivo da rejeição…" : "Adicione uma observação (opcional)…",
-    style: {
-      width: "100%",
-      minHeight: 80,
-      borderRadius: 10,
-      border: "1px solid var(--cinza-200)",
-      padding: "10px 14px",
-      fontSize: 13,
-      resize: "vertical",
-      fontFamily: "inherit",
-      boxSizing: "border-box",
-      outline: "none"
-    }
-  })), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: "flex",
-      gap: 10,
-      justifyContent: "flex-end"
-    }
-  }, /*#__PURE__*/React.createElement("button", {
-    onClick: () => {
-      setModal(null);
-      setObs("");
-    },
-    style: {
-      padding: "10px 20px",
-      borderRadius: 10,
-      border: "1px solid var(--cinza-200)",
-      background: "var(--cor-branco)",
-      fontSize: 13,
-      cursor: "pointer",
-      fontWeight: 600,
-      color: "var(--cinza-500)"
-    }
-  }, "Cancelar"), /*#__PURE__*/React.createElement("button", {
-    onClick: () => modal.acao === "verificar" ? verificar(modal.id) : modal.acao === "excluir" ? excluir(modal.id) : rejeitar(modal.id),
-    disabled: modal.acao === "rejeitar" && !obs.trim(),
-    style: {
-      padding: "10px 20px",
-      borderRadius: 10,
-      border: "none",
-      fontSize: 13,
-      fontWeight: 700,
-      cursor: "pointer",
-      background: modal.acao === "verificar" ? "var(--verde-600)" : modal.acao === "excluir" ? "var(--vermelho-600)" : obs.trim() ? "var(--vermelho-600)" : "var(--cinza-200)",
-      color: modal.acao === "rejeitar" && !obs.trim() ? "var(--cinza-400)" : "var(--cor-branco)"
-    }
-  }, modal.acao === "verificar" ? "✓ Confirmar verificação" : modal.acao === "excluir" ? "🗑 Excluir definitivamente" : "✕ Confirmar rejeição")))));
-}
-
-// ─── RELATÓRIOS (admin) ───────────────────────────────────────────────────────
-function Relatorios({
-  ocorrencias,
-  funcionarios,
-  mesFiltro,
-  setMesFiltro,
-  seletorEscopo
-}) {
-  const [cargoFiltro, setCargoFiltro] = useState("Todos");
-  const cargosDisponiveis = useMemo(() => [...new Set(funcionarios.map(f => f.cargo).filter(Boolean))].sort((a, b) => a.localeCompare(b, "pt-BR", {
-    sensitivity: "base"
-  })), [funcionarios]);
-
-  // ocorrencias já chega filtrada pelo mês selecionado globalmente (via App)
-  const ocs = ocorrencias.filter(o => {
-    const func = resolverFuncionarioDaOcorrencia(funcionarios, o);
-    const matchCargo = cargoFiltro === "Todos" || func && func.cargo === cargoFiltro;
-    return matchCargo;
-  });
-  // "Por tipo de ocorrência" e "Top ocorrências por pessoa" saíram daqui e
-  // foram para o Dashboard (visão geral, sem filtro de cargo) — ver função
-  // Dashboard acima.
-  const porStatus = {
-    Pendente: ocs.filter(o => o.status === "Pendente").length,
-    Corrigido: ocs.filter(o => o.status === "Corrigido").length,
-    Verificado: ocs.filter(o => o.status === "Verificado").length,
-    Rejeitado: ocs.filter(o => o.status === "Rejeitado").length
-  };
   function exportarXLSX() {
-    const rows = ocs.map(o => {
+    const rows = ocorrenciasFiltradas.map(o => {
       const func = resolverFuncionarioDaOcorrencia(funcionarios, o);
       return {
         "Data": fmtDate(o.data),
@@ -10000,245 +9504,251 @@ function Relatorios({
     XLSX.utils.book_append_sheet(wb, ws, "Ocorrências");
     XLSX.writeFile(wb, `relatorio_ponto_${mesFiltro || "geral"}.xlsx`);
   }
+
   const statusColors = {
-    Pendente: {
-      bg: "var(--laranja-50)",
-      color: "var(--laranja-700)"
-    },
-    Corrigido: {
-      bg: "var(--amarelo-100)",
-      color: "var(--amarelo-700)"
-    },
-    Verificado: {
-      bg: "var(--verde-100)",
-      color: "var(--verde-700)"
-    },
-    Rejeitado: {
-      bg: "var(--vermelho-100)",
-      color: "var(--vermelho-600)"
-    }
+    Pendente: { bg: "var(--laranja-50)", color: "var(--laranja-700)" },
+    Corrigido: { bg: "var(--amarelo-100)", color: "var(--amarelo-700)" },
+    Verificado: { bg: "var(--verde-100)", color: "var(--verde-700)" },
+    Rejeitado: { bg: "var(--vermelho-100)", color: "var(--vermelho-600)" }
   };
-  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: "flex",
-      alignItems: "flex-start",
-      justifyContent: "space-between",
-      marginBottom: 24,
-      flexWrap: "wrap",
-      gap: 12
-    }
+
+  // ── Cabeçalho comum: título, descrição, seletor de mês, exportar ────────
+  const cabecalho = /*#__PURE__*/React.createElement("div", {
+    style: { display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 24, flexWrap: "wrap", gap: 12 }
   }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("h1", {
-    style: {
-      fontSize: 24,
-      fontWeight: 700,
-      color: "var(--cinza-900)",
-      margin: 0
-    }
+    style: { fontSize: 24, fontWeight: 700, color: "var(--cinza-900)", margin: 0 }
   }, "Relatórios"), /*#__PURE__*/React.createElement("p", {
-    style: {
-      color: "var(--cinza-500)",
-      marginTop: 4,
-      fontSize: 14
-    }
-  }, "Análise de ocorrências e exportação de dados")), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: "flex",
-      alignItems: "center",
-      gap: 10,
-      flexWrap: "wrap"
-    }
+    style: { color: "var(--cinza-500)", marginTop: 4, fontSize: 14 }
+  }, modoVisualizacao === "fila"
+    ? /*#__PURE__*/React.createElement(React.Fragment, null, "Verifique no sistema ", /*#__PURE__*/React.createElement("strong", null, "Vibe"), " se as correções dos colaboradores procedem.")
+    : "Análise de ocorrências e exportação de dados"
+  )), /*#__PURE__*/React.createElement("div", {
+    style: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }
   }, /*#__PURE__*/React.createElement(SeletorMes, {
     mesFiltro: mesFiltro,
     setMesFiltro: setMesFiltro
   }), /*#__PURE__*/React.createElement("button", {
     onClick: exportarXLSX,
     style: {
-      display: "flex",
-      alignItems: "center",
-      gap: 8,
-      background: "var(--verde-600)",
-      color: "var(--cor-branco)",
-      border: "none",
-      borderRadius: 12,
-      padding: "11px 20px",
-      fontSize: 13,
-      fontWeight: 700,
-      cursor: "pointer",
+      display: "flex", alignItems: "center", gap: 8, background: "var(--verde-600)", color: "var(--cor-branco)",
+      border: "none", borderRadius: 12, padding: "11px 20px", fontSize: 13, fontWeight: 700, cursor: "pointer",
       boxShadow: "0 4px 12px var(--sombra-verde)"
     }
-  }, "📥 Exportar XLSX"))), seletorEscopo || null, /*#__PURE__*/React.createElement("div", {
+  }, "📥 Exportar XLSX")));
+
+  // ── Toggle de modo ───────────────────────────────────────────────────────
+  const toggle = /*#__PURE__*/React.createElement("div", {
+    style: { display: "flex", gap: 6, marginBottom: 20, background: "var(--cinza-100)", padding: 4, borderRadius: 12, width: "fit-content" }
+  }, [{ id: "fila", label: "🔍 Fila de trabalho" }, { id: "tabela", label: "📋 Tabela/Análise" }].map(m => /*#__PURE__*/React.createElement("button", {
+    key: m.id,
+    onClick: () => setModoVisualizacao(m.id),
     style: {
-      background: "var(--cor-branco)",
-      border: "1px solid var(--cinza-100)",
-      borderRadius: 16,
-      padding: "18px 22px",
-      marginBottom: 20,
-      display: "flex",
-      gap: 16,
-      flexWrap: "wrap",
-      alignItems: "flex-end"
+      padding: "8px 16px", borderRadius: 9, fontSize: 12, fontWeight: 700, cursor: "pointer", border: "none",
+      background: modoVisualizacao === m.id ? "var(--cor-branco)" : "transparent",
+      color: modoVisualizacao === m.id ? "var(--cinza-900)" : "var(--cinza-500)",
+      boxShadow: modoVisualizacao === m.id ? "0 1px 3px var(--sombra-leve)" : "none"
     }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: "flex",
-      flexDirection: "column",
-      gap: 4
-    }
-  }, /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontSize: 11,
-      fontWeight: 700,
-      color: "var(--cinza-400)",
-      textTransform: "uppercase",
-      letterSpacing: ".05em"
-    }
-  }, "Cargo"), /*#__PURE__*/React.createElement("select", {
-    value: cargoFiltro,
-    onChange: e => setCargoFiltro(e.target.value),
-    style: {
-      padding: "9px 14px",
-      borderRadius: 10,
-      border: "1px solid var(--cinza-200)",
-      fontSize: 13,
-      background: "var(--cor-branco)",
-      cursor: "pointer"
-    }
-  }, ["Todos", ...cargosDisponiveis].map(s => /*#__PURE__*/React.createElement("option", {
-    key: s
-  }, s))))), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: "grid",
-      gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))",
-      gap: 12,
-      marginBottom: 20
-    }
+  }, m.label)));
+
+  // ── KPIs — sempre visíveis, substituem os contadores dos pills ─────────
+  const kpis = /*#__PURE__*/React.createElement("div", {
+    style: { display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 12, marginBottom: 20 }
   }, /*#__PURE__*/React.createElement(KpiCard, {
-    label: "Total",
-    value: ocs.length,
-    sub: "ocorrências",
-    icon: "📋"
+    label: "Total", value: contadores.Todos, sub: "ocorrências", icon: "📋"
   }), /*#__PURE__*/React.createElement(KpiCard, {
-    label: "Pendentes",
-    value: porStatus.Pendente,
-    sub: "a resolver",
-    accent: porStatus.Pendente > 0 ? "var(--vermelho-600)" : undefined,
-    icon: "⏳"
+    label: "Pendentes", value: porStatus.Pendente, sub: "a resolver", accent: porStatus.Pendente > 0 ? "var(--vermelho-600)" : undefined, icon: "⏳"
   }), /*#__PURE__*/React.createElement(KpiCard, {
-    label: "Verificados",
-    value: porStatus.Verificado,
-    sub: "concluídos",
-    accent: "var(--verde-600)",
-    icon: "✅"
+    label: "Verificados", value: porStatus.Verificado, sub: "concluídos", accent: "var(--verde-600)", icon: "✅"
   }), /*#__PURE__*/React.createElement(KpiCard, {
-    label: "Rejeitados",
-    value: porStatus.Rejeitado,
-    sub: "",
-    accent: porStatus.Rejeitado > 0 ? "var(--vermelho-600)" : undefined,
-    icon: "✕"
-  })), /*#__PURE__*/React.createElement("div", {
+    label: "Rejeitados", value: porStatus.Rejeitado, sub: "", accent: porStatus.Rejeitado > 0 ? "var(--vermelho-600)" : undefined, icon: "✕"
+  }));
+
+  // ── Filtros unificados: status (pills com contador) + cargo ─────────────
+  const filtros = /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    style: { display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap" }
+  }, ["Todos", "Pendente", "Corrigido", "Verificado", "Rejeitado"].map(s => /*#__PURE__*/React.createElement("button", {
+    key: s,
+    onClick: () => setFiltroStatus(s),
     style: {
-      background: "var(--cor-branco)",
-      border: "1px solid var(--cinza-100)",
-      borderRadius: 16,
-      overflow: "auto"
+      padding: "7px 16px", borderRadius: 20, fontSize: 12, fontWeight: 700, cursor: "pointer", border: "none",
+      background: filtroStatus === s ? "var(--indigo-500)" : "var(--cinza-100)",
+      color: filtroStatus === s ? "var(--cor-branco)" : "var(--cinza-600)",
+      display: "flex", alignItems: "center", gap: 6
     }
+  }, s, /*#__PURE__*/React.createElement("span", {
+    style: {
+      background: filtroStatus === s ? "var(--branco-transparente)" : "var(--cinza-200)",
+      color: filtroStatus === s ? "var(--cor-branco)" : "var(--cinza-500)",
+      fontSize: 11, padding: "1px 7px", borderRadius: 20
+    }
+  }, contadores[s] || 0), s === "Corrigido" && novosCorrigidos > 0 && /*#__PURE__*/React.createElement("span", {
+    style: { background: "var(--amber-400)", color: "var(--amber-900)", fontSize: 10, padding: "1px 5px", borderRadius: 20, fontWeight: 700 }
+  }, novosCorrigidos, " novo", novosCorrigidos > 1 ? "s" : "")))), /*#__PURE__*/React.createElement("div", {
+    style: { display: "flex", gap: 12, marginBottom: 20, flexWrap: "wrap", alignItems: "flex-end" }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: { display: "flex", flexDirection: "column", gap: 4 }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: { fontSize: 11, fontWeight: 700, color: "var(--cinza-400)", textTransform: "uppercase", letterSpacing: ".05em" }
+  }, "Cargo"), /*#__PURE__*/React.createElement("select", {
+    value: filtroCargo,
+    onChange: e => setFiltroCargo(e.target.value),
+    style: { padding: "9px 14px", borderRadius: 10, border: "1px solid var(--cinza-200)", fontSize: 13, background: "var(--cor-branco)", cursor: "pointer" }
+  }, ["Todos", ...cargosDisponiveis].map(c => /*#__PURE__*/React.createElement("option", { key: c }, c)))), filtroCargo !== "Todos" && /*#__PURE__*/React.createElement("button", {
+    onClick: () => setFiltroCargo("Todos"),
+    style: { padding: "9px 14px", borderRadius: 10, border: "1px solid var(--cinza-200)", background: "var(--cinza-50)", fontSize: 12, fontWeight: 600, color: "var(--cinza-500)", cursor: "pointer" }
+  }, "✕ Limpar filtros")));
+
+  // ── Modo Fila de trabalho (cards de ação) ───────────────────────────────
+  const listaFila = /*#__PURE__*/React.createElement("div", {
+    style: { display: "flex", flexDirection: "column", gap: 10 }
+  }, ocorrenciasFiltradas.length === 0 && /*#__PURE__*/React.createElement("div", {
+    style: { background: "var(--cor-branco)", borderRadius: 16, padding: 40, textAlign: "center", color: "var(--cinza-400)", fontSize: 13, border: "1px solid var(--cinza-100)" }
+  }, "Nenhuma ocorrência neste filtro."), ocorrenciasFiltradas.map(o => {
+    const func = resolverFuncionarioDaOcorrencia(funcionarios, o);
+    if (!func) return null;
+    const al = getAlert(contarOcorrencias(ocorrencias, func.id).esquecimentos);
+    const podeVerif = o.status === "Corrigido" || (o.status === "Pendente" && o.criadoPor === "funcionario");
+    const ehErroReg = o.tipo === TIPO_EXIGE_EASYMOB;
+    const easymob = easymobMap[`${func.id}_${o.id}`];
+    return /*#__PURE__*/React.createElement("div", {
+      key: o.id,
+      style: {
+        background: "var(--cor-branco)", border: `1px solid ${o.novo ? "var(--amber-200)" : "var(--cinza-100)"}`,
+        borderRadius: 16, padding: "20px 24px", display: "flex", gap: 16, alignItems: "flex-start",
+        boxShadow: o.novo ? "0 2px 12px var(--amber-transparente)" : "0 1px 3px var(--sombra-leve)", flexWrap: "wrap"
+      }
+    }, /*#__PURE__*/React.createElement("span", { style: { fontSize: 24, flexShrink: 0, marginTop: 2 } }, tipoIcon(o.tipo)),
+    /*#__PURE__*/React.createElement(Avatar, { nome: func.nome, id: func.id, size: 42 }),
+    /*#__PURE__*/React.createElement("div", { style: { flex: 1, minWidth: 200 } },
+      /*#__PURE__*/React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" } },
+        /*#__PURE__*/React.createElement("span", { style: { fontWeight: 700, fontSize: 14, color: "var(--cinza-900)" } }, func.nome),
+        /*#__PURE__*/React.createElement("span", { style: { fontSize: 11, background: al.bg, color: al.cor, padding: "2px 8px", borderRadius: 20, fontWeight: 600 } }, al.label),
+        /*#__PURE__*/React.createElement(Badge, { status: o.status }),
+        o.criadoPor === "funcionario" && /*#__PURE__*/React.createElement("span", { style: { fontSize: 11, background: "var(--roxo-100)", color: "var(--roxo-600)", padding: "2px 8px", borderRadius: 20, fontWeight: 700 } }, "👤 Aviso do colaborador"),
+        o.novo && /*#__PURE__*/React.createElement("span", { style: { fontSize: 10, background: "var(--amber-400)", color: "var(--amber-900)", padding: "2px 8px", borderRadius: 20, fontWeight: 700 } }, "🔔 NOVO")
+      ),
+      /*#__PURE__*/React.createElement("div", { style: { fontSize: 13, color: "var(--cinza-500)", marginTop: 4 } },
+        /*#__PURE__*/React.createElement("strong", { style: { color: "var(--cinza-700)" } }, o.tipo), " · ", fmtDate(o.data), " · ", func.setor,
+        o.atualizadoEm && /*#__PURE__*/React.createElement("span", { style: { color: "var(--cinza-400)" } }, " · ", fmtDateHora(o.atualizadoEm))
+      ),
+      o.observacaoAdmin && /*#__PURE__*/React.createElement("div", { style: { marginTop: 6, fontSize: 12, background: "var(--cinza-100)", borderRadius: 8, padding: "6px 10px", color: "var(--cinza-600)" } }, /*#__PURE__*/React.createElement("strong", null, "Obs.:"), " ", o.observacaoAdmin),
+      o.observacaoFuncionario && /*#__PURE__*/React.createElement("div", { style: { marginTop: 6, fontSize: 12, background: "var(--roxo-100)", borderRadius: 8, padding: "6px 10px", color: "var(--roxo-600)", borderLeft: "3px solid var(--roxo-500)" } }, /*#__PURE__*/React.createElement("strong", null, "👤 Aviso do colaborador:"), " ", o.observacaoFuncionario),
+      o.resposta && /*#__PURE__*/React.createElement("div", { style: { marginTop: 8, background: "var(--cinza-50)", borderRadius: 10, padding: "10px 14px", fontSize: 13, color: "var(--cinza-700)", borderLeft: "3px solid var(--indigo-500)" } },
+        /*#__PURE__*/React.createElement("strong", { style: { fontSize: 12, color: "var(--indigo-500)" } }, "Colaborador marcou como corrigido"),
+        o.resposta && o.resposta !== "Corrigido no sistema Vibe." && /*#__PURE__*/React.createElement("span", { style: { display: "block", marginTop: 4, color: "var(--cinza-600)" } }, o.resposta)
+      ),
+      !o.resposta && o.status === "Pendente" && /*#__PURE__*/React.createElement("div", { style: { marginTop: 8, fontSize: 12, color: "var(--cinza-400)", fontStyle: "italic" } }, o.tipo === TIPO_PENDENTE_ESPECIFICACAO ? "Aguardando o colaborador especificar o motivo." : "Aguardando ação do colaborador."),
+      ehErroReg && /*#__PURE__*/React.createElement("div", { style: { marginTop: 8, display: "flex", alignItems: "center", gap: 8 } },
+        easymob ? /*#__PURE__*/React.createElement("button", {
+          onClick: () => {
+            const win = window.open("", "_blank");
+            if (!win) return;
+            win.document.write(
+              '<html><head><title>Print EasyMob</title></head>' +
+              '<body style="margin:0;background:#111;display:flex;align-items:center;justify-content:center;min-height:100vh;">' +
+              '<img src="' + easymob + '" style="max-width:100%;max-height:100vh;" /></body></html>'
+            );
+            win.document.close();
+          },
+          style: { background: "var(--verde-100)", color: "var(--verde-700)", border: "none", borderRadius: 8, padding: "5px 12px", fontSize: 12, fontWeight: 600, cursor: "pointer" }
+        }, "📱 Ver print EasyMob") : o.easymobEnviado ? /*#__PURE__*/React.createElement("span", { style: { fontSize: 12, color: "var(--verde-700)", fontWeight: 600 } }, "✅ Print EasyMob enviado") : /*#__PURE__*/React.createElement("span", { style: { fontSize: 12, color: "var(--amber-500)", fontWeight: 600 } }, "⚠️ Print EasyMob não enviado."))
+    ),
+    /*#__PURE__*/React.createElement("div", { style: { display: "flex", gap: 8, flexShrink: 0, alignItems: "center" } },
+      podeVerif && /*#__PURE__*/React.createElement(React.Fragment, null,
+        /*#__PURE__*/React.createElement("button", {
+          onClick: () => setModal({ ...o, acao: "verificar" }),
+          style: { background: "var(--verde-100)", color: "var(--verde-600)", border: "none", borderRadius: 10, padding: "9px 18px", fontSize: 12, fontWeight: 700, cursor: "pointer" }
+        }, "✓ Verificado"),
+        /*#__PURE__*/React.createElement("button", {
+          onClick: () => setModal({ ...o, acao: "rejeitar" }),
+          style: { background: "var(--vermelho-100)", color: "var(--vermelho-600)", border: "none", borderRadius: 10, padding: "9px 18px", fontSize: 12, fontWeight: 700, cursor: "pointer" }
+        }, "✕ Rejeitar")
+      ),
+      isAdmin && /*#__PURE__*/React.createElement("button", {
+        onClick: () => setModal({ ...o, acao: "excluir" }),
+        title: "Excluir pendência",
+        style: { background: "var(--cinza-100)", color: "var(--cinza-400)", border: "none", borderRadius: 10, padding: "9px 12px", fontSize: 13, fontWeight: 700, cursor: "pointer", flexShrink: 0 }
+      }, "🗑")
+    ));
+  }));
+
+  // ── Modo Tabela/Análise (leitura) ────────────────────────────────────────
+  const tabela = /*#__PURE__*/React.createElement("div", {
+    style: { background: "var(--cor-branco)", border: "1px solid var(--cinza-100)", borderRadius: 16, overflow: "auto" }
   }, /*#__PURE__*/React.createElement("table", {
-    style: {
-      width: "100%",
-      borderCollapse: "collapse",
-      minWidth: 700
-    }
+    style: { width: "100%", borderCollapse: "collapse", minWidth: 700 }
   }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", {
-    style: {
-      background: "var(--cinza-50)",
-      borderBottom: "1px solid var(--cinza-100)"
-    }
+    style: { background: "var(--cinza-50)", borderBottom: "1px solid var(--cinza-100)" }
   }, ["Data", "Funcionário", "Setor", "Tipo", "Status", "Observação"].map(h => /*#__PURE__*/React.createElement("th", {
     key: h,
-    style: {
-      padding: "11px 16px",
-      fontSize: 11,
-      fontWeight: 700,
-      color: "var(--cinza-400)",
-      textAlign: "left",
-      letterSpacing: ".06em",
-      textTransform: "uppercase",
-      whiteSpace: "nowrap"
-    }
-  }, h)))), /*#__PURE__*/React.createElement("tbody", null, ocs.sort((a, b) => b.data.localeCompare(a.data)).map((o, i) => {
+    style: { padding: "11px 16px", fontSize: 11, fontWeight: 700, color: "var(--cinza-400)", textAlign: "left", letterSpacing: ".06em", textTransform: "uppercase", whiteSpace: "nowrap" }
+  }, h)))), /*#__PURE__*/React.createElement("tbody", null, ocorrenciasFiltradas.map((o, i) => {
     const func = resolverFuncionarioDaOcorrencia(funcionarios, o);
     return /*#__PURE__*/React.createElement("tr", {
       key: o.id,
-      style: {
-        borderBottom: i < ocs.length - 1 ? "1px solid var(--cinza-50)" : "none"
-      }
-    }, /*#__PURE__*/React.createElement("td", {
-      style: {
-        padding: "10px 16px",
-        fontSize: 12,
-        color: "var(--cinza-500)",
-        whiteSpace: "nowrap"
-      }
-    }, fmtDate(o.data)), /*#__PURE__*/React.createElement("td", {
-      style: {
-        padding: "10px 16px"
-      }
-    }, /*#__PURE__*/React.createElement("div", {
-      style: {
-        display: "flex",
-        alignItems: "center",
-        gap: 8
-      }
-    }, /*#__PURE__*/React.createElement(Avatar, {
-      nome: func?.nome || "?",
-      id: func?.id || 0,
-      size: 26
-    }), /*#__PURE__*/React.createElement("span", {
-      style: {
-        fontSize: 12,
-        fontWeight: 600,
-        color: "var(--cinza-900)"
-      }
-    }, func?.nome?.split(" ").slice(0, 2).join(" ") || "—"))), /*#__PURE__*/React.createElement("td", {
-      style: {
-        padding: "10px 16px",
-        fontSize: 12,
-        color: "var(--cinza-500)"
-      }
-    }, func?.setor || "—"), /*#__PURE__*/React.createElement("td", {
-      style: {
-        padding: "10px 16px",
-        fontSize: 12,
-        fontWeight: 600,
-        color: "var(--cinza-900)"
-      }
-    }, tipoIcon(o.tipo), " ", o.tipo), /*#__PURE__*/React.createElement("td", {
-      style: {
-        padding: "10px 16px"
-      }
-    }, /*#__PURE__*/React.createElement(Badge, {
-      status: o.status
-    })), /*#__PURE__*/React.createElement("td", {
-      style: {
-        padding: "10px 16px",
-        fontSize: 12,
-        color: "var(--cinza-500)",
-        maxWidth: 200
-      }
-    }, o.observacaoAdmin || /*#__PURE__*/React.createElement("span", {
-      style: {
-        color: "var(--cinza-300)"
-      }
-    }, "—")));
-  }))), ocs.length === 0 && /*#__PURE__*/React.createElement("div", {
-    style: {
-      padding: 40,
-      textAlign: "center",
-      color: "var(--cinza-400)",
-      fontSize: 13
-    }
-  }, "Nenhuma ocorrência no período selecionado.")));
+      style: { borderBottom: i < ocorrenciasFiltradas.length - 1 ? "1px solid var(--cinza-50)" : "none" }
+    }, /*#__PURE__*/React.createElement("td", { style: { padding: "10px 16px", fontSize: 12, color: "var(--cinza-500)", whiteSpace: "nowrap" } }, fmtDate(o.data)),
+    /*#__PURE__*/React.createElement("td", { style: { padding: "10px 16px" } }, /*#__PURE__*/React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8 } },
+      /*#__PURE__*/React.createElement(Avatar, { nome: func?.nome || "?", id: func?.id || 0, size: 26 }),
+      /*#__PURE__*/React.createElement("span", { style: { fontSize: 12, fontWeight: 600, color: "var(--cinza-900)" } }, func?.nome?.split(" ").slice(0, 2).join(" ") || "—")
+    )),
+    /*#__PURE__*/React.createElement("td", { style: { padding: "10px 16px", fontSize: 12, color: "var(--cinza-500)" } }, func?.setor || "—"),
+    /*#__PURE__*/React.createElement("td", { style: { padding: "10px 16px", fontSize: 12, fontWeight: 600, color: "var(--cinza-900)" } }, tipoIcon(o.tipo), " ", o.tipo),
+    /*#__PURE__*/React.createElement("td", { style: { padding: "10px 16px" } }, /*#__PURE__*/React.createElement(Badge, { status: o.status })),
+    /*#__PURE__*/React.createElement("td", { style: { padding: "10px 16px", fontSize: 12, color: "var(--cinza-500)", maxWidth: 200 } }, o.observacaoAdmin || /*#__PURE__*/React.createElement("span", { style: { color: "var(--cinza-300)" } }, "—")));
+  }))), ocorrenciasFiltradas.length === 0 && /*#__PURE__*/React.createElement("div", {
+    style: { padding: 40, textAlign: "center", color: "var(--cinza-400)", fontSize: 13 }
+  }, "Nenhuma ocorrência no período selecionado."));
+
+  // ── Modal de ação (só usado no modo Fila) ────────────────────────────────
+  const modalAcao = modal && /*#__PURE__*/React.createElement(Modal, {
+    title: modal.acao === "verificar" ? "✓ Confirmar verificação" : modal.acao === "excluir" ? "🗑 Excluir pendência" : "✕ Rejeitar correção",
+    onClose: () => { setModal(null); setObs(""); }
+  }, /*#__PURE__*/React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 14 } },
+    /*#__PURE__*/React.createElement("div", { style: { background: "var(--cinza-50)", borderRadius: 12, padding: "14px 16px" } },
+      /*#__PURE__*/React.createElement("div", { style: { fontSize: 13, fontWeight: 700, color: "var(--cinza-900)" } }, resolverFuncionarioDaOcorrencia(funcionarios, modal)?.nome),
+      /*#__PURE__*/React.createElement("div", { style: { fontSize: 13, color: "var(--cinza-500)" } }, modal.tipo, " · ", fmtDate(modal.data)),
+      modal.resposta && /*#__PURE__*/React.createElement("div", { style: { marginTop: 8, fontSize: 13, color: "var(--cinza-700)", fontStyle: "italic" } }, "\"", modal.resposta, "\"")
+    ),
+    modal.acao === "verificar" && /*#__PURE__*/React.createElement("div", { style: { background: "var(--azul-50)", border: "1px solid var(--azul-200)", borderRadius: 10, padding: "10px 14px", fontSize: 13, color: "var(--azul-700)" } }, "Confirme que verificou no sistema ", /*#__PURE__*/React.createElement("strong", null, "Vibe"), " e a correção está correta."),
+    modal.acao === "excluir" && /*#__PURE__*/React.createElement("div", { style: { background: "var(--vermelho-100)", border: "1px solid var(--vermelho-300)", borderRadius: 10, padding: "10px 14px", fontSize: 13, color: "var(--vermelho-600)" } }, "Esta ação remove a pendência permanentemente para todo o time. Não é possível desfazer."),
+    modal.acao !== "excluir" && /*#__PURE__*/React.createElement("div", null,
+      /*#__PURE__*/React.createElement("label", { style: { fontSize: 13, fontWeight: 600, color: "var(--cinza-700)", display: "block", marginBottom: 6 } }, "Observação ", modal.acao === "rejeitar" ? "(obrigatória)" : "(opcional)"),
+      /*#__PURE__*/React.createElement("textarea", {
+        value: obs,
+        onChange: e => setObs(e.target.value),
+        placeholder: modal.acao === "rejeitar" ? "Informe o motivo da rejeição…" : "Adicione uma observação (opcional)…",
+        style: { width: "100%", minHeight: 80, borderRadius: 10, border: "1px solid var(--cinza-200)", padding: "10px 14px", fontSize: 13, resize: "vertical", fontFamily: "inherit", boxSizing: "border-box", outline: "none" }
+      })
+    ),
+    /*#__PURE__*/React.createElement("div", { style: { display: "flex", gap: 10, justifyContent: "flex-end" } },
+      /*#__PURE__*/React.createElement("button", {
+        onClick: () => { setModal(null); setObs(""); },
+        style: { padding: "10px 20px", borderRadius: 10, border: "1px solid var(--cinza-200)", background: "var(--cor-branco)", fontSize: 13, cursor: "pointer", fontWeight: 600, color: "var(--cinza-500)" }
+      }, "Cancelar"),
+      /*#__PURE__*/React.createElement("button", {
+        onClick: () => modal.acao === "verificar" ? verificar(modal.id) : modal.acao === "excluir" ? excluir(modal.id) : rejeitar(modal.id),
+        disabled: modal.acao === "rejeitar" && !obs.trim(),
+        style: {
+          padding: "10px 20px", borderRadius: 10, border: "none", fontSize: 13, fontWeight: 700, cursor: "pointer",
+          background: modal.acao === "verificar" ? "var(--verde-600)" : modal.acao === "excluir" ? "var(--vermelho-600)" : obs.trim() ? "var(--vermelho-600)" : "var(--cinza-200)",
+          color: modal.acao === "rejeitar" && !obs.trim() ? "var(--cinza-400)" : "var(--cor-branco)"
+        }
+      }, modal.acao === "verificar" ? "✓ Confirmar verificação" : modal.acao === "excluir" ? "🗑 Excluir definitivamente" : "✕ Confirmar rejeição")
+    )
+  ));
+
+  return /*#__PURE__*/React.createElement("div", null,
+    cabecalho,
+    seletorEscopo || null,
+    toggle,
+    kpis,
+    filtros,
+    modoVisualizacao === "fila" ? listaFila : tabela,
+    modalAcao
+  );
 }
+
 
 // ─── MURAL DE RECADOS ─────────────────────────────────────────────────────────
 function ProcessosPonto({ usuario, setView, ocorrencias = [], funcionarios = [], gerencias = [], diretorias = [] }) {
@@ -14605,14 +14115,10 @@ function App() {
     label: "Funcionários",
     icon: "👥"
   }, {
-    id: "aprovacao",
-    label: "Verificações",
-    icon: "🔍",
-    badge: pendentesNovos
-  }, {
     id: "relatorios",
     label: "Relatórios",
-    icon: "📈"
+    icon: "📈",
+    badge: pendentesNovos
   },
   // Painel de Acessos: só aparece (a) enquanto a hierarquia comercial
   // estiver em preview — ver previewHierarquia acima — e (b) para
@@ -14692,23 +14198,21 @@ function App() {
         sessaoPronta: sessaoPronta,
         contaTesteAtivaAgora: contaTesteAtivaAgora
       });
-      if (view === "aprovacao") return /*#__PURE__*/React.createElement(PainelAprovacao, {
-        ocorrencias: ocorrenciasFiltradas,
+      if (view === "relatorios") return /*#__PURE__*/React.createElement(PainelOcorrencias, {
+        // Usa a base já recortada por gerência/diretoria (ocorrenciasRelatorio/
+        // funcionariosRelatorio) em vez de ocorrenciasFiltradas/funcionariosExibidos:
+        // isso garante que o seletorEscopo do superintendente valha tanto no modo
+        // Fila quanto no modo Tabela, e não só na análise como era antes.
+        ocorrencias: ocorrenciasRelatorio,
         setOcorrencias: setOcorrencias,
-        funcionarios: funcionariosExibidos,
+        funcionarios: funcionariosRelatorio,
         setFuncionarios: setFuncionarios,
         addNotif: addNotif,
         isAdmin: isAdmin,
         mesFiltro: mesFiltro,
         setMesFiltro: setMesFiltro,
         sessaoPronta: sessaoPronta,
-        contaTesteAtivaAgora: contaTesteAtivaAgora
-      });
-      if (view === "relatorios") return /*#__PURE__*/React.createElement(Relatorios, {
-        ocorrencias: ocorrenciasRelatorio,
-        funcionarios: funcionariosRelatorio,
-        mesFiltro: mesFiltro,
-        setMesFiltro: setMesFiltro,
+        contaTesteAtivaAgora: contaTesteAtivaAgora,
         seletorEscopo: usuario?.nivel === "superintendente" && /*#__PURE__*/React.createElement(SeletorEscopoRelatorio, {
           gerencias: gerenciasDaSuperEscopo,
           diretorias: dadosComercial.diretorias,
