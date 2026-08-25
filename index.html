@@ -3892,7 +3892,21 @@ const CAMPO_POR_TIPO = {
 // de ocorrências (em vez de depender de campos fixos salvos no funcionário).
 // Isso evita qualquer dessincronia ao criar/excluir/especificar ocorrências.
 // Ocorrências Rejeitadas não entram na contagem.
-function contarOcorrencias(ocorrencias, funcionarioId) {
+// `funcionarioOuId` aceita tanto o objeto do funcionário quanto (por
+// compatibilidade com chamadas antigas) só o id numérico. Passar o objeto
+// é o caminho preferido: `funcionarios` (legada) e `funcionarios_comercial`
+// usam sequências de id independentes que colidem entre si (ex: id 4 é uma
+// pessoa diferente em cada tabela) — sem checar a origem, uma ocorrência de
+// um funcionário legado podia ser contada também para um funcionário
+// comercial que por coincidência tem o mesmo id numérico, inflando
+// esquecimentos/pendências de gente que nunca teve ocorrência nenhuma.
+// Mesmo critério de desambiguação já usado em resolverFuncionarioDaOcorrencia:
+// quando a ocorrência tem origemFuncionario, compara com !!f.origemComercial;
+// sem esse campo (pendência antiga), cai no fallback só por id.
+function contarOcorrencias(ocorrencias, funcionarioOuId) {
+  const ehObjeto = funcionarioOuId && typeof funcionarioOuId === "object";
+  const funcionarioId = ehObjeto ? funcionarioOuId.id : funcionarioOuId;
+  const origemComercialAlvo = ehObjeto ? !!funcionarioOuId.origemComercial : null;
   const contagem = {
     esquecimentos: 0,
     atestados: 0,
@@ -3905,6 +3919,14 @@ function contarOcorrencias(ocorrencias, funcionarioId) {
   ocorrencias.forEach(o => {
     if (o.funcionario_id !== funcionarioId) return;
     if (o.status === "Rejeitado") return;
+    // Só desambigua por origem quando temos o objeto do funcionário E a
+    // ocorrência informa sua origem — sem isso, mantém o comportamento
+    // antigo (ambíguo, mas necessário para não perder contagem de
+    // pendências criadas antes do campo origemFuncionario existir).
+    if (origemComercialAlvo !== null && o.origemFuncionario) {
+      const querComercial = o.origemFuncionario === "comercial";
+      if (querComercial !== origemComercialAlvo) return;
+    }
     const campo = CAMPO_POR_TIPO[o.tipo];
     if (campo) contagem[campo] += 1;
   });
@@ -5826,7 +5848,7 @@ function Dashboard({
   const contagens = useMemo(() => {
     const map = {};
     funcionarios.forEach(f => {
-      map[f.id] = contarOcorrencias(ocorrenciasMes, f.id);
+      map[f.id] = contarOcorrencias(ocorrenciasMes, f);
     });
     return map;
   }, [ocorrenciasMes, funcionarios]);
@@ -6469,7 +6491,7 @@ function ListaFuncionarios({
   const contagens = useMemo(() => {
     const map = {};
     funcionarios.forEach(f => {
-      map[f.id] = contarOcorrencias(ocorrencias, f.id);
+      map[f.id] = contarOcorrencias(ocorrencias, f);
     });
     return map;
   }, [ocorrencias, funcionarios]);
@@ -8575,7 +8597,7 @@ function PerfilFuncionario({
   }
   const ocsFunc = ocorrencias.filter(o => o.funcionario_id === func.id);
   const ocsFilt = (filtroStatus === "Todos" ? ocsFunc : ocsFunc.filter(o => o.status === filtroStatus)).sort((a, b) => b.data.localeCompare(a.data));
-  const contagem = contarOcorrencias(ocorrencias, func.id);
+  const contagem = contarOcorrencias(ocorrencias, func);
   const al = getAlert(contagem.esquecimentos);
   const total = contagem.total;
   function excluirOcorrencia(oc) {
@@ -9611,7 +9633,7 @@ function PainelOcorrencias({
   }, "Nenhuma ocorrência neste filtro."), ocorrenciasFiltradas.map(o => {
     const func = resolverFuncionarioDaOcorrencia(funcionarios, o);
     if (!func) return null;
-    const al = getAlert(contarOcorrencias(ocorrencias, func.id).esquecimentos);
+    const al = getAlert(contarOcorrencias(ocorrencias, func).esquecimentos);
     const podeVerif = o.status === "Corrigido" || (o.status === "Pendente" && o.criadoPor === "funcionario");
     const ehErroReg = o.tipo === TIPO_EXIGE_EASYMOB;
     const easymob = easymobMap[`${func.id}_${o.id}`];
@@ -10724,7 +10746,7 @@ function PortalFuncionario({
   const [mesFiltro, setMesFiltro] = useState(mesAtualReal);
   const ocorrenciasPortal = useMemo(() => ocorrencias.filter(o => o.funcionario_id === funcLogado.id && (o.data.startsWith(mesFiltro) || o.status === "Pendente" || o.status === "Corrigido")), [ocorrencias, funcLogado.id, mesFiltro]);
   const minhasOcs = ocorrenciasPortal;
-  const contagemFunc = contarOcorrencias(ocorrenciasPortal, funcLogado.id);
+  const contagemFunc = contarOcorrencias(ocorrenciasPortal, funcLogado);
   const [modal, setModal] = useState(null);
   const [sucesso, setSucesso] = useState(false);
   // Sem sessaoPronta/contaTesteAtivaAgora, a carga inicial e o polling de
