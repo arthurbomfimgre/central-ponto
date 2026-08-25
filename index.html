@@ -3921,23 +3921,20 @@ function contarOcorrencias(ocorrencias, funcionarioOuId) {
   ocorrencias.forEach(o => {
     if (o.funcionario_id !== funcionarioId) return;
     if (o.status === "Rejeitado") return;
-    // Desambigua por origem sempre que temos o objeto do funcionário
-    // (origemComercialAlvo !== null). Quando a ocorrência informa
-    // explicitamente sua origem (origemFuncionario), usamos esse valor.
-    // Quando NÃO informa (pendência antiga, criada antes desse campo
-    // existir), NÃO contamos cegamente por id puro — isso é o que causava
-    // "pendências fantasma" em funcionários comerciais: o id de um
-    // funcionário comercial pode coincidir com o id de um funcionário
-    // legado que tem pendências reais, e ambos acabavam somando a mesma
-    // ocorrência. Sem informação de origem, tratamos a ocorrência como
-    // pertencente à tabela legada (mesma convenção adotada no Painel de
-    // Pendências / resolverFuncionario: tudo sem o campo é "legado" por
-    // padrão) — assim ela só conta para o funcionário legado, nunca para o
-    // comercial de mesmo id.
-    if (origemComercialAlvo !== null) {
-      const querComercial = o.origemFuncionario
-        ? o.origemFuncionario === "comercial"
-        : false; // sem info de origem -> assume legado, nunca comercial
+    // Desambigua por origem SOMENTE quando a ocorrência informa
+    // explicitamente sua origem (origemFuncionario). Quando esse campo não
+    // existe (pendência antiga/importada, comum em dados reais), voltamos
+    // ao comportamento original: conta por id puro, sem tentar adivinhar a
+    // origem. Uma suposição errada aqui (ex.: assumir "sempre legado") pode
+    // apagar pendências reais de quem for legado de verdade, caso os dados
+    // de produção não sigam exatamente o padrão dos dados de exemplo deste
+    // arquivo. Fica documentado que esse fallback continua ambíguo em caso
+    // de colisão de id entre funcionarios e funcionarios_comercial — a
+    // correção definitiva é gravar origemFuncionario em toda ocorrência
+    // nova (já feito) e, se possível, rodar uma migração pontual que
+    // preencha esse campo nas ocorrências antigas do banco.
+    if (origemComercialAlvo !== null && o.origemFuncionario) {
+      const querComercial = o.origemFuncionario === "comercial";
       if (querComercial !== origemComercialAlvo) return;
     }
     const campo = CAMPO_POR_TIPO[o.tipo];
@@ -4009,22 +4006,20 @@ function emailFuncionario(func) {
 // `funcionarios` e `funcionarios_comercial` usam sequências independentes
 // que colidem entre si (ex: id 4 é uma pessoa diferente em cada uma).
 // Usa o campo origemFuncionario (gravado em toda pendência criada a partir
-// desta correção) quando presente. Quando ausente (pendência antiga), NÃO
-// cai mais num `.find()` cego por id — isso podia resolver a ocorrência
-// para a pessoa errada quando um id colidia entre as duas tabelas (ex.:
-// mostrar o nome de um funcionário comercial numa ocorrência que na
-// verdade era de um funcionário legado de mesmo id, ou vice-versa). Sem
-// informação de origem, assume "legado" por convenção — mesmo critério
-// usado no Painel de Pendências (resolverFuncionario) — e só cai no
-// comercial se não existir ninguém com aquele id na tabela legada.
+// desta correção) quando presente; senão, cai no `.find()` simples (a
+// mesma ambiguidade que sempre existiu antes desta correção — mantido só
+// como fallback para não quebrar pendências antigas sem o campo). Uma
+// versão anterior deste fallback tentava assumir "sempre legado" quando a
+// origem não era informada, mas isso apagou pendências reais de
+// funcionários legados em produção (a suposição não bateu com os dados
+// reais do banco) — revertido para o comportamento original.
 function resolverFuncionarioDaOcorrencia(funcionarios, o) {
   if (o?.origemFuncionario) {
     const querComercial = o.origemFuncionario === "comercial";
     const achado = funcionarios.find(f => f.id === o.funcionario_id && !!f.origemComercial === querComercial);
     if (achado) return achado;
   }
-  return funcionarios.find(f => f.id === o?.funcionario_id && !f.origemComercial)
-    || funcionarios.find(f => f.id === o?.funcionario_id);
+  return funcionarios.find(f => f.id === o?.funcionario_id);
 }
 function normalizarFuncComercial(fc) {
   return {
@@ -6480,12 +6475,13 @@ function ListaFuncionarios({
   const [estadoAberto, setEstadoAberto] = useState({});
   const toggleAberto = chave => setEstadoAberto(prev => ({ ...prev, [chave]: !prev[chave] }));
   // Reseta os nós expandidos sempre que um filtro muda (busca, cargo ou
-  // situação). Sem isso, `estadoAberto` guardava só chaves "d_<id>"/"g_<id>"
-  // acumuladas indefinidamente — ao usar o filtro "Todos" (que naturalmente
-  // expõe/expande mais nós) e depois trocar para outro filtro, os nós
-  // continuavam com o mesmo estado de aberto/fechado de antes, dando a
-  // impressão de que o filtro "travou" (árvore não refletia mais a seleção
-  // atual, mostrando nós abertos/fechados de um filtro anterior).
+  // situação/esquecimento). Sem isso, `estadoAberto` guardava as chaves
+  // "d_<id>"/"g_<id>" acumuladas indefinidamente — ao usar o filtro
+  // "Todos" em Situação (que naturalmente expõe mais gente e nós) e depois
+  // voltar para outro filtro (ex. "Atenção", "Limite"), os nós continuavam
+  // com o mesmo estado de aberto/fechado de antes, dando a impressão de
+  // que o filtro "travou" (árvore de Funcionários não refletia mais a
+  // seleção atual, mostrando nós abertos/fechados do filtro anterior).
   useEffect(() => {
     setEstadoAberto({});
   }, [busca, cargoFiltro, filtroAlerta]);
