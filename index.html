@@ -4325,9 +4325,21 @@ function statusColor(s) {
     color: "var(--cinza-600)"
   };
 }
+// Aceita id numérico (funcionarios_comercial, inteiro sequencial) ou UUID
+// string (funcionarios_administrativo, desde a migração de ago/2026).
+// `id % p.length` só funciona com número — em um UUID, o módulo dá NaN e
+// quebra o componente Avatar inteiro (TypeError: "not iterable") em
+// qualquer tela que renderize um funcionário do administrativo. Para
+// string, soma os code points dos caracteres antes do módulo (hash simples
+// e determinístico — mesmo UUID sempre cai na mesma cor).
 function avatarColor(id) {
   const p = [["var(--roxo-100)", "var(--roxo-600)"], ["var(--azul-100)", "var(--azul-700)"], ["var(--rosa-100)", "var(--rosa-700)"], ["var(--verde-100)", "var(--verde-700)"], ["var(--laranja-100)", "var(--laranja-700)"], ["var(--verde-50)", "var(--verde-800)"], ["var(--amber-100)", "var(--amber-700)"], ["var(--ciano-100)", "var(--ciano-700)"], ["var(--fucsia-50)", "var(--fucsia-700)"], ["var(--laranja-50)", "var(--laranja-700)"], ["var(--azul-50)", "var(--azul-800)"], ["var(--teal-50)", "var(--teal-700)"], ["var(--amarelo-50)", "var(--amarelo-800)"], ["var(--rosa-50)", "var(--rosa-800)"], ["var(--verde-50)", "var(--verde-900)"], ["var(--rosa-rosado-50)", "var(--rosa-rosado-800)"]];
-  return p[id % p.length];
+  let n = typeof id === "number" ? id : 0;
+  if (typeof id === "string") {
+    n = 0;
+    for (let i = 0; i < id.length; i++) n = (n + id.charCodeAt(i)) | 0;
+  }
+  return p[Math.abs(n) % p.length];
 }
 function tipoIcon(tipo) {
   const m = {
