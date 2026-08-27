@@ -6477,7 +6477,12 @@ function ListaFuncionarios({
   const [err, setErr] = useState("");
   const [sucesso, setSucesso] = useState("");
   const [salvando, setSalvando] = useState(false);
-  const cargosDisponiveis = useMemo(() => [...new Set(funcionarios.map(f => f.cargo))].sort((a, b) => a.localeCompare(b, "pt-BR", {
+  // .filter(Boolean) é essencial aqui: se algum funcionário tiver cargo
+  // null/undefined (comum em importações incompletas), o array mistura
+  // string e null, e null.localeCompare() no .sort() abaixo lança
+  // TypeError — o que derruba a tela de Funcionários inteira (React não
+  // renderiza nada, aparecendo como página vazia).
+  const cargosDisponiveis = useMemo(() => [...new Set(funcionarios.map(f => f.cargo).filter(Boolean))].sort((a, b) => a.localeCompare(b, "pt-BR", {
     sensitivity: "base"
   })), [funcionarios]);
   // Setores disponíveis, derivados dinamicamente dos funcionários já
@@ -8559,7 +8564,7 @@ function PerfilFuncionario({
   const [editando, setEditando] = useState(null);
   const [salvandoEdicao, setSalvandoEdicao] = useState(false);
   const [errEdicao, setErrEdicao] = useState("");
-  const cargosDisponiveis = useMemo(() => [...new Set(funcionarios.map(f => f.cargo))].sort((a, b) => a.localeCompare(b, "pt-BR", { sensitivity: "base" })), [funcionarios]);
+  const cargosDisponiveis = useMemo(() => [...new Set(funcionarios.map(f => f.cargo).filter(Boolean))].sort((a, b) => a.localeCompare(b, "pt-BR", { sensitivity: "base" })), [funcionarios]);
   const setoresDisponiveis = useMemo(() => [...new Set(funcionarios.map(f => f.setor).filter(Boolean))].sort((a, b) => a.localeCompare(b, "pt-BR", { sensitivity: "base" })), [funcionarios]);
 
   function abrirEditar() {
