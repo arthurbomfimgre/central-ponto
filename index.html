@@ -8214,6 +8214,553 @@ async function aplicarImportacaoHierarquia(plano, banco, onProgresso) {
   return { falhasRevogacao, revogadosRetroativos: jaEramInativosComAcessoPendente.map(f => ({ nome: nomeParaLog(f), matricula: f.matricula })) };
 }
 
+// ─── IMPORTADOR DE EQUIPE ADMINISTRATIVA ──────────────────────────────────
+// Lê uma planilha do administrativo (modelo "gre1.xlsx": Matricula,
+// Colaborador, Cargo, Area, Situacao, Supervisor, Supervisao, e-mail
+// Profissional) e sincroniza funcionarios_administrativo. Diferente do
+// comercial, aqui não existem tabelas de estrutura separadas — a hierarquia
+// (equipe > coordenador > subequipe > membro) vive inteira dentro de
+// funcionarios_administrativo, em três colunas: equipe_id (texto livre,
+// nome da equipe), subequipe_id (texto livre, nome da subequipe) e
+// coordenador_id (uuid, aponta para outro funcionario_administrativo).
+//
+// Identificação de papéis, tudo pelo CARGO da planilha (decisão do Arthur):
+//  - "GERENTE ADMINISTRATIVO..." -> gerente da equipe inteira (sem
+//    coordenador acima, sem subequipe).
+//  - "COORDENADOR ADMINISTRATIVO..." -> lidera uma ou mais subequipes (sem
+//    subequipe própria, coordenador_id aponta pro gerente).
+//  - Qualquer outro cargo -> membro comum: subequipe_id vem da coluna
+//    "Supervisao" da própria linha; coordenador_id é resolvido casando o
+//    nome da coluna "Supervisor" com os coordenadores já identificados.
+//
+// Nome da equipe: por padrão vem do nome do arquivo importado (sem
+// extensão, maiúsculo). Se esse nome não bater com nenhuma equipe já
+// existente, tenta reconhecer por similaridade de funcionários (matrículas
+// em comum) antes de assumir que é uma equipe nova — evita duplicar a
+// mesma equipe só porque o arquivo trocou de nome entre importações.
+
+const MAPA_COLUNAS_IMPORT_ADMIN = {
+  matricula: "Matricula",
+  nome: "Colaborador",
+  cargo: "Cargo",
+  setor: "Area",
+  situacao: "Situacao",
+  supervisor: "Supervisor",
+  supervisao: "Supervisao",
+  email: "e-mail Profissional"
+};
+
+// Extrai o nome da equipe a partir do nome do arquivo: remove a extensão,
+// troca separadores comuns (_, -, .) por espaço, colapsa espaços e
+// maiuscula — "gre1.xlsx" -> "GRE1", "equipe_financeiro.xlsx" -> "EQUIPE
+// FINANCEIRO".
+function nomeEquipeDoArquivo(nomeArquivo) {
+  const semExtensao = String(nomeArquivo || "").replace(/\.[^.]+$/, "");
+  const espacado = semExtensao.replace(/[_\-.]+/g, " ").trim();
+  return (espacado || "EQUIPE SEM NOME").toUpperCase();
+}
+
+function classificarCargoAdmin(cargoBruto) {
+  const cargo = String(cargoBruto || "").trim().toUpperCase();
+  if (cargo.includes("GERENTE")) return "gerente";
+  if (cargo.includes("COORDENADOR")) return "coordenador";
+  return "membro";
+}
+
+// Compara um nome "curto" (ex.: coluna Supervisor, que às vezes vem
+// abreviado, tipo "FELIPE ALBACETE") contra um nome completo (ex.: "FELIPE
+// ROSA ALBACETE RAMOS" do cadastro do coordenador). Considera correspondência
+// quando todas as palavras do nome curto aparecem, na mesma ordem relativa,
+// dentro do nome completo — não exige que sejam vizinhas, já que sobrenomes
+// do meio (ROSA, DE ALMEIDA) costumam ser omitidos na planilha.
+function nomeCurtoCasaComCompleto(nomeCurtoBruto, nomeCompletoBruto) {
+  const normalizar = s => String(s || "").trim().toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const curto = normalizar(nomeCurtoBruto).split(/\s+/).filter(Boolean);
+  const completo = normalizar(nomeCompletoBruto).split(/\s+/).filter(Boolean);
+  if (curto.length === 0 || completo.length === 0) return false;
+  let cursor = 0;
+  for (const palavra of curto) {
+    const idx = completo.indexOf(palavra, cursor);
+    if (idx === -1) return false;
+    cursor = idx + 1;
+  }
+  return true;
+}
+
+// Decide a equipe de destino: (1) se algum funcionário já cadastrado tem
+// equipe_id igual ao nome derivado do arquivo, usa essa equipe direto; (2)
+// senão, compara a lista de matrículas da planilha contra as equipes já
+// existentes — se uma equipe existente compartilha uma fração alta de
+// matrículas com a planilha nova, assume que é a mesma equipe (arquivo só
+// mudou de nome) e devolve o nome JÁ CADASTRADO dessa equipe, em vez do
+// nome novo do arquivo; (3) senão, é equipe nova mesmo, usa o nome do
+// arquivo.
+// Limiar de 50%: decisão prática para equilibrar entre reconhecer a mesma
+// equipe reimportada (normalmente quase 100% de sobreposição) e não
+// fundir por engano duas equipes pequenas e coincidentes por acaso.
+const LIMIAR_SIMILARIDADE_EQUIPE = 0.5;
+function resolverNomeEquipe(nomeArquivo, matriculasDaPlanilha, funcionariosExistentes) {
+  const nomeCandidato = nomeEquipeDoArquivo(nomeArquivo);
+  const equipesExistentes = new Map(); // nome equipe -> Set de matrículas
+  for (const f of funcionariosExistentes) {
+    if (!f.equipe_id) continue;
+    if (!equipesExistentes.has(f.equipe_id)) equipesExistentes.set(f.equipe_id, new Set());
+    equipesExistentes.get(f.equipe_id).add(String(f.matricula || "").trim());
+  }
+  if (equipesExistentes.has(nomeCandidato)) {
+    return { nomeEquipe: nomeCandidato, equipeReconhecida: true, equipeNova: false };
+  }
+  let melhorNome = null;
+  let melhorTaxa = 0;
+  for (const [nomeEquipe, matriculasEquipe] of equipesExistentes) {
+    let emComum = 0;
+    for (const m of matriculasDaPlanilha) if (matriculasEquipe.has(m)) emComum++;
+    const taxa = matriculasEquipe.size > 0 ? emComum / matriculasEquipe.size : 0;
+    if (taxa > melhorTaxa) {
+      melhorTaxa = taxa;
+      melhorNome = nomeEquipe;
+    }
+  }
+  if (melhorNome && melhorTaxa >= LIMIAR_SIMILARIDADE_EQUIPE) {
+    return { nomeEquipe: melhorNome, equipeReconhecida: true, equipeNova: false, taxaSimilaridade: melhorTaxa, nomeArquivoOriginal: nomeCandidato };
+  }
+  return { nomeEquipe: nomeCandidato, equipeReconhecida: false, equipeNova: true };
+}
+
+// Monta o plano de sincronização a partir das linhas cruas do Excel + nome
+// do arquivo + funcionários já existentes no administrativo (todos, ativos
+// e inativos — mesmo motivo do importador comercial: o diff de inativação
+// não pode reprocessar quem já está inativo). Não faz nenhuma chamada de
+// rede.
+function analisarImportacaoAdministrativa(linhasExcel, nomeArquivo, funcionariosExistentesTodos) {
+  const erros = [];
+  const linhasValidas = [];
+
+  linhasExcel.forEach((linha, idx) => {
+    const numeroLinha = idx + 2;
+    const matricula = normalizarTextoHierarquia(linha[MAPA_COLUNAS_IMPORT_ADMIN.matricula]);
+    const nomeCompleto = normalizarTextoHierarquia(linha[MAPA_COLUNAS_IMPORT_ADMIN.nome]);
+    if (!matricula || !nomeCompleto) {
+      erros.push({ linha: numeroLinha, motivo: "Matrícula ou nome do colaborador ausente." });
+      return;
+    }
+    const cargoBruto = normalizarTextoHierarquia(linha[MAPA_COLUNAS_IMPORT_ADMIN.cargo]);
+    linhasValidas.push({
+      numeroLinha,
+      matricula,
+      nomeCompleto: nomeCompleto.toUpperCase(),
+      cargo: cargoBruto || null,
+      papel: classificarCargoAdmin(cargoBruto),
+      setor: normalizarTextoHierarquia(linha[MAPA_COLUNAS_IMPORT_ADMIN.setor]) || null,
+      situacao: (normalizarTextoHierarquia(linha[MAPA_COLUNAS_IMPORT_ADMIN.situacao]).toUpperCase() || "ATIVO"),
+      supervisorNome: normalizarTextoHierarquia(linha[MAPA_COLUNAS_IMPORT_ADMIN.supervisor]) || null,
+      supervisaoNome: normalizarTextoHierarquia(linha[MAPA_COLUNAS_IMPORT_ADMIN.supervisao]).toUpperCase() || null,
+      email: normalizarTextoHierarquia(linha[MAPA_COLUNAS_IMPORT_ADMIN.email]).toLowerCase() || null
+    });
+  });
+
+  const matriculasDaPlanilha = new Set(linhasValidas.map(l => l.matricula));
+  const { nomeEquipe, equipeReconhecida, equipeNova, taxaSimilaridade, nomeArquivoOriginal } =
+    resolverNomeEquipe(nomeArquivo, matriculasDaPlanilha, funcionariosExistentesTodos);
+
+  // Gerente da equipe: só faz sentido haver um; se a planilha trouxer mais
+  // de um, o primeiro encontrado vira o gerente e os demais viram erro (não
+  // silenciosamente ignorados) — situação anômala que merece revisão manual.
+  const gerentesNaPlanilha = linhasValidas.filter(l => l.papel === "gerente");
+  if (gerentesNaPlanilha.length > 1) {
+    for (const g of gerentesNaPlanilha.slice(1)) {
+      erros.push({ linha: g.numeroLinha, matricula: g.matricula, nome: g.nomeCompleto, motivo: `Cargo indica gerente, mas já há um gerente identificado nesta planilha (${gerentesNaPlanilha[0].nomeCompleto}). Revise manualmente.` });
+    }
+  }
+  const gerente = gerentesNaPlanilha[0] || null;
+  const coordenadoresNaPlanilha = linhasValidas.filter(l => l.papel === "coordenador");
+
+  // Resolve, para cada membro comum, qual coordenador (da própria
+  // planilha) corresponde ao nome da coluna Supervisor.
+  function resolverCoordenadorDaLinha(l) {
+    if (!l.supervisorNome) return null;
+    const achado = coordenadoresNaPlanilha.find(c => nomeCurtoCasaComCompleto(l.supervisorNome, c.nomeCompleto));
+    return achado || null;
+  }
+
+  const semCoordenadorResolvido = [];
+  linhasValidas.forEach(l => {
+    if (l.papel !== "membro") return;
+    const coord = resolverCoordenadorDaLinha(l);
+    if (!coord && l.supervisorNome) semCoordenadorResolvido.push({ linha: l.numeroLinha, matricula: l.matricula, nome: l.nomeCompleto, supervisorBuscado: l.supervisorNome });
+  });
+
+  // Casamento com o banco: por matrícula, com fallback por e-mail — mesmo
+  // padrão do importador comercial.
+  const funcPorMatricula = new Map(funcionariosExistentesTodos.map(f => [String(f.matricula || "").trim(), f]));
+  const funcPorEmail = new Map(funcionariosExistentesTodos.filter(f => f.email).map(f => [f.email.trim().toLowerCase(), f]));
+
+  const funcionariosNovos = [];
+  const funcionariosAtualizados = []; // { id, matriculaAnterior, nome, campos }
+
+  // Referência auxiliar por matrícula -> linha, usada depois de resolver
+  // coordenador_id (que precisa do id real de quem já existe, ou marca
+  // "pendente" para gente nova, resolvido no segundo passe após a criação).
+  linhasValidas.forEach(l => {
+    let existente = funcPorMatricula.get(l.matricula);
+    if (!existente && l.email) existente = funcPorEmail.get(l.email);
+
+    const coordDaLinha = l.papel === "membro" ? resolverCoordenadorDaLinha(l) : null;
+
+    const camposBase = {
+      matricula: l.matricula,
+      nome_completo: l.nomeCompleto,
+      cargo_origem: l.cargo,
+      setor: l.setor,
+      email: l.email,
+      situacao: "ATIVO",
+      equipe_id: nomeEquipe,
+      // subequipe_id: só membro comum tem; gerente e coordenador não.
+      subequipe_id: l.papel === "membro" ? l.supervisaoNome : null,
+      // _coordenadorMatricula: resolvido para id real no passo de aplicação
+      // (depois que todo mundo já foi criado/atualizado no banco).
+      _coordenadorMatricula: l.papel === "membro" && coordDaLinha ? coordDaLinha.matricula
+        : (l.papel === "coordenador" && gerente ? gerente.matricula : null)
+    };
+    const camposPreenchidos = {};
+    Object.entries(camposBase).forEach(([k, v]) => {
+      if (k === "_coordenadorMatricula") { camposPreenchidos[k] = v; return; }
+      if (v !== null && v !== "") camposPreenchidos[k] = v;
+    });
+
+    if (existente) {
+      funcionariosAtualizados.push({
+        id: existente.id,
+        matriculaAnterior: existente.matricula,
+        nome: l.nomeCompleto,
+        campos: existente.situacao !== "ATIVO" ? { ...camposPreenchidos, situacao: "ATIVO" } : camposPreenchidos
+      });
+    } else {
+      funcionariosNovos.push({
+        ...camposBase,
+        nome: l.nomeCompleto, // mantém compat com o resto do app (campo "nome")
+        ativo: true,
+        esquecimentos: 0, atestados: 0, faltas: 0, banco_horas: 0,
+        erros_registro: 0, abonos: 0, integracoes: 0
+      });
+    }
+  });
+
+  // Quem sumiu da planilha desta equipe (existia ativo, matrícula não
+  // apareceu desta vez) — só compara dentro do escopo da própria equipe,
+  // nunca do administrativo inteiro, para não inativar gente de outra
+  // equipe por engano.
+  const matriculasNaPlanilhaSet = matriculasDaPlanilha;
+  const funcionariosInativados = funcionariosExistentesTodos.filter(f =>
+    f.equipe_id === nomeEquipe &&
+    (f.situacao || "ATIVO").toUpperCase() === "ATIVO" &&
+    !matriculasNaPlanilhaSet.has(String(f.matricula || "").trim())
+  );
+
+  return {
+    erros,
+    semCoordenadorResolvido,
+    totalLinhasPlanilha: linhasExcel.length,
+    nomeEquipe,
+    equipeReconhecida,
+    equipeNova,
+    taxaSimilaridade,
+    nomeArquivoOriginal,
+    gerente,
+    coordenadoresNaPlanilha,
+    funcionariosNovos,
+    funcionariosAtualizados,
+    funcionariosInativados
+  };
+}
+
+// Aplica o plano no Supabase. Ordem: (1) cria/atualiza todo mundo primeiro
+// SEM coordenador_id (esse campo depende de ids que só existem depois da
+// criação); (2) num segundo passe, resolve coordenador_id de cada um via
+// matrícula -> id e faz um update pontual só desse campo; (3) inativa quem
+// sumiu.
+async function aplicarImportacaoAdministrativa(plano, onProgresso) {
+  const progresso = onProgresso || (() => {});
+  const idPorMatricula = new Map();
+
+  progresso(`Criando ${plano.funcionariosNovos.length} funcionário(s) novo(s)…`);
+  for (const novo of plano.funcionariosNovos) {
+    const { _coordenadorMatricula, ...campos } = novo;
+    const { data, error } = await supa.from("funcionarios_administrativo")
+      .insert(campos)
+      .select().single();
+    if (error) throw new Error(`Falha ao criar funcionário "${novo.nome_completo}" (matrícula ${novo.matricula}): ${extrairMensagemErro(error)}`);
+    idPorMatricula.set(novo.matricula, data.id);
+    registrarLogAcessosClient({
+      acao: "criar_funcionario",
+      funcionario_nome: novo.nome_completo,
+      funcionario_matricula: novo.matricula,
+      origem: "importacao_planilha",
+      detalhe: { equipe: novo.equipe_id, subequipe: novo.subequipe_id || null }
+    });
+  }
+
+  progresso(`Atualizando ${plano.funcionariosAtualizados.length} funcionário(s)…`);
+  for (const at of plano.funcionariosAtualizados) {
+    const { _coordenadorMatricula, ...campos } = at.campos;
+    const { error } = await supa.from("funcionarios_administrativo")
+      .update(campos)
+      .eq("id", at.id);
+    if (error) throw new Error(`Falha ao atualizar funcionário "${at.nome}": ${extrairMensagemErro(error)}`);
+    idPorMatricula.set(at.matriculaAnterior, at.id);
+  }
+
+  // Segundo passe: resolve coordenador_id agora que todo mundo tem id real
+  // (seja recém-criado, seja já existente).
+  progresso("Vinculando coordenadores…");
+  const todosComCoordenadorPendente = [
+    ...plano.funcionariosNovos.map(f => ({ matricula: f.matricula, coordMatricula: f._coordenadorMatricula })),
+    ...plano.funcionariosAtualizados.map(f => ({ matricula: f.matriculaAnterior, coordMatricula: f.campos._coordenadorMatricula }))
+  ].filter(x => x.coordMatricula);
+  for (const item of todosComCoordenadorPendente) {
+    const idPessoa = idPorMatricula.get(item.matricula);
+    const idCoordenador = idPorMatricula.get(item.coordMatricula);
+    if (!idPessoa || !idCoordenador) continue; // matrícula não resolvida — pula silenciosamente, não é erro fatal
+    const { error } = await supa.from("funcionarios_administrativo")
+      .update({ coordenador_id: idCoordenador })
+      .eq("id", idPessoa);
+    if (error) throw new Error(`Falha ao vincular coordenador de matrícula ${item.matricula}: ${extrairMensagemErro(error)}`);
+  }
+
+  progresso(`Inativando ${plano.funcionariosInativados.length} funcionário(s)…`);
+  for (const inativo of plano.funcionariosInativados) {
+    const { error } = await supa.from("funcionarios_administrativo")
+      .update({ situacao: "INATIVO", ativo: false })
+      .eq("id", inativo.id);
+    if (error) throw new Error(`Falha ao inativar funcionário "${inativo.nome_completo || inativo.nome}": ${extrairMensagemErro(error)}`);
+  }
+
+  progresso("Concluído.");
+}
+
+function ModalImportarEquipeAdministrativa({ onClose, onConcluido }) {
+  const [arquivo, setArquivo] = useState(null);
+  const [carregandoBanco, setCarregandoBanco] = useState(false);
+  const [processandoArquivo, setProcessandoArquivo] = useState(false);
+  const [plano, setPlano] = useState(null);
+  const [aplicando, setAplicando] = useState(false);
+  const [etapaAtual, setEtapaAtual] = useState("");
+  const [erro, setErro] = useState("");
+  const [concluido, setConcluido] = useState(null);
+
+  async function selecionarArquivo(file) {
+    setArquivo(file);
+    setPlano(null);
+    setErro("");
+    setConcluido(null);
+    if (!file) return;
+    setProcessandoArquivo(true);
+    setCarregandoBanco(true);
+    try {
+      const [linhas, funcRes] = await Promise.all([
+        lerArquivoExcel(file),
+        supa.from("funcionarios_administrativo").select("*")
+      ]);
+      if (funcRes.error) throw funcRes.error;
+      const resultado = analisarImportacaoAdministrativa(linhas, file.name, funcRes.data || []);
+      setPlano(resultado);
+    } catch (err) {
+      setErro(extrairMensagemErro(err));
+    } finally {
+      setProcessandoArquivo(false);
+      setCarregandoBanco(false);
+    }
+  }
+
+  async function confirmarImportacao() {
+    if (!plano) return;
+    setAplicando(true);
+    setErro("");
+    try {
+      await aplicarImportacaoAdministrativa(plano, setEtapaAtual);
+      const resultadoLog = await registrarLogAcessosClient({
+        acao: "importacao_planilha",
+        origem: "importacao_planilha",
+        detalhe: {
+          equipe: plano.nomeEquipe,
+          novos: plano.funcionariosNovos.length,
+          atualizados: plano.funcionariosAtualizados.length,
+          inativados: plano.funcionariosInativados.length
+        },
+        _debug: true
+      });
+      setConcluido({
+        nomeEquipe: plano.nomeEquipe,
+        novos: plano.funcionariosNovos.length,
+        atualizados: plano.funcionariosAtualizados.length,
+        inativados: plano.funcionariosInativados.length,
+        logFalhou: !resultadoLog.ok,
+        listaNovos: plano.funcionariosNovos.map(f => ({ nome: f.nome_completo, matricula: f.matricula })),
+        listaAtualizados: plano.funcionariosAtualizados.map(f => ({ nome: f.nome, matricula: f.matriculaAnterior })),
+        listaInativados: plano.funcionariosInativados.map(f => ({ nome: f.nome_completo || f.nome, matricula: f.matricula }))
+      });
+      setPlano(null);
+      setArquivo(null);
+      onConcluido && onConcluido();
+    } catch (err) {
+      setErro(extrairMensagemErro(err));
+    } finally {
+      setAplicando(false);
+      setEtapaAtual("");
+    }
+  }
+
+  const carregando = processandoArquivo || carregandoBanco;
+  const linhaResumo = (rotulo, valor, cor) => /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex", justifyContent: "space-between", alignItems: "center",
+      padding: "9px 14px", borderRadius: 10, background: `var(--${cor}-50)`,
+      fontSize: 13
+    }
+  },
+    /*#__PURE__*/React.createElement("span", { style: { color: `var(--${cor}-700)`, fontWeight: 600 } }, rotulo),
+    /*#__PURE__*/React.createElement("span", { style: { color: `var(--${cor}-700)`, fontWeight: 800, fontSize: 15 } }, valor)
+  );
+
+  return /*#__PURE__*/React.createElement(Modal, {
+    title: "📥 Importar equipe administrativa",
+    onClose: aplicando ? () => {} : onClose,
+    maxWidth: 640
+  },
+    !plano && !concluido && /*#__PURE__*/React.createElement(React.Fragment, null,
+      /*#__PURE__*/React.createElement("p", { style: { fontSize: 13, color: "var(--cinza-500)", marginBottom: 18 } },
+        "Selecione a planilha do administrativo (modelo Matricula/Colaborador/Cargo/Area/Situacao/Supervisor/Supervisao). O nome do arquivo vira o nome da equipe — se um nome parecido já existir, o sistema tenta reconhecer automaticamente pela sobreposição de matrículas."),
+      /*#__PURE__*/React.createElement("label", {
+        style: {
+          display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+          gap: 8, border: "2px dashed var(--cinza-200)", borderRadius: 12, padding: "28px 16px",
+          cursor: carregando ? "default" : "pointer", textAlign: "center"
+        }
+      },
+        /*#__PURE__*/React.createElement("span", { style: { fontSize: 26 } }, "📄"),
+        /*#__PURE__*/React.createElement("span", { style: { fontSize: 13, fontWeight: 600, color: "var(--cinza-700)" } },
+          arquivo ? arquivo.name : "Clique para selecionar um arquivo .xlsx"),
+        /*#__PURE__*/React.createElement("input", {
+          type: "file", accept: ".xlsx,.xls", disabled: carregando,
+          style: { display: "none" },
+          onChange: e => selecionarArquivo(e.target.files?.[0] || null)
+        })
+      ),
+      carregando && /*#__PURE__*/React.createElement("p", { style: { fontSize: 12, color: "var(--cinza-400)", marginTop: 14, textAlign: "center" } }, "Lendo planilha e estado atual…")
+    ),
+
+    erro && /*#__PURE__*/React.createElement("div", {
+      style: { marginTop: 16, background: "var(--vermelho-100)", color: "var(--vermelho-800)", borderRadius: 10, padding: "10px 14px", fontSize: 13, fontWeight: 600 }
+    }, "⚠️ ", erro),
+
+    plano && !aplicando && /*#__PURE__*/React.createElement("div", { style: { marginTop: 4, display: "flex", flexDirection: "column", gap: 16 } },
+      /*#__PURE__*/React.createElement("p", { style: { fontSize: 13, color: "var(--cinza-700)" } },
+        /*#__PURE__*/React.createElement("strong", null, plano.totalLinhasPlanilha), " linha(s) na planilha."),
+
+      /*#__PURE__*/React.createElement("div", {
+        style: {
+          background: plano.equipeReconhecida ? "var(--azul-50)" : "var(--roxo-50)",
+          border: `1px solid ${plano.equipeReconhecida ? "var(--azul-200)" : "var(--roxo-100)"}`,
+          borderRadius: 12, padding: "12px 16px", fontSize: 13
+        }
+      },
+        /*#__PURE__*/React.createElement("strong", null, "Equipe: "), plano.nomeEquipe,
+        plano.equipeReconhecida && plano.taxaSimilaridade !== undefined && /*#__PURE__*/React.createElement("span", { style: { display: "block", marginTop: 4, fontSize: 12, color: "var(--cinza-500)" } },
+          `Reconhecida automaticamente por similaridade (${Math.round(plano.taxaSimilaridade * 100)}% das matrículas já cadastradas nesta equipe apareceram na planilha "${plano.nomeArquivoOriginal}").`),
+        plano.equipeNova && /*#__PURE__*/React.createElement("span", { style: { display: "block", marginTop: 4, fontSize: 12, color: "var(--cinza-500)" } },
+          "Nenhuma equipe existente foi reconhecida — será criada como nova."),
+        plano.gerente && /*#__PURE__*/React.createElement("span", { style: { display: "block", marginTop: 6, fontSize: 12.5 } }, "👑 Gerente: ", plano.gerente.nomeCompleto),
+        plano.coordenadoresNaPlanilha.length > 0 && /*#__PURE__*/React.createElement("span", { style: { display: "block", marginTop: 2, fontSize: 12.5 } },
+          "🧭 Coordenador(es): ", plano.coordenadoresNaPlanilha.map(c => c.nomeCompleto).join(", "))
+      ),
+
+      /*#__PURE__*/React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 } },
+        linhaResumo("Funcionários novos", plano.funcionariosNovos.length, "verde"),
+        linhaResumo("Funcionários atualizados", plano.funcionariosAtualizados.length, "azul"),
+        linhaResumo("Funcionários inativados", plano.funcionariosInativados.length, "amber"),
+        linhaResumo("Linhas com erro (ignoradas)", plano.erros.length, "vermelho")
+      ),
+
+      plano.semCoordenadorResolvido.length > 0 && /*#__PURE__*/React.createElement("div", null,
+        /*#__PURE__*/React.createElement("p", { style: { fontSize: 12.5, fontWeight: 700, color: "var(--amber-700)", marginBottom: 6 } },
+          "⚠️ Não foi possível casar o supervisor com nenhum coordenador desta planilha (serão importados sem coordenador vinculado):"),
+        /*#__PURE__*/React.createElement("ul", { style: { fontSize: 12, color: "var(--amber-700)", paddingLeft: 18, display: "flex", flexDirection: "column", gap: 2, maxHeight: 140, overflow: "auto" } },
+          plano.semCoordenadorResolvido.map((e, i) => /*#__PURE__*/React.createElement("li", { key: i },
+            e.nome, " (mat. ", e.matricula, ") — procurado: \"", e.supervisorBuscado, "\"")))
+      ),
+
+      plano.erros.length > 0 && /*#__PURE__*/React.createElement("div", null,
+        /*#__PURE__*/React.createElement("p", { style: { fontSize: 12.5, fontWeight: 700, color: "var(--vermelho-700)", marginBottom: 6 } }, "Linhas ignoradas (não serão importadas):"),
+        /*#__PURE__*/React.createElement("ul", { style: { fontSize: 12, color: "var(--vermelho-700)", paddingLeft: 18, display: "flex", flexDirection: "column", gap: 2, maxHeight: 160, overflow: "auto" } },
+          plano.erros.map((e, i) => /*#__PURE__*/React.createElement("li", { key: i },
+            "Linha ", e.linha, e.nome ? ` (${e.nome}${e.matricula ? ", matrícula " + e.matricula : ""})` : "", ": ", e.motivo)))
+      ),
+
+      /*#__PURE__*/React.createElement("div", { style: { display: "flex", gap: 10, marginTop: 4 } },
+        /*#__PURE__*/React.createElement("button", {
+          onClick: confirmarImportacao,
+          style: {
+            background: "var(--marca-gradiente)", color: "var(--cor-branco)", border: "none",
+            borderRadius: 10, padding: "10px 20px", fontSize: 13, fontWeight: 700, cursor: "pointer"
+          }
+        }, "Confirmar importação"),
+        /*#__PURE__*/React.createElement("button", {
+          onClick: () => { setPlano(null); setArquivo(null); },
+          style: {
+            background: "var(--cinza-100)", color: "var(--cinza-600)", border: "none",
+            borderRadius: 10, padding: "10px 20px", fontSize: 13, fontWeight: 600, cursor: "pointer"
+          }
+        }, "Cancelar")
+      )
+    ),
+
+    aplicando && /*#__PURE__*/React.createElement("div", { style: { marginTop: 16, textAlign: "center" } },
+      /*#__PURE__*/React.createElement("p", { style: { fontSize: 13, color: "var(--cinza-500)" } }, "⏳ ", etapaAtual || "Aplicando…"),
+      /*#__PURE__*/React.createElement("p", { style: { fontSize: 11.5, color: "var(--cinza-400)", marginTop: 6 } }, "Não feche esta janela.")
+    ),
+
+    concluido && /*#__PURE__*/React.createElement("div", { style: { marginTop: 16, display: "flex", flexDirection: "column", gap: 14 } },
+      /*#__PURE__*/React.createElement("div", {
+        style: { background: "var(--verde-100)", color: "var(--verde-800)", borderRadius: 10, padding: "12px 16px", fontSize: 13, fontWeight: 600 }
+      }, "✓ Importação da equipe \"", concluido.nomeEquipe, "\" concluída: ", concluido.novos, " novo(s), ", concluido.atualizados, " atualizado(s), ", concluido.inativados, " inativado(s)."),
+      concluido.logFalhou && /*#__PURE__*/React.createElement("div", {
+        style: { background: "var(--amber-100)", color: "var(--amber-800)", borderRadius: 10, padding: "10px 14px", fontSize: 12.5, fontWeight: 600 }
+      }, "⚠️ As alterações acima foram aplicadas normalmente, mas não foi possível registrar esta importação no Log de auditoria."),
+      concluido.listaNovos?.length > 0 && /*#__PURE__*/React.createElement("details", {
+        style: { background: "var(--verde-50)", borderRadius: 10, padding: "10px 14px", fontSize: 12.5 }
+      },
+        /*#__PURE__*/React.createElement("summary", { style: { fontWeight: 700, color: "var(--verde-800)", cursor: "pointer" } },
+          "Ver ", concluido.listaNovos.length, " funcionário(s) novo(s)"),
+        /*#__PURE__*/React.createElement("ul", { style: { paddingLeft: 18, marginTop: 8, display: "flex", flexDirection: "column", gap: 2, maxHeight: 200, overflow: "auto" } },
+          concluido.listaNovos.map((f, i) => /*#__PURE__*/React.createElement("li", { key: i }, f.nome, " — mat. ", f.matricula)))
+      ),
+      concluido.listaAtualizados?.length > 0 && /*#__PURE__*/React.createElement("details", {
+        style: { background: "var(--azul-50)", borderRadius: 10, padding: "10px 14px", fontSize: 12.5 }
+      },
+        /*#__PURE__*/React.createElement("summary", { style: { fontWeight: 700, color: "var(--azul-700)", cursor: "pointer" } },
+          "Ver ", concluido.listaAtualizados.length, " funcionário(s) atualizado(s)"),
+        /*#__PURE__*/React.createElement("ul", { style: { paddingLeft: 18, marginTop: 8, display: "flex", flexDirection: "column", gap: 2, maxHeight: 200, overflow: "auto" } },
+          concluido.listaAtualizados.map((f, i) => /*#__PURE__*/React.createElement("li", { key: i }, f.nome, " — mat. ", f.matricula)))
+      ),
+      concluido.listaInativados?.length > 0 && /*#__PURE__*/React.createElement("details", {
+        style: { background: "var(--amber-50)", borderRadius: 10, padding: "10px 14px", fontSize: 12.5 }
+      },
+        /*#__PURE__*/React.createElement("summary", { style: { fontWeight: 700, color: "var(--amber-800)", cursor: "pointer" } },
+          "Ver ", concluido.listaInativados.length, " funcionário(s) inativado(s)"),
+        /*#__PURE__*/React.createElement("ul", { style: { paddingLeft: 18, marginTop: 8, display: "flex", flexDirection: "column", gap: 2, maxHeight: 200, overflow: "auto" } },
+          concluido.listaInativados.map((f, i) => /*#__PURE__*/React.createElement("li", { key: i }, f.nome, " — mat. ", f.matricula)))
+      ),
+      /*#__PURE__*/React.createElement("button", {
+        onClick: onClose,
+        style: {
+          background: "var(--marca-gradiente)", color: "var(--cor-branco)", border: "none",
+          borderRadius: 10, padding: "10px 20px", fontSize: 13, fontWeight: 700, cursor: "pointer", alignSelf: "flex-start"
+        }
+      }, "Fechar")
+    )
+  );
+}
+
 function ModalImportarHierarquia({ onClose, onConcluido }) {
   const [arquivo, setArquivo] = useState(null);
   const [carregandoBanco, setCarregandoBanco] = useState(false);
@@ -13570,6 +14117,7 @@ function ArvoreHierarquia({ pode = () => true, ocorrencias = [], funcionariosUni
   const [criandoUsuarios, setCriandoUsuarios] = useState(false);
   const [resumoUsuarios, setResumoUsuarios] = useState(null);
   const [modalImportar, setModalImportar] = useState(false);
+  const [modalImportarAdmin, setModalImportarAdmin] = useState(false);
   const [modalLog, setModalLog] = useState(false);
   // Pessoa clicada na árvore, para abrir o modal de edição de perfil +
   // controle de acesso (ModalPerfilComercial). null = modal fechado.
@@ -13705,7 +14253,15 @@ function ArvoreHierarquia({ pode = () => true, ocorrencias = [], funcionariosUni
             background: "var(--marca-gradiente)", color: "var(--cor-branco)",
             fontSize: 12.5, fontWeight: 700, cursor: "pointer"
           }
-        }, "📥 Importar planilha")
+        }, "📥 Importar planilha"),
+        pode("importar_planilha") && /*#__PURE__*/React.createElement("button", {
+          onClick: () => setModalImportarAdmin(true),
+          style: {
+            padding: "9px 16px", borderRadius: 10, border: "1px solid var(--marca-300)",
+            background: "var(--cor-branco)", color: "var(--marca-700)",
+            fontSize: 12.5, fontWeight: 700, cursor: "pointer"
+          }
+        }, "📥 Importar administrativo")
       )
     ),
     // ── Abas internas do Painel de Acessos: Estrutura (árvore original),
@@ -13739,6 +14295,15 @@ function ArvoreHierarquia({ pode = () => true, ocorrencias = [], funcionariosUni
       // fonte que a árvore usa) e deixa o modal aberto até o usuário
       // clicar em "Fechar" na tela de resumo.
       onConcluido: () => refetch()
+    }),
+    modalImportarAdmin && /*#__PURE__*/React.createElement(ModalImportarEquipeAdministrativa, {
+      onClose: () => setModalImportarAdmin(false),
+      // Diferente do importador comercial, este grava em
+      // funcionarios_administrativo — não afeta os dados que esta árvore
+      // (useArvoreComercialData) mostra, então não precisa de refetch aqui.
+      // A tela de Funcionários (que lê funcionarios_administrativo via
+      // useSharedState) já se atualiza sozinha no próximo polling.
+      onConcluido: () => {}
     }),
 
     aba === "estrutura" && /*#__PURE__*/React.createElement(React.Fragment, null,
