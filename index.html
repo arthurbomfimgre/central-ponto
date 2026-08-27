@@ -85,7 +85,10 @@ const SK_RECADOS= "cp_recados_v4";
 
 const KEY_TABLE = {
   [SK_OCS]:     "ocorrencias",
-  [SK_FUNCS]:   "funcionarios",
+  // Tabela legada `funcionarios` foi excluída (migração de ago/2026) — o
+  // administrativo agora vive em `funcionarios_administrativo`, com o mesmo
+  // uso de useSharedState/lerSupa/salvarSupa que a legada tinha.
+  [SK_FUNCS]:   "funcionarios_administrativo",
   [SK_NOTIFS]:  "notificacoes",
   [SK_RECADOS]: "recados",
   [SK_EASYMOB]: "easymob",
@@ -198,28 +201,14 @@ async function lerSupa(key, fb) {
       data.forEach(r => { obj[r.chave] = r.data; });
       return obj;
     }
-    // A tabela `funcionarios` guarda, além do objeto solto em `data`, as
-    // colunas de hierarquia comercial (nivel, gerencia_id, diretoria_id,
-    // superintendencia_id, modalidade, vinculo_especial, auth_user_id) como
-    // colunas próprias — usadas depois pelo RLS para restringir o acesso no
-    // banco. O `select("data")` puro as descartava silenciosamente, então
-    // aqui elas são buscadas junto e mescladas em cada objeto retornado
-    // (sobrepondo `data`, nunca o contrário — essas colunas são a fonte da
-    // verdade sobre hierarquia, mesmo que `data` também tenha campos com o
-    // mesmo nome por engano).
-    const colunas = key === SK_FUNCS ? "data, nivel, superintendencia_id, diretoria_id, gerencia_id, modalidade, vinculo_especial, auth_user_id" : "data";
-    const { data } = await supa.from(table).select(colunas);
+    // `funcionarios_administrativo` (migração de ago/2026) usa colunas
+    // tipadas próprias (id uuid, nome, matricula, setor, cargo, ativo,
+    // esquecimentos, atestados, etc.) em vez do padrão `data jsonb` solto
+    // que as outras tabelas de useSharedState usam — não há coluna `data`
+    // aqui, então lê-se a linha inteira direto.
+    const { data } = await supa.from(table).select(key === SK_FUNCS ? "*" : "data");
     if (!data || data.length === 0) return fb;
-    const result = key === SK_FUNCS ? data.map(r => ({
-      ...r.data,
-      nivel: r.nivel ?? r.data?.nivel,
-      superintendencia_id: r.superintendencia_id ?? r.data?.superintendencia_id ?? null,
-      diretoria_id: r.diretoria_id ?? r.data?.diretoria_id ?? null,
-      gerencia_id: r.gerencia_id ?? r.data?.gerencia_id ?? null,
-      modalidade: r.modalidade ?? r.data?.modalidade ?? "presencial",
-      vinculo_especial: r.vinculo_especial ?? r.data?.vinculo_especial ?? null,
-      auth_user_id: r.auth_user_id ?? r.data?.auth_user_id ?? null
-    })) : data.map(r => r.data);
+    const result = key === SK_FUNCS ? data : data.map(r => r.data);
     _cache[key] = result;
     salvarLS(key, result);
     return result;
@@ -267,32 +256,28 @@ async function salvarSupa(key, val) {
 
     // Para listas: upsert cada item pelo id
     if (!Array.isArray(val)) return { ok: true };
+    // `funcionarios_administrativo` usa id UUID (não numérico) — a
+    // sentinela -999999 usada pelas outras tabelas (id inteiro) não serve
+    // aqui; um filtro sempre-verdadeiro (`id.not.is.null`) tem o mesmo
+    // efeito de "apagar tudo".
     if (val.length === 0) {
-      await supa.from(table).delete().neq("id", -999999);
+      if (key === SK_FUNCS) await supa.from(table).delete().not("id", "is", null);
+      else await supa.from(table).delete().neq("id", -999999);
       return { ok: true };
     }
-    // Em `funcionarios`, além do objeto solto em `data`, preservamos as
-    // colunas próprias de hierarquia comercial a cada save — sem isso, um
-    // upsert feito depois de editar um funcionário (ex: trocar o cargo)
-    // reescreveria a linha só com `data`, apagando nivel/gerencia_id/etc.
-    // que o RLS depende para restringir o acesso no banco.
-    const rows = val.map(item => key === SK_FUNCS ? {
-      id: item.id,
-      data: item,
-      nivel: item.nivel ?? null,
-      superintendencia_id: item.superintendencia_id ?? null,
-      diretoria_id: item.diretoria_id ?? null,
-      gerencia_id: item.gerencia_id ?? null,
-      modalidade: item.modalidade ?? "presencial",
-      vinculo_especial: item.vinculo_especial ?? null,
-      auth_user_id: item.auth_user_id ?? null
-    } : { id: item.id, data: item });
+    // `funcionarios_administrativo` (colunas tipadas, sem `data` jsonb) faz
+    // upsert do objeto inteiro direto; as demais tabelas (formato antigo)
+    // continuam envelopando o item em `data`.
+    const rows = val.map(item => key === SK_FUNCS ? { ...item } : { id: item.id, data: item });
     const { error: errUpsert } = await supa.from(table).upsert(rows, { onConflict: "id" });
     if (errUpsert) return { ok: false, erro: errUpsert.message };
 
-    // Remove ids que não existem mais
+    // Remove ids que não existem mais. `funcionarios_administrativo` usa id
+    // UUID (precisa de aspas em cada valor do filtro .in); as demais tabelas
+    // usam id inteiro (sem aspas), como já era antes.
     const ids = val.map(i => i.id);
-    await supa.from(table).delete().not("id", "in", "(" + ids.join(",") + ")");
+    const idsFiltro = key === SK_FUNCS ? ids.map(id => `"${id}"`).join(",") : ids.join(",");
+    await supa.from(table).delete().not("id", "in", "(" + idsFiltro + ")");
     return { ok: true };
   } catch (e) {
     // Falha de rede/inesperada — já salvou no localStorage como fallback,
@@ -3893,22 +3878,13 @@ const CAMPO_POR_TIPO = {
 // Isso evita qualquer dessincronia ao criar/excluir/especificar ocorrências.
 // Ocorrências Rejeitadas não entram na contagem.
 // `funcionarioOuId` aceita tanto o objeto do funcionário quanto (por
-// compatibilidade com chamadas antigas) só o id numérico. Passar o objeto
-// é o caminho preferido: `funcionarios` (legada) e `funcionarios_comercial`
-// usam sequências de id independentes que colidem entre si (ex: id 4 é uma
-// pessoa diferente em cada tabela) — sem checar a origem, uma ocorrência de
-// um funcionário legado podia ser contada também para um funcionário
-// comercial que por coincidência tem o mesmo id numérico, inflando
-// esquecimentos/pendências de gente que nunca teve ocorrência nenhuma.
-// Mesmo critério de desambiguação usado no Painel de Pendências
-// (resolverFuncionario): quando a ocorrência tem origemFuncionario, compara
-// com !!f.origemComercial; sem esse campo (pendência antiga), assume
-// "legado" por convenção — NUNCA soma cegamente por id puro, para não
-// vazar pendências de um funcionário legado para um comercial de mesmo id.
+// compatibilidade com chamadas antigas) só o id. Desde a migração de
+// ago/2026, `funcionarios_administrativo` (id UUID) e `funcionarios_comercial`
+// (id inteiro sequencial) nunca colidem em id — não é mais preciso saber a
+// origem para contar corretamente, basta o funcionario_id.
 function contarOcorrencias(ocorrencias, funcionarioOuId) {
   const ehObjeto = funcionarioOuId && typeof funcionarioOuId === "object";
   const funcionarioId = ehObjeto ? funcionarioOuId.id : funcionarioOuId;
-  const origemComercialAlvo = ehObjeto ? !!funcionarioOuId.origemComercial : null;
   const contagem = {
     esquecimentos: 0,
     atestados: 0,
@@ -3921,22 +3897,6 @@ function contarOcorrencias(ocorrencias, funcionarioOuId) {
   ocorrencias.forEach(o => {
     if (o.funcionario_id !== funcionarioId) return;
     if (o.status === "Rejeitado") return;
-    // Desambigua por origem SOMENTE quando a ocorrência informa
-    // explicitamente sua origem (origemFuncionario). Quando esse campo não
-    // existe (pendência antiga/importada, comum em dados reais), voltamos
-    // ao comportamento original: conta por id puro, sem tentar adivinhar a
-    // origem. Uma suposição errada aqui (ex.: assumir "sempre legado") pode
-    // apagar pendências reais de quem for legado de verdade, caso os dados
-    // de produção não sigam exatamente o padrão dos dados de exemplo deste
-    // arquivo. Fica documentado que esse fallback continua ambíguo em caso
-    // de colisão de id entre funcionarios e funcionarios_comercial — a
-    // correção definitiva é gravar origemFuncionario em toda ocorrência
-    // nova (já feito) e, se possível, rodar uma migração pontual que
-    // preencha esse campo nas ocorrências antigas do banco.
-    if (origemComercialAlvo !== null && o.origemFuncionario) {
-      const querComercial = o.origemFuncionario === "comercial";
-      if (querComercial !== origemComercialAlvo) return;
-    }
     const campo = CAMPO_POR_TIPO[o.tipo];
     if (campo) contagem[campo] += 1;
   });
@@ -3999,26 +3959,19 @@ function emailFuncionario(func) {
 }
 // Normaliza um registro vindo de `funcionarios_comercial` (tabela nova, campos
 // nome_completo/gerencia_id/etc) para o mesmo formato que o resto do app
-// espera de `funcionarios` (tabela antiga, campo nome). Mantém os IDs de
-// hierarquia intactos para o cálculo de escopo (ver resolverNivel/NAV).
-// ── Resolve o funcionário de uma ocorrência em uma lista unificada
-// (legado + comercial) sem cair na colisão de id entre as duas tabelas —
-// `funcionarios` e `funcionarios_comercial` usam sequências independentes
-// que colidem entre si (ex: id 4 é uma pessoa diferente em cada uma).
-// Usa o campo origemFuncionario (gravado em toda pendência criada a partir
-// desta correção) quando presente; senão, cai no `.find()` simples (a
-// mesma ambiguidade que sempre existiu antes desta correção — mantido só
-// como fallback para não quebrar pendências antigas sem o campo). Uma
-// versão anterior deste fallback tentava assumir "sempre legado" quando a
-// origem não era informada, mas isso apagou pendências reais de
-// funcionários legados em produção (a suposição não bateu com os dados
-// reais do banco) — revertido para o comportamento original.
+// espera de funcionário (campo nome). Mantém os IDs de hierarquia intactos
+// para o cálculo de escopo (ver resolverNivel/NAV). `origemComercial: true`
+// marca a origem — não é mais usado para desambiguar colisão de id (isso
+// não existe mais desde a migração de ago/2026), só para exibir/filtrar
+// "Comercial" vs "Administrativo" na UI.
+// Resolve o funcionário de uma ocorrência. Antes da migração de ago/2026,
+// `funcionarios` (legada) e `funcionarios_comercial` usavam sequências de
+// id inteiro independentes que colidiam entre si, exigindo desambiguação
+// por `origemFuncionario` com fallback ambíguo. Agora `funcionarios` foi
+// substituída por `funcionarios_administrativo` (id UUID) — administrativo
+// e comercial nunca mais colidem em id, então basta procurar em cada lista
+// pelo id, sem precisar de origem para desambiguar.
 function resolverFuncionarioDaOcorrencia(funcionarios, o) {
-  if (o?.origemFuncionario) {
-    const querComercial = o.origemFuncionario === "comercial";
-    const achado = funcionarios.find(f => f.id === o.funcionario_id && !!f.origemComercial === querComercial);
-    if (achado) return achado;
-  }
   return funcionarios.find(f => f.id === o?.funcionario_id);
 }
 function normalizarFuncComercial(fc) {
@@ -4034,10 +3987,25 @@ function normalizarFuncComercial(fc) {
     origemComercial: true
   };
 }
-// Administradores do sistema: Abraão Moreira (1), Arthur Bomfim (4), Bruna Pinheiro (5).
-// Admins também aparecem como funcionários e podem ter pendências criadas para si.
-const ADMIN_FUNCIONARIO_ID = 1; // mantido para compatibilidade
-const ADMIN_IDS = [1, 4, 5];
+// Administradores do sistema: Abraão Moreira, Arthur Bomfim, Bruna Pinheiro.
+// Admins também aparecem como funcionários e podem ter pendências criadas
+// para si. Marcelo Moreira tem login religado (acesso normal ao sistema),
+// mas NÃO é admin — fica de fora desta lista de propósito.
+// E-mails reais confirmados na migração de ago/2026 (via religação manual
+// de auth_user_id em funcionarios_administrativo — o e-mail real de login
+// diverge do e-mail que veio na planilha de importação para Abraão/Bruna).
+// E-mail é estável e não muda entre reimportações, por isso a checagem de
+// admin é por e-mail, não por id (id agora é UUID gerado na importação,
+// não é previsível como o id inteiro fixo de antes).
+const ADMIN_EMAILS_FIXO = [
+  "abraao.moreira@gmail.com",        // Abraão Eleazar Moreira
+  "gre@portovale.com.br",            // Arthur Bomfim (linha de funcionário E conta admin_geral fixa usam este e-mail)
+  "bruna.pinheiro@portovale.com.br"  // Bruna Pinheiro de Almeida Cruz
+];
+function ehAdminFuncionario(func) {
+  return ADMIN_EMAILS_FIXO.includes(emailFuncionario(func || {}));
+}
+
 
 // ─── PERMISSÕES POR PAPEL ───────────────────────────────────────────────────
 // Sistema de controle de acesso configurável pelo admin_geral: cada papel da
@@ -4207,13 +4175,13 @@ function usePermissoes(usuario, sessaoPronta = true) {
 // Compatibilidade: funcionários de teste/legado (cadastrados antes da
 // hierarquia existir, ex: FUNCIONARIOS_BASE) não têm `nivel` gravado no
 // banco. Para esses, mantemos o comportamento antigo como fallback: quem
-// está em ADMIN_IDS vira "admin_geral", o resto vira "vendedor" — assim
-// nada quebra para os dados de teste já existentes, e todo funcionário
-// migrado via Supabase (com `nivel` já definido) passa a usar a hierarquia
-// real automaticamente.
+// está em ADMIN_EMAILS_FIXO (ver ehAdminFuncionario) vira "admin_geral", o
+// resto vira "vendedor" — assim nada quebra para os dados de teste já
+// existentes, e todo funcionário migrado via Supabase (com `nivel` já
+// definido) passa a usar a hierarquia real automaticamente.
 function resolverNivel(func) {
   if (func?.nivel) return func.nivel;
-  return ADMIN_IDS.includes(func?.id) ? "admin_geral" : "vendedor";
+  return ehAdminFuncionario(func) ? "admin_geral" : "vendedor";
 }
 // Papel legado (admin/funcionario) derivado do nível novo — usado onde o
 // código ainda só entende esse binário (ex: `isAdmin`, RLS antiga do front).
@@ -5016,8 +4984,9 @@ function TelaLogin({
       const funcsAtualizados = await lerSupa(SK_FUNCS, FUNCIONARIOS_BASE);
       func = funcsAtualizados.find(f => emailFuncionario(f) === email);
     }
-    // Não achou na tabela antiga (funcionarios): tenta a hierarquia comercial
-    // nova (funcionarios_comercial), onde estão os 581 vendedores/gestores.
+    // Não achou no administrativo (funcionarios_administrativo): tenta a
+    // hierarquia comercial (funcionarios_comercial), onde estão os 581
+    // vendedores/gestores.
     if (!func) {
       const { data: funcComercial } = await supa.from("funcionarios_comercial").select("*").eq("email", email).maybeSingle();
       if (funcComercial) func = normalizarFuncComercial(funcComercial);
@@ -5030,7 +4999,7 @@ function TelaLogin({
     }
     const nivel = resolverNivel(func);
     const user = {
-      id: !func.origemComercial && ADMIN_IDS.includes(func.id) ? "admin" : `func_${func.id}`,
+      id: ehAdminFuncionario(func) ? "admin" : `func_${func.id}`,
       nome: func.nome,
       cargo: func.cargo,
       role: papelLegado(nivel),
@@ -5041,9 +5010,10 @@ function TelaLogin({
       modalidade: func.modalidade ?? "presencial",
       funcionario_id: func.id,
       email,
-      // Ver comentário equivalente na restauração de sessão (mais abaixo):
-      // necessário para resolver funcionario_id sem ambiguidade entre as
-      // duas tabelas de funcionário, que colidem em id.
+      // Indica se este funcionário veio de `funcionarios_comercial` (tem
+      // hierarquia/nível comercial) ou de `funcionarios_administrativo`.
+      // Não é mais desambiguação de colisão de id (isso não existe desde a
+      // migração de ago/2026) — só identifica a origem para o resto da UI.
       origemComercial: !!func.origemComercial
     };
     onLogin(user);
@@ -5432,14 +5402,16 @@ function ModalCriarPendencia({
       return;
     }
     // Resolve a origem AQUI, a partir do objeto já correto que populou o
-    // <select> (funcAtivos), e manda junto no payload. Não dá pra deixar
-    // para criarPendencia descobrir isso depois só pelo id: funcionarios e
-    // funcionarios_comercial colidem em id, então um .find() por id lá
-    // poderia pegar a pessoa errada.
-    const funcSelecionado = funcPreSelecionado || funcAtivos.find(f => f.id === Number(funcId));
+    // <select> (funcAtivos), e manda junto no payload — origemFuncionario
+    // continua útil para saber de qual tabela veio o funcionário (não mais
+    // para desambiguar colisão de id, que não existe desde a migração de
+    // ago/2026: `funcionarios_administrativo` usa UUID, `funcionarios_comercial`
+    // usa inteiro). `funcId` não pode passar por Number() — administrativo
+    // usa id UUID (string), só comercial é numérico.
+    const funcSelecionado = funcPreSelecionado || funcAtivos.find(f => String(f.id) === String(funcId));
     onCriar({
-      funcionario_id: Number(funcId),
-      origemFuncionario: funcSelecionado?.origemComercial ? "comercial" : "legado",
+      funcionario_id: funcSelecionado?.id,
+      origemFuncionario: funcSelecionado?.origemComercial ? "comercial" : "administrativo",
       data,
       obs
     });
@@ -5878,19 +5850,17 @@ function Dashboard({
   }) {
     const agora = agoraISO();
     // Preferimos a origem já resolvida pelo ModalCriarPendencia (a partir do
-    // objeto de funcionário certo, sem ambiguidade). Só cai no .find() por
-    // id como fallback para chamadas antigas que ainda não mandam o campo —
-    // esse fallback pode colidir entre funcionarios/funcionarios_comercial.
+    // objeto de funcionário certo). Só cai no .find() por id como fallback
+    // para chamadas antigas que ainda não mandam o campo.
     const func = funcionarios.find(f => f.id === funcionario_id);
     const oc = {
       id: Date.now(),
       funcionario_id,
-      // Distingue de qual tabela (legada `funcionarios` ou nova
-      // `funcionarios_comercial`) este funcionario_id veio — as duas usam
-      // sequências de id independentes e colidem entre si (ex: id 5 é uma
-      // pessoa em cada tabela), então sem este campo é impossível saber com
-      // certeza a quem uma pendência pertence. Ver PainelPendenciasGeral.
-      origemFuncionario: origemFuncionario || (func?.origemComercial ? "comercial" : "legado"),
+      // Indica de qual tabela (`funcionarios_administrativo` ou
+      // `funcionarios_comercial`) este funcionario_id veio — útil para
+      // navegação e relatórios; não é mais necessário para desambiguar
+      // colisão de id (não existe desde a migração de ago/2026).
+      origemFuncionario: origemFuncionario || (func?.origemComercial ? "comercial" : "administrativo"),
       tipo: TIPO_PENDENTE_ESPECIFICACAO,
       data,
       status: "Pendente",
@@ -6462,7 +6432,7 @@ function ListaFuncionarios({
 }) {
   const [busca, setBusca] = useState("");
   const [cargoFiltro, setCargoFiltro] = useState("Todos");
-  // Filtro de vínculo: Administrativo = tabela legada `funcionarios`,
+  // Filtro de vínculo: Administrativo = tabela `funcionarios_administrativo`,
   // Comercial = tabela `funcionarios_comercial` (f.origemComercial true).
   // Substitui o antigo filtro de "Situação" (Normal/Atenção/Limite/
   // Excedido por contagem de esquecimentos), removido a pedido — o
@@ -6525,7 +6495,15 @@ function ListaFuncionarios({
     return map;
   }, [ocorrencias, funcionarios]);
   const lista = useMemo(() => funcionarios.filter(f => {
-    const ok1 = f.nome.toLowerCase().includes(busca.toLowerCase()) || f.matricula.toLowerCase().includes(busca.toLowerCase());
+    // `f.matricula` pode vir null (funcionário sem matrícula cadastrada) ou
+    // number (ex.: `funcionarios_comercial`, onde matrícula pode ser
+    // inteiro no banco) — chamar .toLowerCase() direto quebra com
+    // TypeError nesses casos e derruba a lista inteira (nada renderiza,
+    // parecendo "filtro não funciona"). String(...) normaliza antes.
+    const nomeBusca = String(f.nome ?? "").toLowerCase();
+    const matriculaBusca = String(f.matricula ?? "").toLowerCase();
+    const buscaNorm = busca.toLowerCase();
+    const ok1 = nomeBusca.includes(buscaNorm) || matriculaBusca.includes(buscaNorm);
     const ok2 = cargoFiltro === "Todos" || f.cargo === cargoFiltro;
     const ok3 = vinculoFiltro === "Todos" || (vinculoFiltro === "Comercial") === !!f.origemComercial;
     return ok1 && ok2 && ok3;
@@ -8691,10 +8669,10 @@ function PerfilFuncionario({
     const oc = {
       id: Date.now(),
       funcionario_id,
-      // Ver comentário equivalente em Dashboard.criarPendencia: distingue
-      // de qual tabela (legada `funcionarios` ou nova `funcionarios_comercial`)
-      // este funcionario_id veio, já que as duas colidem entre si.
-      origemFuncionario: origemFuncionario || (func?.origemComercial ? "comercial" : "legado"),
+      // Ver comentário equivalente em Dashboard.criarPendencia: indica de
+      // qual tabela (`funcionarios_administrativo` ou `funcionarios_comercial`)
+      // este funcionario_id veio.
+      origemFuncionario: origemFuncionario || (func?.origemComercial ? "comercial" : "administrativo"),
       tipo: TIPO_PENDENTE_ESPECIFICACAO,
       data,
       status: "Pendente",
@@ -9819,10 +9797,11 @@ function ProcessosPonto({ usuario, setView, ocorrencias = [], funcionarios = [],
   // ou "todo mundo da lista recebida" (gestor).
   const ehGestor = ["gerente", "diretor", "superintendente", "admin_geral"].includes(usuario?.nivel);
 
-  // Comparar id sozinho não basta: funcionarios (legada) e
-  // funcionarios_comercial colidem em id. origemComercial desambigua.
+  // Desde a migração de ago/2026, `funcionarios_administrativo` (id UUID) e
+  // `funcionarios_comercial` (id inteiro) nunca colidem em id — basta
+  // comparar o id.
   const funcLogado = useMemo(
-    () => funcionarios.find(f => f.id === usuario?.funcionario_id && !!f.origemComercial === !!usuario?.origemComercial),
+    () => funcionarios.find(f => f.id === usuario?.funcionario_id),
     [funcionarios, usuario]
   );
 
@@ -10739,11 +10718,9 @@ function PortalFuncionario({
   sessaoPronta = true,
   contaTesteAtivaAgora = false
 }) {
-  // Comparar id sozinho não basta: funcionarios (legada) e
-  // funcionarios_comercial usam sequências de id independentes que colidem
-  // entre si (ex: id 4 é uma pessoa completamente diferente em cada
-  // tabela). origemComercial em usuarioLogado desambigua qual é a certa.
-  const funcLogado = funcionarios.find(f => f.id === usuarioLogado.funcionario_id && !!f.origemComercial === !!usuarioLogado.origemComercial) || funcionarios[0];
+  // Desde a migração de ago/2026, os ids de `funcionarios_administrativo`
+  // (UUID) e `funcionarios_comercial` (inteiro) nunca colidem — basta o id.
+  const funcLogado = funcionarios.find(f => f.id === usuarioLogado.funcionario_id) || funcionarios[0];
   // Conta de teste (ou qualquer cenário sem nenhum funcionário cadastrado):
   // não há dono do portal para exibir. Em vez de deixar o restante do
   // componente quebrar tentando ler `funcLogado.id`/`.nome` de undefined
@@ -10916,7 +10893,7 @@ function PortalFuncionario({
       id: Date.now(),
       funcionario_id: funcLogado.id,
       // Ver comentário equivalente em Dashboard.criarPendencia.
-      origemFuncionario: funcLogado?.origemComercial ? "comercial" : "legado",
+      origemFuncionario: funcLogado?.origemComercial ? "comercial" : "administrativo",
       tipo,
       data,
       status: "Pendente",
@@ -13348,9 +13325,9 @@ function PainelPendenciasGeral({ podeEditar = false } = {}) {
   // isolamento de localStorage que useSharedState aplicaria para a conta
   // gre@ (sandbox) e o filtro de escopo hierárquico usado no resto do app.
   // Esta aba é a única exceção deliberada: mostra o banco real por inteiro,
-  // combinando as duas fontes de funcionário (a tabela legada `funcionarios`
-  // e a nova `funcionarios_comercial`) — uma pendência pode referenciar
-  // qualquer uma das duas, dependendo de onde/quando foi criada.
+  // combinando as duas fontes de funcionário (`funcionarios_administrativo`
+  // e `funcionarios_comercial`) — uma pendência pode referenciar qualquer
+  // uma das duas, dependendo de onde/quando foi criada.
   const [ocorrencias, setOcorrencias] = useState([]);
   const [funcionarios, setFuncionarios] = useState([]);
   const [carregando, setCarregando] = useState(true);
@@ -13359,19 +13336,19 @@ function PainelPendenciasGeral({ podeEditar = false } = {}) {
     let ativo = true;
     (async () => {
       try {
-        const [ocRes, funcRes, funcComRes] = await Promise.all([
+        const [ocRes, funcAdmRes, funcComRes] = await Promise.all([
           supa.from("ocorrencias").select("data"),
-          supa.from("funcionarios").select("data"),
+          supa.from("funcionarios_administrativo").select("*"),
           supa.from("funcionarios_comercial").select("*")
         ]);
         if (ocRes.error) throw ocRes.error;
-        if (funcRes.error) throw funcRes.error;
+        if (funcAdmRes.error) throw funcAdmRes.error;
         if (funcComRes.error) throw funcComRes.error;
         if (!ativo) return;
-        const legados = (funcRes.data || []).map(r => r.data);
+        const administrativos = funcAdmRes.data || [];
         const comerciais = (funcComRes.data || []).map(normalizarFuncComercial);
         setOcorrencias((ocRes.data || []).map(r => r.data));
-        setFuncionarios([...legados, ...comerciais]);
+        setFuncionarios([...administrativos, ...comerciais]);
         setCarregando(false);
       } catch (e) {
         if (!ativo) return;
@@ -13404,35 +13381,16 @@ function PainelPendenciasGeral({ podeEditar = false } = {}) {
     setOcorrencias(prev => prev.filter(o => o.id !== ocorrencia.id));
   }
 
-  // Dois mapas SEPARADOS por origem — nunca um Map único indexado só por
-  // `id`, porque `funcionarios` e `funcionarios_comercial` usam sequências
-  // de id independentes e colidem maciçamente entre si (ex: id 5 é uma
-  // pessoa completamente diferente em cada tabela). Resolver uma ocorrência
-  // exige saber a origem explicitamente, não só o número do id.
-  const legadoPorId = useMemo(
-    () => new Map(funcionarios.filter(f => !f.origemComercial).map(f => [f.id, f])),
+  // Um único Map por id: desde a migração de ago/2026, `funcionarios_administrativo`
+  // (id UUID) e `funcionarios_comercial` (id inteiro sequencial) nunca colidem
+  // entre si, então não é mais preciso saber a origem para resolver uma
+  // ocorrência — basta o funcionario_id.
+  const funcionarioPorId = useMemo(
+    () => new Map(funcionarios.map(f => [f.id, f])),
     [funcionarios]
   );
-  const comercialPorId = useMemo(
-    () => new Map(funcionarios.filter(f => f.origemComercial).map(f => [f.id, f])),
-    [funcionarios]
-  );
-  // Resolve o funcionário de uma ocorrência: usa o campo origemFuncionario
-  // quando presente (gravado em toda pendência criada a partir desta
-  // correção). Pendências mais antigas, criadas antes desse campo existir,
-  // não têm como saber a origem com certeza — usamos como paliativo a
-  // regra combinada com o Arthur: tudo até o mês 06/2026 é sempre da tabela
-  // legada `funcionarios` (é o que existia até então); só a partir de
-  // 07/2026 pode haver ocorrência de funcionarios_comercial. Isso é uma
-  // aproximação, não uma garantia — se um dia surgir mistura real dentro do
-  // mesmo mês em dados antigos sem o campo, este critério para de bastar.
   function resolverFuncionario(o) {
-    const origem = o.origemFuncionario || (o.data && o.data.slice(0, 7) <= "2026-06" ? "legado" : null);
-    if (origem === "comercial") return comercialPorId.get(o.funcionario_id);
-    if (origem === "legado") return legadoPorId.get(o.funcionario_id);
-    // Sem informação suficiente para decidir: tenta legado primeiro (é a
-    // origem historicamente mais comum), sinalizando a incerteza no nome.
-    return legadoPorId.get(o.funcionario_id) || comercialPorId.get(o.funcionario_id);
+    return funcionarioPorId.get(o.funcionario_id);
   }
 
   const tiposPresentes = useMemo(
@@ -13452,7 +13410,7 @@ function PainelPendenciasGeral({ podeEditar = false } = {}) {
         return alvo.includes(termo);
       })
       .sort((a, b) => (b.atualizadoEm || b.data || "").localeCompare(a.atualizadoEm || a.data || ""));
-  }, [ocorrencias, filtroStatus, filtroTipo, busca, legadoPorId, comercialPorId]);
+  }, [ocorrencias, filtroStatus, filtroTipo, busca, funcionarioPorId]);
 
   const corStatus = status => {
     if (status === "Pendente") return { bg: "var(--vermelho-100)", fg: "var(--vermelho-600)" };
@@ -13534,7 +13492,6 @@ function PainelPendenciasGeral({ podeEditar = false } = {}) {
             /*#__PURE__*/React.createElement("tbody", null,
               listaFiltrada.map(o => {
                 const f = resolverFuncionario(o);
-                const origemIncerta = !o.origemFuncionario && !(o.data && o.data.slice(0, 7) <= "2026-06");
                 const cor = corStatus(o.status);
                 return /*#__PURE__*/React.createElement("tr", {
                   key: o.id,
@@ -13544,11 +13501,7 @@ function PainelPendenciasGeral({ podeEditar = false } = {}) {
                   onMouseLeave: podeEditar ? e => e.currentTarget.style.background = "transparent" : undefined
                 },
                   /*#__PURE__*/React.createElement("td", { style: { padding: "10px 16px", color: "var(--cinza-900)", fontWeight: 600 } },
-                    f?.nome || "—", f?.matricula ? /*#__PURE__*/React.createElement("span", { style: { color: "var(--cinza-400)", fontWeight: 500 } }, ` · ${f.matricula}`) : null,
-                    origemIncerta && /*#__PURE__*/React.createElement("span", {
-                      title: "Pendência antiga sem origem registrada — o funcionário pode estar incorreto devido a IDs coincidentes entre as tabelas.",
-                      style: { marginLeft: 6, fontSize: 11, color: "var(--amarelo-700)", cursor: "help" }
-                    }, "⚠️")),
+                    f?.nome || "—", f?.matricula ? /*#__PURE__*/React.createElement("span", { style: { color: "var(--cinza-400)", fontWeight: 500 } }, ` · ${f.matricula}`) : null),
                   /*#__PURE__*/React.createElement("td", { style: { padding: "10px 16px", color: "var(--cinza-700)" } }, o.tipo || "—"),
                   /*#__PURE__*/React.createElement("td", { style: { padding: "10px 16px", color: "var(--cinza-700)" } },
                     o.data ? new Date(o.data + "T00:00:00").toLocaleDateString("pt-BR") : "—"),
@@ -13947,45 +13900,21 @@ function App() {
   // admins/funcionários normais, e o estado isolado em localStorage (que
   // começa vazio e cresce conforme a conta de teste importa/cadastra) para
   // o perfil de teste. Não é necessário forçar nada aqui.
-  // Dedup por matrícula: a mesma pessoa pode existir tanto na tabela legada
-  // (`funcionarios`) quanto na nova (`funcionarios_comercial`) — resíduo de
-  // importações antigas que não foram limpas (mesmo problema de fundo do
-  // diagnóstico do comer24.xlsx: divergências na planilha/base, não bug de
-  // leitura). Sem dedup, a pessoa aparece 2-3x na lista, cada cópia com seu
-  // próprio id e sua própria contagem de esquecimentos — o que também
-  // inflava/duplicava o total mostrado no Monitor de Esquecimentos.
-  // Critério: agrupa por matrícula (normalizada — trim + string, pois uma
-  // tabela pode gravar número e outra texto); quando há conflito, mantém o
-  // registro comercial (tabela nova, é para onde a hierarquia está
-  // migrando) e descarta a(s) cópia(s) legada(s). Pendências que
-  // referenciavam o id descartado somem naturalmente da UI (resolverFuncionarioDaOcorrencia
-  // e os .find() por id não acham mais aquele id na lista) — não precisam
-  // ser migradas.
-  function dedupPorMatricula(lista) {
-    const porMatricula = new Map();
-    for (const f of lista) {
-      const chave = f.matricula != null && String(f.matricula).trim() !== ""
-        ? `mat:${String(f.matricula).trim()}`
-        : `id:${f.origemComercial ? "com" : "leg"}:${f.id}`; // sem matrícula: não agrupa, mantém como está
-      const existente = porMatricula.get(chave);
-      if (!existente) {
-        porMatricula.set(chave, f);
-        continue;
-      }
-      // Conflito de matrícula: mantém o comercial se um dos dois for comercial.
-      if (f.origemComercial && !existente.origemComercial) {
-        porMatricula.set(chave, f);
-      }
-      // Se nenhum dos dois é comercial (duplicata dentro da própria tabela
-      // legada) ou o existente já é comercial, mantém o que já está.
-    }
-    return Array.from(porMatricula.values());
-  }
+  // Antes desta migração (ago/2026), a mesma pessoa podia existir tanto na
+  // tabela legada `funcionarios` quanto em `funcionarios_comercial` por
+  // resíduo de importações antigas — daí o dedup por matrícula abaixo.
+  // Esse resíduo não existe mais: `funcionarios_administrativo` foi criada
+  // do zero só com o administrativo (41 pessoas da planilha gre1.xlsx),
+  // sem overlap de matrícula com o comercial. Administrativo e comercial
+  // agora são concatenados sem dedup — cada um mantém seu próprio id e
+  // suas próprias contagens, e o filtro de Vínculo (Comercial/
+  // Administrativo, ver vinculoFiltro em ListaFuncionarios) já permite
+  // olhar cada lista separadamente na tela de Funcionários.
   const funcionariosExibidos = useMemo(() => {
     // Conta de teste continua isolada em seu próprio localStorage — nunca
     // mistura com dados reais da hierarquia comercial.
     if (contaTesteAtivaAgora) return funcionarios;
-    const unificados = dedupPorMatricula([...funcionarios, ...dadosComercial.funcionarios.filter(f => (f.situacao || "ATIVO").toUpperCase() === "ATIVO").map(normalizarFuncComercial)]);
+    const unificados = [...funcionarios, ...dadosComercial.funcionarios.filter(f => (f.situacao || "ATIVO").toUpperCase() === "ATIVO").map(normalizarFuncComercial)];
     return filtrarPorEscopoGestor(unificados, usuario, dadosComercial);
   }, [funcionarios, dadosComercial, usuario, contaTesteAtivaAgora]);
   // Variante COM inativos, usada só pela tela de gestão de Funcionários
@@ -13995,7 +13924,7 @@ function App() {
   // ativos) — não faz sentido inflar essas com gente inativa.
   const funcionariosComInativos = useMemo(() => {
     if (contaTesteAtivaAgora) return funcionarios;
-    const unificados = dedupPorMatricula([...funcionarios, ...dadosComercial.funcionarios.map(normalizarFuncComercial)]);
+    const unificados = [...funcionarios, ...dadosComercial.funcionarios.map(normalizarFuncComercial)];
     return filtrarPorEscopoGestor(unificados, usuario, dadosComercial);
   }, [funcionarios, dadosComercial, usuario, contaTesteAtivaAgora]);
   const ocorrenciasExibidas = ocorrencias;
@@ -14060,7 +13989,7 @@ function App() {
         });
       } else if (email) {
         let func = funcionarios.find(f => emailFuncionario(f) === email);
-        // Não achou na tabela antiga: tenta a hierarquia comercial nova
+        // Não achou no administrativo: tenta a hierarquia comercial
         // (funcionarios_comercial), igual ao fluxo de login.
         if (!func) {
           const { data: funcComercial } = await supa.from("funcionarios_comercial").select("*").eq("email", email).maybeSingle();
@@ -14069,7 +13998,7 @@ function App() {
         if (func && ativo) {
           const nivel = resolverNivel(func);
           setUsuario({
-            id: !func.origemComercial && ADMIN_IDS.includes(func.id) ? "admin" : `func_${func.id}`,
+            id: ehAdminFuncionario(func) ? "admin" : `func_${func.id}`,
             nome: func.nome,
             cargo: func.cargo,
             role: papelLegado(nivel),
@@ -14080,10 +14009,10 @@ function App() {
             modalidade: func.modalidade ?? "presencial",
             funcionario_id: func.id,
             email,
-            // Necessário para resolver `funcionario_id` sem ambiguidade:
-            // `funcionarios` (legada) e `funcionarios_comercial` usam
-            // sequências de id independentes que colidem entre si (ex: id 4
-            // é uma pessoa diferente em cada tabela). Ver funcionariosExibidos.
+            // Indica se este funcionário veio de `funcionarios_comercial`
+            // ou de `funcionarios_administrativo` — não é mais
+            // desambiguação de colisão de id (não existe mais desde a
+            // migração de ago/2026), só identifica a origem para a UI.
             origemComercial: !!func.origemComercial
           });
         }
@@ -14165,9 +14094,9 @@ function App() {
   }, [notifsExibidas]);
   const pendentesNovos = ocorrenciasExibidas.filter(o => o.status === "Corrigido" && o.novo).length;
   const minhasPendentes = ocorrenciasExibidas.filter(o => {
-    // Comparar id sozinho não basta: funcionarios (legada) e
-    // funcionarios_comercial colidem em id. origemComercial desambigua.
-    const f = funcionariosExibidos.find(f => f.id === usuario?.funcionario_id && !!f.origemComercial === !!usuario?.origemComercial);
+    // Desde a migração de ago/2026, os ids de `funcionarios_administrativo`
+    // (UUID) e `funcionarios_comercial` (inteiro) nunca colidem — basta o id.
+    const f = funcionariosExibidos.find(f => f.id === usuario?.funcionario_id);
     return f && o.funcionario_id === f.id && o.status === "Pendente";
   }).length;
   if (verificandoSessao) return /*#__PURE__*/React.createElement("div", {
