@@ -3974,10 +3974,26 @@ function emailFuncionario(func) {
 function resolverFuncionarioDaOcorrencia(funcionarios, o) {
   return funcionarios.find(f => f.id === o?.funcionario_id);
 }
+// Rótulos de nível comercial usados como fallback de cargo (mesmos valores
+// de NIVEL_LABEL, duplicados aqui pois esta função é definida antes daquela
+// constante no arquivo e evitamos reordenar declarações).
+const NIVEL_LABEL_FALLBACK_CARGO = {
+  superintendente: "Superintendente",
+  diretor: "Diretor",
+  gerente: "Gerente",
+  vendedor: "Vendedor"
+};
 function normalizarFuncComercial(fc) {
   return {
     ...fc,
     nome: fc.nome_completo,
+    // Aba Funcionários exibe `f.cargo` para todo mundo — administrativo já
+    // vem com esse campo populado, mas `funcionarios_comercial` nunca teve
+    // coluna `cargo` (usa `nivel` para hierarquia). Preenchemos aqui com o
+    // cargo real da planilha (`cargo_origem`, ex.: "GERENTE DE VENDAS X")
+    // quando disponível, e caímos para o rótulo do nível hierárquico
+    // (Vendedor/Gerente/Diretor/Superintendente) quando não houver.
+    cargo: fc.cargo_origem || NIVEL_LABEL_FALLBACK_CARGO[fc.nivel] || "",
     // `funcionarios_comercial` guarda status em `situacao` ('ATIVO'/outro),
     // mas o resto do app (badges "Ativo/Inativo", filtros, contadores) lê o
     // campo booleano `ativo` da tabela legada. Sem este mapeamento, todo
