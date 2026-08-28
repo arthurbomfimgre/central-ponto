@@ -8407,13 +8407,17 @@ function analisarImportacaoAdministrativa(linhasExcel, nomeArquivo, funcionarios
 
     const coordDaLinha = l.papel === "membro" ? resolverCoordenadorDaLinha(l) : null;
 
+    // Campos alinhados ao schema real de funcionarios_administrativo (ver
+    // FUNCIONARIOS_BASE): nome (não nome_completo), ativo boolean (não
+    // situacao/string) — funcionarios_administrativo não tem coluna
+    // "situacao" nem "cargo_origem", diferente de funcionarios_comercial.
     const camposBase = {
       matricula: l.matricula,
-      nome_completo: l.nomeCompleto,
-      cargo_origem: l.cargo,
+      nome: l.nomeCompleto,
+      cargo: l.cargo,
       setor: l.setor,
       email: l.email,
-      situacao: "ATIVO",
+      ativo: l.situacao !== "INATIVO",
       equipe_id: nomeEquipe,
       // subequipe_id: só membro comum tem; gerente e coordenador não.
       subequipe_id: l.papel === "membro" ? l.supervisaoNome : null,
@@ -8425,6 +8429,7 @@ function analisarImportacaoAdministrativa(linhasExcel, nomeArquivo, funcionarios
     const camposPreenchidos = {};
     Object.entries(camposBase).forEach(([k, v]) => {
       if (k === "_coordenadorMatricula") { camposPreenchidos[k] = v; return; }
+      if (k === "ativo") { camposPreenchidos[k] = v; return; } // boolean: nunca cai no filtro de "" abaixo
       if (v !== null && v !== "") camposPreenchidos[k] = v;
     });
 
@@ -8433,13 +8438,11 @@ function analisarImportacaoAdministrativa(linhasExcel, nomeArquivo, funcionarios
         id: existente.id,
         matriculaAnterior: existente.matricula,
         nome: l.nomeCompleto,
-        campos: existente.situacao !== "ATIVO" ? { ...camposPreenchidos, situacao: "ATIVO" } : camposPreenchidos
+        campos: existente.ativo === false ? { ...camposPreenchidos, ativo: true } : camposPreenchidos
       });
     } else {
       funcionariosNovos.push({
         ...camposBase,
-        nome: l.nomeCompleto, // mantém compat com o resto do app (campo "nome")
-        ativo: true,
         esquecimentos: 0, atestados: 0, faltas: 0, banco_horas: 0,
         erros_registro: 0, abonos: 0, integracoes: 0
       });
@@ -8453,7 +8456,7 @@ function analisarImportacaoAdministrativa(linhasExcel, nomeArquivo, funcionarios
   const matriculasNaPlanilhaSet = matriculasDaPlanilha;
   const funcionariosInativados = funcionariosExistentesTodos.filter(f =>
     f.equipe_id === nomeEquipe &&
-    (f.situacao || "ATIVO").toUpperCase() === "ATIVO" &&
+    f.ativo !== false &&
     !matriculasNaPlanilhaSet.has(String(f.matricula || "").trim())
   );
 
@@ -8489,11 +8492,11 @@ async function aplicarImportacaoAdministrativa(plano, onProgresso) {
     const { data, error } = await supa.from("funcionarios_administrativo")
       .insert(campos)
       .select().single();
-    if (error) throw new Error(`Falha ao criar funcionário "${novo.nome_completo}" (matrícula ${novo.matricula}): ${extrairMensagemErro(error)}`);
+    if (error) throw new Error(`Falha ao criar funcionário "${novo.nome}" (matrícula ${novo.matricula}): ${extrairMensagemErro(error)}`);
     idPorMatricula.set(novo.matricula, data.id);
     registrarLogAcessosClient({
       acao: "criar_funcionario",
-      funcionario_nome: novo.nome_completo,
+      funcionario_nome: novo.nome,
       funcionario_matricula: novo.matricula,
       origem: "importacao_planilha",
       detalhe: { equipe: novo.equipe_id, subequipe: novo.subequipe_id || null }
@@ -8530,9 +8533,9 @@ async function aplicarImportacaoAdministrativa(plano, onProgresso) {
   progresso(`Inativando ${plano.funcionariosInativados.length} funcionário(s)…`);
   for (const inativo of plano.funcionariosInativados) {
     const { error } = await supa.from("funcionarios_administrativo")
-      .update({ situacao: "INATIVO", ativo: false })
+      .update({ ativo: false })
       .eq("id", inativo.id);
-    if (error) throw new Error(`Falha ao inativar funcionário "${inativo.nome_completo || inativo.nome}": ${extrairMensagemErro(error)}`);
+    if (error) throw new Error(`Falha ao inativar funcionário "${inativo.nome}": ${extrairMensagemErro(error)}`);
   }
 
   progresso("Concluído.");
@@ -8595,9 +8598,9 @@ function ModalImportarEquipeAdministrativa({ onClose, onConcluido }) {
         atualizados: plano.funcionariosAtualizados.length,
         inativados: plano.funcionariosInativados.length,
         logFalhou: !resultadoLog.ok,
-        listaNovos: plano.funcionariosNovos.map(f => ({ nome: f.nome_completo, matricula: f.matricula })),
+        listaNovos: plano.funcionariosNovos.map(f => ({ nome: f.nome, matricula: f.matricula })),
         listaAtualizados: plano.funcionariosAtualizados.map(f => ({ nome: f.nome, matricula: f.matriculaAnterior })),
-        listaInativados: plano.funcionariosInativados.map(f => ({ nome: f.nome_completo || f.nome, matricula: f.matricula }))
+        listaInativados: plano.funcionariosInativados.map(f => ({ nome: f.nome, matricula: f.matricula }))
       });
       setPlano(null);
       setArquivo(null);
