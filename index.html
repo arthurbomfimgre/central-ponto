@@ -3953,6 +3953,12 @@ function calcularNomesExibicao(funcionarios) {
   });
   return resultado;
 }
+// Formato básico local@dominio.tld — mesma regra usada nas Edge Functions
+// de criação de login em lote (ver EMAIL_REGEX lá), para o client sinalizar
+// e-mail malformado com a mesma régua usada no servidor, sem esperar o
+// round-trip até o Auth pra descobrir que o formato está errado.
+const EMAIL_VALIDO_REGEX = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/;
+
 function gerarEmail(nomeCompleto) {
   const partes = nomeCompleto.trim().split(/\s+/);
   const primeiro = partes[0];
@@ -12361,32 +12367,34 @@ function useArvoreAdministrativaData(sessaoPronta = true) {
 }
 
 // ── SecaoSemEmail ───────────────────────────────────────────────────────
-// Lista quem está sem login por falta de e-mail cadastrado (email nulo ou
-// vazio na tabela) e deixa corrigir isso ali mesmo, sem precisar abrir o
-// modal de perfil inteiro nem sair da tela.
+// Lista quem está sem login por não ter um e-mail válido cadastrado —
+// tanto quem não tem e-mail nenhum (nulo/vazio) quanto quem tem um e-mail
+// preenchido mas em formato inválido (sem "@", sem domínio, etc. — caso
+// real: RAFAELLE MAXINE TEIXEIRA DA SILVA, no comercial, tinha e-mail
+// cadastrado mas malformado, e antes disso só aparecia como texto de falha
+// sem nenhum jeito de corrigir na tela). Deixa corrigir os dois casos ali
+// mesmo, sem precisar abrir o modal de perfil inteiro nem sair da tela.
 //
 // Existe porque as Edge Functions de criação de login em lote
 // (criar-usuarios-comercial-lote / criar-usuarios-administrativo-lote) só
-// conseguem criar login pra quem já tem e-mail — quem não tem e-mail nunca
-// chega a ser tentado, e antes da correção isso ficava invisível: o card
-// mostrava "N sem login", mas o resumo da execução do lote só falava das
-// pessoas que TINHAM e-mail (ainda que malformado). As duas Edge Functions
-// agora devolvem `resultados.sem_email_count` com a contagem real desse
-// grupo — este componente é o "onde" desse número vira uma lista acionável.
+// conseguem criar login pra quem já tem um e-mail válido — quem não tem
+// e-mail nem é tentado (sem_email_count), e quem tem e-mail malformado vira
+// falha. As duas Edge Functions devolvem `resultados.sem_email_count` e
+// `resultados.falhas` — este componente é o "onde" os dois casos viram uma
+// lista acionável, calculada no client com a mesma regra de validação
+// (EMAIL_VALIDO_REGEX) usada nas Edge Functions.
 //
 // Genérico o bastante para servir tanto o card Comercial quanto o
 // Administrativo: recebe a tabela (nome da tabela no Supabase), a lista já
-// filtrada de quem não tem e-mail, o nome de exibição de cada um, e chama
-// `onSalvo` depois de um update bem-sucedido para o pai atualizar o estado
-// local (mesmo padrão de atualizarFuncionarioLocal usado em
-// ModalPerfilComercial).
+// filtrada de quem não tem e-mail válido, e chama `onSalvo` depois de um
+// update bem-sucedido para o pai atualizar o estado local (mesmo padrão de
+// atualizarFuncionarioLocal usado em ModalPerfilComercial).
 function SecaoSemEmail({ tabela, pessoas, corTexto, onSalvo }) {
   // Rascunho de e-mail em edição por id — só grava no banco quando a
   // pessoa clica em "Salvar" daquela linha, não a cada tecla.
   const [rascunhos, setRascunhos] = useState({});
   const [salvandoId, setSalvandoId] = useState(null);
   const [erroPorId, setErroPorId] = useState({});
-  const EMAIL_REGEX_CLIENT = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
   function valorAtual(pessoa) {
     return rascunhos[pessoa.id] ?? (pessoa.email || "");
@@ -12398,7 +12406,7 @@ function SecaoSemEmail({ tabela, pessoas, corTexto, onSalvo }) {
       setErroPorId(prev => ({ ...prev, [pessoa.id]: "Informe um e-mail." }));
       return;
     }
-    if (!EMAIL_REGEX_CLIENT.test(email)) {
+    if (!EMAIL_VALIDO_REGEX.test(email)) {
       setErroPorId(prev => ({ ...prev, [pessoa.id]: "Formato de e-mail inválido." }));
       return;
     }
@@ -12429,12 +12437,17 @@ function SecaoSemEmail({ tabela, pessoas, corTexto, onSalvo }) {
 
   return /*#__PURE__*/React.createElement("details", null,
     /*#__PURE__*/React.createElement("summary", { style: { fontSize: 12, fontWeight: 700, color: corTexto, cursor: "pointer" } },
-      `Ver quem está sem e-mail cadastrado (${pessoas.length})`),
+      `Ver quem está sem e-mail válido (${pessoas.length})`),
     /*#__PURE__*/React.createElement("div", { style: { marginTop: 8, display: "flex", flexDirection: "column", gap: 8, maxHeight: 320, overflow: "auto" } },
       pessoas.map(pessoa => {
         const nome = pessoa.nome_completo || pessoa.nome || "";
         const erro = erroPorId[pessoa.id];
         const salvando = salvandoId === pessoa.id;
+        // Quando já existe um e-mail cadastrado (só que malformado), mostra
+        // o valor atual como aviso, para ficar claro o que precisa ser
+        // corrigido — em vez de simplesmente aparecer um campo vazio, como
+        // se nada tivesse sido preenchido antes.
+        const emailAtualInvalido = pessoa.email && pessoa.email.trim() && !EMAIL_VALIDO_REGEX.test(pessoa.email.trim());
         return /*#__PURE__*/React.createElement("div", {
           key: pessoa.id,
           style: {
@@ -12444,7 +12457,9 @@ function SecaoSemEmail({ tabela, pessoas, corTexto, onSalvo }) {
           }
         },
           /*#__PURE__*/React.createElement("div", { style: { fontSize: 12.5, fontWeight: 600, color: "var(--cinza-700)", minWidth: 160, flex: "1 1 160px" } },
-            nome, pessoa.matricula && /*#__PURE__*/React.createElement("span", { style: { fontWeight: 400, color: "var(--cinza-400)" } }, " — mat. ", pessoa.matricula)),
+            nome, pessoa.matricula && /*#__PURE__*/React.createElement("span", { style: { fontWeight: 400, color: "var(--cinza-400)" } }, " — mat. ", pessoa.matricula),
+            emailAtualInvalido && /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, fontWeight: 400, color: "var(--vermelho-600)", marginTop: 2 } },
+              `Atual (inválido): "${pessoa.email.trim()}"`)),
           /*#__PURE__*/React.createElement("input", {
             type: "email",
             value: valorAtual(pessoa),
@@ -14892,12 +14907,19 @@ function ArvoreHierarquia({ pode = () => true, ocorrencias = [], funcionariosUni
   // Nome de exibição de cada funcionário (apelido, ou nomes desambiguados)
   // — ver calcularNomesExibicao. Recalculado só quando a lista mudar.
   const nomesExibicao = useMemo(() => calcularNomesExibicao(funcionarios), [funcionarios]);
-  // Quem está sem login E sem e-mail cadastrado — subconjunto de
-  // semLoginCount. "Criar logins em lote" nunca vai conseguir criar login
-  // pra essas pessoas (a Edge Function pula quem não tem email), então
-  // aparecem à parte, com edição inline (ver SecaoSemEmail).
+  // Quem está sem login E sem um e-mail válido cadastrado (vazio/nulo OU
+  // preenchido mas em formato inválido, ex.: sem "@", sem domínio) —
+  // subconjunto de semLoginCount. "Criar logins em lote" nunca vai
+  // conseguir criar login pra essas pessoas: quem não tem e-mail é pulado
+  // silenciosamente pela Edge Function (sem_email_count), e quem tem
+  // e-mail malformado vira falha (a RAFAELLE MAXINE é um caso real disso —
+  // tinha e-mail cadastrado, só que com formato inválido, então não caía
+  // no filtro antigo de "sem e-mail" e ficava sem nenhum jeito de corrigir
+  // na tela, só aparecendo como texto de falha). Os dois casos precisam do
+  // mesmo tratamento (digitar um e-mail válido), então entram na mesma
+  // lista.
   const semEmailLista = useMemo(
-    () => funcionarios.filter(f => !f.auth_user_id && !(f.email && f.email.trim()))
+    () => funcionarios.filter(f => !f.auth_user_id && !EMAIL_VALIDO_REGEX.test((f.email || "").trim()))
       .sort((a, b) => nomeExibicao(a, nomesExibicao).localeCompare(nomeExibicao(b, nomesExibicao), "pt-BR", { sensitivity: "base" })),
     [funcionarios, nomesExibicao]
   );
@@ -15012,8 +15034,10 @@ function ArvoreHierarquia({ pode = () => true, ocorrencias = [], funcionariosUni
   // "nome"), sem o problema de desambiguação que existe no comercial, então
   // aqui não precisa de calcularNomesExibicao/nomeExibicao — usa f.nome
   // direto.
+  // Mesmo critério do comercial (semEmailLista acima): vazio/nulo OU
+  // formato inválido — os dois precisam do mesmo tratamento de correção.
   const semEmailListaAdmin = useMemo(
-    () => funcionariosAdmin.filter(f => !f.auth_user_id && !(f.email && f.email.trim()))
+    () => funcionariosAdmin.filter(f => !f.auth_user_id && !EMAIL_VALIDO_REGEX.test((f.email || "").trim()))
       .sort((a, b) => (a.nome || "").localeCompare(b.nome || "", "pt-BR", { sensitivity: "base" })),
     [funcionariosAdmin]
   );
@@ -15230,7 +15254,7 @@ function ArvoreHierarquia({ pode = () => true, ocorrencias = [], funcionariosUni
             // aviso já mostrado pela SecaoSemEmail, deixando claro que
             // essas pessoas não são "falha" nem foram nem tentadas.
             !!resumoUsuarios.semEmailCount && /*#__PURE__*/React.createElement("div", { style: { marginTop: 4 } },
-              `${resumoUsuarios.semEmailCount} pessoa(s) sem e-mail cadastrado não foram tentadas — cadastre o e-mail em "Ver quem está sem e-mail cadastrado" acima.`),
+              `${resumoUsuarios.semEmailCount} pessoa(s) sem e-mail cadastrado não foram tentadas — cadastre o e-mail em "Ver quem está sem e-mail válido" acima.`),
             resumoUsuarios.falhas && resumoUsuarios.falhas.length > 0 && /*#__PURE__*/React.createElement("ul", { style: { marginTop: 6, paddingLeft: 18 } },
               resumoUsuarios.falhas.map(f => /*#__PURE__*/React.createElement("li", { key: f.id }, `${f.nome}: ${f.motivo}`)))
           )
@@ -15334,7 +15358,7 @@ function ArvoreHierarquia({ pode = () => true, ocorrencias = [], funcionariosUni
             `${resumoUsuariosAdmin.criados} login(s) criado(s) · ${resumoUsuariosAdmin.jaExistiam} já existiam · ${(resumoUsuariosAdmin.falhas || []).length} falha(s).`,
             resumoUsuariosAdmin.senha && /*#__PURE__*/React.createElement("div", { style: { marginTop: 4 } }, `Senha inicial padrão: ${resumoUsuariosAdmin.senha}`),
             !!resumoUsuariosAdmin.semEmailCount && /*#__PURE__*/React.createElement("div", { style: { marginTop: 4 } },
-              `${resumoUsuariosAdmin.semEmailCount} pessoa(s) sem e-mail cadastrado não foram tentadas — cadastre o e-mail em "Ver quem está sem e-mail cadastrado" acima.`),
+              `${resumoUsuariosAdmin.semEmailCount} pessoa(s) sem e-mail cadastrado não foram tentadas — cadastre o e-mail em "Ver quem está sem e-mail válido" acima.`),
             resumoUsuariosAdmin.falhas && resumoUsuariosAdmin.falhas.length > 0 && /*#__PURE__*/React.createElement("ul", { style: { marginTop: 6, paddingLeft: 18 } },
               resumoUsuariosAdmin.falhas.map(f => /*#__PURE__*/React.createElement("li", { key: f.id }, `${f.nome}: ${f.motivo}`)))
           )
