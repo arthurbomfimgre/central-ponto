@@ -12564,10 +12564,25 @@ function montarArvoreAdministrativa(funcionarios) {
       return { coordenador: c, subequipes };
     });
 
+    // Subequipes cujo coordenador_id aponta direto para o gerente (sem
+    // coordenador intermediário) — antes ficavam presas em
+    // subequipesPorCoordenador sem nenhum nó da árvore as exibir. Agora
+    // aparecem soltas logo abaixo do gerente, mesmo componente NoSubequipe
+    // usado para as subequipes de um coordenador.
+    const subequipesDoGerente = gerente
+      ? [...(subequipesPorCoordenador.get(gerente.id) || new Map()).entries()].map(([nomeSubequipe, membros]) => ({
+          nome: nomeSubequipe,
+          membros,
+          ativos: membros.filter(m => m.ativo !== false).length,
+          inativos: membros.filter(m => m.ativo === false).length
+        }))
+      : [];
+
     equipes.push({
       nome: nomeEquipe,
       gerente,
       coordenadores: coordenadoresComSubequipes,
+      subequipesDoGerente,
       semSubequipe: semSubequipeMembros.length > 0 ? {
         nome: GRUPO_SEM_SUBEQUIPE_LABEL,
         membros: semSubequipeMembros,
@@ -12608,13 +12623,15 @@ function filtrarArvoreAdministrativaPorBusca(arvoreAdmin, termoBruto) {
           return { ...c, subequipes: coordBate ? c.subequipes : subequipes };
         })
         .filter(Boolean);
+      const subequipesDoGerente = (eq.subequipesDoGerente || []).map(filtrarGrupo).filter(Boolean);
       const semSubequipe = filtrarGrupo(eq.semSubequipe);
       const equipeBate = normalizarBusca(eq.nome).includes(termo) || bateNome(eq.gerente);
-      const passa = equipeBate || coordenadores.length > 0 || !!semSubequipe;
+      const passa = equipeBate || coordenadores.length > 0 || subequipesDoGerente.length > 0 || !!semSubequipe;
       if (!passa) return null;
       return {
         ...eq,
         coordenadores: equipeBate ? eq.coordenadores : coordenadores,
+        subequipesDoGerente: equipeBate ? eq.subequipesDoGerente : subequipesDoGerente,
         semSubequipe: equipeBate ? eq.semSubequipe : semSubequipe
       };
     })
@@ -12874,6 +12891,12 @@ function NoEquipeAdministrativa({ equipe, aberta, onToggle, estadoAberto, onTogg
       style: { padding: "0 16px 16px 40px", display: "flex", flexDirection: "column", gap: 8 }
     },
       equipe.gerente && /*#__PURE__*/React.createElement(LinhaPessoa, { pessoa: equipe.gerente, nivel: "gerente", destaque: true }),
+      equipe.subequipesDoGerente && equipe.subequipesDoGerente.map(sub => /*#__PURE__*/React.createElement(NoSubequipe, {
+        key: sub.nome,
+        grupo: sub,
+        aberta: !!estadoAberto[`eq_${equipe.nome}_gsub_${sub.nome}`],
+        onToggle: () => onToggleChave(`eq_${equipe.nome}_gsub_${sub.nome}`)
+      })),
       equipe.coordenadores.map(item => /*#__PURE__*/React.createElement(NoCoordenador, {
         key: item.coordenador.id,
         item,
@@ -12887,7 +12910,7 @@ function NoEquipeAdministrativa({ equipe, aberta, onToggle, estadoAberto, onTogg
         aberta: !!estadoAberto[`eq_${equipe.nome}_sem_sub`],
         onToggle: () => onToggleChave(`eq_${equipe.nome}_sem_sub`)
       }),
-      equipe.coordenadores.length === 0 && !equipe.semSubequipe && !equipe.gerente && /*#__PURE__*/React.createElement("div", {
+      equipe.coordenadores.length === 0 && (!equipe.subequipesDoGerente || equipe.subequipesDoGerente.length === 0) && !equipe.semSubequipe && !equipe.gerente && /*#__PURE__*/React.createElement("div", {
         style: { fontSize: 12, color: "var(--cinza-300)" }
       }, "Nenhum membro nesta equipe.")
     )
