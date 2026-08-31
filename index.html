@@ -69,12 +69,20 @@ const EDGE_CRIAR_USUARIO = `${SUPA_URL}/functions/v1/criar-usuario-funcionario`;
 // ainda não têm auth_user_id (ver componente ArvoreHierarquia). Só a conta
 // de teste gre@portovale.com.br vê o botão que dispara isso.
 const EDGE_CRIAR_USUARIOS_COMERCIAL_LOTE = `${SUPA_URL}/functions/v1/criar-usuarios-comercial-lote`;
+// Espelha a de cima, mas para funcionarios_administrativo (ver comentário
+// completo mais abaixo, junto do card administrativo em ArvoreHierarquia).
+const EDGE_CRIAR_USUARIOS_ADMINISTRATIVO_LOTE = `${SUPA_URL}/functions/v1/criar-usuarios-administrativo-lote`;
 // Edge Function do painel de acessos (resetar_senha/revogar_acesso/
 // reativar_acesso) — protegida no servidor, só aceita chamadas autenticadas
 // como gre@portovale.com.br (ver comentário de segurança na própria
 // function). Usada tanto pelas ações manuais do painel quanto pela
 // auto-revogação ao importar planilha (ver aplicarImportacaoHierarquia).
 const EDGE_GERENCIAR_ACESSO = `${SUPA_URL}/functions/v1/admin-gerenciar-acesso`;
+// Cria um único login (table-agnostic, dentro de uma allowlist) para uma
+// linha de funcionarios_comercial ou funcionarios_administrativo. Diferente
+// de EDGE_CRIAR_USUARIO (legado, só funcionarios) — usada pelos modais de
+// perfil para o botão "Criar login" individual.
+const EDGE_CRIAR_USUARIO_INDIVIDUAL = `${SUPA_URL}/functions/v1/criar-usuario-individual`;
 
 // Mapeamento: chave -> tabela Supabase
 const SK_OCS    = "cp_ocorrencias_v4";
@@ -3981,7 +3989,13 @@ const NIVEL_LABEL_FALLBACK_CARGO = {
   superintendente: "Superintendente",
   diretor: "Diretor",
   gerente: "Gerente",
-  vendedor: "Vendedor"
+  vendedor: "Vendedor",
+  // Níveis administrativos namespaced (ver PAPEL_ADMINISTRATIVO_PARA_NIVEL) —
+  // usados como fallback de cargo quando o funcionário administrativo não
+  // tem `cargo` preenchido na planilha de origem.
+  admin_gerente: "Gerente",
+  admin_coordenador: "Coordenador",
+  admin_membro: "Membro"
 };
 function normalizarFuncComercial(fc) {
   return {
@@ -4041,7 +4055,16 @@ function ehAdminFuncionario(func) {
 //   - todo o resto de ações administrativas (editar perfil, importar
 //     planilha, ver log de acessos, revogar/reativar acesso, resetar senha)
 //     é exclusivo do admin_geral.
+// Inclui os três níveis administrativos namespaced (admin_membro/
+// admin_coordenador/admin_gerente — ver PAPEL_ADMINISTRATIVO_PARA_NIVEL em
+// resolverNivel) ao lado dos comerciais, para que a tela de Permissões
+// consiga configurar cada um separadamente sem colidir com o "gerente"
+// comercial. A UI de toggle Administrativo/Comercial em cima desta matriz
+// (mostrar só o subconjunto relevante por vez) é um passo à parte, ainda
+// não feito aqui — esta mudança só garante que as chaves existem e não
+// colidem, na raiz.
 const NIVEIS_CONFIGURAVEIS = ["vendedor", "gerente", "diretor", "superintendente"];
+const NIVEIS_CONFIGURAVEIS_ADMINISTRATIVO = ["admin_membro", "admin_coordenador", "admin_gerente"];
 const PERMISSOES_CATALOGO = [
   { chave: "ver_dashboard", label: "Ver Dashboard", grupo: "Abas" },
   { chave: "ver_funcionarios", label: "Ver Funcionários", grupo: "Abas" },
@@ -4195,8 +4218,34 @@ function usePermissoes(usuario, sessaoPronta = true) {
 // resto vira "vendedor" — assim nada quebra para os dados de teste já
 // existentes, e todo funcionário migrado via Supabase (com `nivel` já
 // definido) passa a usar a hierarquia real automaticamente.
+//
+// Namespacing administrativo (raiz da colisão corrigida): `funcionarios_
+// administrativo` guarda o papel da pessoa na coluna `papel`
+// ("gerente"/"coordenador"/"membro"), NUNCA em `nivel` — só
+// `funcionarios_comercial` usa `nivel`. Sem tratamento à parte, um
+// funcionário administrativo caía no fallback acima (`func?.nivel` vazio)
+// e virava "vendedor" ao logar; pior, se algum dia `papel` fosse lido como
+// `nivel` em algum outro ponto, "gerente" administrativo e "gerente"
+// comercial cairiam na MESMA linha de `permissoes_papel`. Para eliminar a
+// colisão na raiz, todo `papel` administrativo é namespaced aqui com o
+// prefixo "admin_" (`gerente`→"admin_gerente", `coordenador`→
+// "admin_coordenador", `membro`→"admin_membro") antes de virar
+// `usuario.nivel` — assim ele nunca mais compartilha chave com os níveis
+// comerciais (vendedor/gerente/diretor/superintendente/admin_geral), nem
+// em `permissoes_papel` nem em nenhuma comparação `usuario.nivel === "gerente"`
+// espalhada pelo app (essas comparações são todas do lado comercial —
+// filtrarPorEscopoGestor, isGestor, etc. — e continuam corretas porque
+// "admin_gerente" nunca bate com o literal "gerente").
+const PAPEL_ADMINISTRATIVO_PARA_NIVEL = {
+  gerente: "admin_gerente",
+  coordenador: "admin_coordenador",
+  membro: "admin_membro"
+};
 function resolverNivel(func) {
   if (func?.nivel) return func.nivel;
+  if (func?.papel && PAPEL_ADMINISTRATIVO_PARA_NIVEL[func.papel]) {
+    return PAPEL_ADMINISTRATIVO_PARA_NIVEL[func.papel];
+  }
   return ehAdminFuncionario(func) ? "admin_geral" : "vendedor";
 }
 // Papel legado (admin/funcionario) derivado do nível novo — usado onde o
@@ -8017,6 +8066,29 @@ function filtrarPlanoPorSelecao(plano, diretoriasRejeitadas, gerenciasRejeitadas
 // - origem: "manual" (padrão, ação disparada pelo modal de perfil) ou
 //   "importacao_planilha" (auto-revogação/reativação rodada durante a
 //   importação) — só usado para o log de auditoria, não muda o comportamento.
+// - acao: "resetar_senha" | "revogar_acesso" | "reativar_acesso"
+// - funcionario: registro de funcionarios_comercial OU funcionarios_administrativo
+//   (precisa de auth_user_id e id; nome vem de nome_completo ou nome,
+//   dependendo da origem — ver comentário abaixo)
+// - origem: "manual" (padrão, ação disparada pelo modal de perfil) ou
+//   "importacao_planilha" (auto-revogação/reativação rodada durante a
+//   importação) — só usado para o log de auditoria, não muda o comportamento.
+//
+// Table-agnostic desde [namespacing admin_*]: antes só mandava
+// `funcionario_comercial_id`, hardcoded — se algum dia fosse chamada com um
+// registro administrativo (que não tem esse campo, só `id` + `papel`), a
+// Edge Function receberia `funcionario_comercial_id: <id administrativo>`,
+// contaminando a FK errada em log_acessos/funcionarios_comercial. Hoje só é
+// chamada com registros comerciais (ModalPerfilComercial,
+// aplicarImportacaoHierarquia), então isso nunca disparou na prática — mas
+// deixamos a função segura por construção, já pronta para quando o modal de
+// perfil administrativo existir. IMPORTANTE: a Edge Function
+// admin-gerenciar-acesso (server-side, fora deste arquivo) hoje só lê
+// `funcionario_comercial_id` do payload — precisa ser atualizada para
+// também aceitar/gravar `funcionario_administrativo_id` antes desta função
+// ser chamada com origem administrativa, senão o vínculo em log_acessos sai
+// vazio do mesmo jeito que o de criarUsuariosAdminEmLote saía antes da
+// correção em registrarLogAcessosClient.
 async function chamarGerenciarAcesso(acao, funcionario, origem) {
   if (!funcionario.auth_user_id) {
     // Sem login criado ainda — não há usuário Auth para agir sobre. Não é
@@ -8024,6 +8096,11 @@ async function chamarGerenciarAcesso(acao, funcionario, origem) {
     // banco continua valendo normalmente).
     return { ok: true, semAuthUser: true };
   }
+  // `origemComercial: true` (funcionarios_comercial normalizado) ou a
+  // presença de `nome_completo`/ausência de `papel` identifica comercial;
+  // qualquer outro caso (tem `papel`, sem nome_completo) é administrativo.
+  // Mesma heurística usada em `nomeParaLog`.
+  const ehAdministrativo = !funcionario.nome_completo && (funcionario.papel != null || funcionario.nome != null);
   try {
     const { data: sessao } = await supa.auth.getSession();
     const token = sessao?.session?.access_token;
@@ -8034,8 +8111,9 @@ async function chamarGerenciarAcesso(acao, funcionario, origem) {
       body: JSON.stringify({
         acao,
         auth_user_id: funcionario.auth_user_id,
-        funcionario_comercial_id: funcionario.id,
-        funcionario_nome: funcionario.nome_completo || null,
+        funcionario_comercial_id: ehAdministrativo ? null : funcionario.id,
+        funcionario_administrativo_id: ehAdministrativo ? funcionario.id : null,
+        funcionario_nome: funcionario.nome_completo || funcionario.nome || null,
         funcionario_matricula: funcionario.matricula || null,
         origem: origem || "manual"
       })
@@ -8043,6 +8121,24 @@ async function chamarGerenciarAcesso(acao, funcionario, origem) {
     const json = await res.json();
     if (!res.ok || json.erro) return { ok: false, erro: json.erro || `Falha (HTTP ${res.status}).` };
     return { ok: true, ...json };
+  } catch (e) {
+    return { ok: false, erro: "Não foi possível contatar a Edge Function. Verifique se ela está publicada." };
+  }
+}
+
+// Cria um login individual para uma linha de uma tabela permitida
+// (funcionarios_comercial ou funcionarios_administrativo). Table-agnostic
+// de verdade — diferente de EDGE_CRIAR_USUARIO (legado, só funcionarios).
+async function chamarCriarUsuarioIndividual(tabela, id) {
+  try {
+    const res = await fetch(EDGE_CRIAR_USUARIO_INDIVIDUAL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "apikey": SUPA_KEY, "Authorization": `Bearer ${SUPA_KEY}` },
+      body: JSON.stringify({ tabela, id })
+    });
+    const json = await res.json();
+    if (!res.ok || !json.ok) return { ok: false, erro: json.erro || `Falha (HTTP ${res.status}).` };
+    return json;
   } catch (e) {
     return { ok: false, erro: "Não foi possível contatar a Edge Function. Verifique se ela está publicada." };
   }
@@ -12001,13 +12097,19 @@ const NIVEL_LABEL = {
   superintendente: "Superintendente",
   diretor: "Diretor",
   gerente: "Gerente",
-  vendedor: "Vendedor"
+  vendedor: "Vendedor",
+  // Níveis exclusivos da árvore administrativa (funcionarios_administrativo)
+  // — "gerente" acima é compartilhado entre comercial e administrativo.
+  coordenador: "Coordenador",
+  membro: "Membro"
 };
 const NIVEL_COR = {
   superintendente: { bg: "var(--marca-gradiente)", texto: "var(--cor-branco)" },
   diretor: { bg: "var(--indigo-100)", texto: "var(--indigo-600)" },
   gerente: { bg: "var(--roxo-100)", texto: "var(--roxo-600)" },
-  vendedor: { bg: "var(--cinza-100)", texto: "var(--cinza-600)" }
+  vendedor: { bg: "var(--cinza-100)", texto: "var(--cinza-600)" },
+  coordenador: { bg: "var(--indigo-100)", texto: "var(--indigo-600)" },
+  membro: { bg: "var(--cinza-100)", texto: "var(--cinza-600)" }
 };
 function normalizarBusca(s) {
   return (s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
@@ -12206,6 +12308,185 @@ function filtrarArvorePorBusca(arvore, termoBruto, nomesExibicao) {
     })
     .filter(Boolean);
 }
+// ─── ÁRVORE ADMINISTRATIVA (funcionarios_administrativo) ──────────────────
+// Diferente do comercial, aqui não há tabelas de estrutura separadas: a
+// hierarquia (equipe > coordenador > subequipe > membro) vive inteira em
+// funcionarios_administrativo, nas colunas equipe_id (texto livre),
+// subequipe_id (texto livre) e coordenador_id (uuid, aponta para outro
+// funcionario_administrativo). Ver comentário em cima do importador
+// (analisarImportacaoAdministrativa, ~linha 8233) para o desenho completo
+// do schema e das regras de classificação de papel na importação.
+function useArvoreAdministrativaData(sessaoPronta = true) {
+  const [estado, setEstado] = useState({
+    carregando: true,
+    erro: null,
+    funcionarios: []
+  });
+
+  async function buscar(ativoRef) {
+    try {
+      const { data, error } = await supa.from("funcionarios_administrativo").select("*");
+      if (error) throw error;
+      if (ativoRef && !ativoRef.current) return;
+      setEstado({
+        carregando: false,
+        erro: null,
+        // Traz ativos e inativos — quem consome (montarArvoreAdministrativa)
+        // separa as duas contagens, mesmo padrão do comercial.
+        funcionarios: data || []
+      });
+    } catch (e) {
+      if (ativoRef && !ativoRef.current) return;
+      setEstado(prev => ({ ...prev, carregando: false, erro: e.message || "Erro ao carregar dados." }));
+    }
+  }
+
+  useEffect(() => {
+    if (!sessaoPronta) return;
+    const ativoRef = { current: true };
+    buscar(ativoRef);
+    return () => { ativoRef.current = false; };
+  }, [sessaoPronta]);
+
+  // Atualiza uma única pessoa em memória (por id) sem refazer a busca
+  // inteira — mesmo padrão de useArvoreComercialData.
+  function atualizarFuncionarioLocal(pessoaAtualizada) {
+    setEstado(prev => ({
+      ...prev,
+      funcionarios: prev.funcionarios.map(f => f.id === pessoaAtualizada.id ? { ...f, ...pessoaAtualizada } : f)
+    }));
+  }
+
+  return { ...estado, atualizarFuncionarioLocal, refetch: () => buscar(null) };
+}
+
+const GRUPO_SEM_SUBEQUIPE_LABEL = "Sem subequipe definida";
+
+// Monta a árvore em memória: raiz "Administrativo" -> uma entrada por
+// equipe_id -> gerente da equipe -> coordenadores (cada um com suas
+// subequipes) -> membros de cada subequipe. Membros com subequipe_id vazio
+// entram num grupo "Sem subequipe definida", sinalizado com `semSubequipe:
+// true` no nó para o componente destacar visualmente.
+//
+// Papel de cada funcionário é inferido pela topologia dos dados (não pelo
+// cargo, que só é usado na importação): gerente = não tem coordenador_id e
+// é referenciado como coordenador_id por outros dentro da mesma equipe;
+// coordenador = referenciado como coordenador_id por membros com
+// subequipe_id preenchido; membro comum = tem subequipe_id preenchido (ou
+// cai no grupo "sem subequipe" quando não tem).
+function montarArvoreAdministrativa(funcionarios) {
+  const porEquipe = new Map(); // equipe_id -> funcionarios[]
+  for (const f of funcionarios) {
+    const equipe = f.equipe_id || "SEM EQUIPE DEFINIDA";
+    if (!porEquipe.has(equipe)) porEquipe.set(equipe, []);
+    porEquipe.get(equipe).push(f);
+  }
+
+  const equipes = [];
+  for (const [nomeEquipe, membrosDaEquipe] of porEquipe) {
+    // Quem é referenciado como coordenador_id por alguém, dentro da mesma
+    // equipe, vira líder (gerente, se ninguém tem coordenador_id apontando
+    // para ele "de cima"; coordenador, caso contrário).
+    const referenciados = new Set(
+      membrosDaEquipe.filter(f => f.coordenador_id).map(f => f.coordenador_id)
+    );
+
+    const gerente = membrosDaEquipe.find(f => !f.coordenador_id && referenciados.has(f.id)) || null;
+
+    const coordenadores = membrosDaEquipe.filter(f =>
+      f.id !== gerente?.id &&
+      referenciados.has(f.id) &&
+      (gerente ? f.coordenador_id === gerente.id : !f.coordenador_id)
+    );
+
+    const idsLideranca = new Set([gerente?.id, ...coordenadores.map(c => c.id)].filter(Boolean));
+    const membrosComuns = membrosDaEquipe.filter(f => !idsLideranca.has(f.id));
+
+    // Agrupa membros comuns por coordenador -> subequipe; quem não tem
+    // subequipe_id cai no grupo "órfão", sinalizado à parte.
+    const subequipesPorCoordenador = new Map(); // coordenador_id -> Map(subequipe_id -> membros[])
+    const semSubequipeMembros = [];
+
+    for (const m of membrosComuns) {
+      if (!m.subequipe_id) {
+        semSubequipeMembros.push(m);
+        continue;
+      }
+      const coordId = m.coordenador_id || null;
+      if (!subequipesPorCoordenador.has(coordId)) subequipesPorCoordenador.set(coordId, new Map());
+      const subMap = subequipesPorCoordenador.get(coordId);
+      if (!subMap.has(m.subequipe_id)) subMap.set(m.subequipe_id, []);
+      subMap.get(m.subequipe_id).push(m);
+    }
+
+    const coordenadoresComSubequipes = coordenadores.map(c => {
+      const subMap = subequipesPorCoordenador.get(c.id) || new Map();
+      const subequipes = [...subMap.entries()].map(([nomeSubequipe, membros]) => ({
+        nome: nomeSubequipe,
+        membros,
+        ativos: membros.filter(m => m.ativo !== false).length,
+        inativos: membros.filter(m => m.ativo === false).length
+      }));
+      return { coordenador: c, subequipes };
+    });
+
+    equipes.push({
+      nome: nomeEquipe,
+      gerente,
+      coordenadores: coordenadoresComSubequipes,
+      semSubequipe: semSubequipeMembros.length > 0 ? {
+        nome: GRUPO_SEM_SUBEQUIPE_LABEL,
+        membros: semSubequipeMembros,
+        ativos: semSubequipeMembros.filter(m => m.ativo !== false).length,
+        inativos: semSubequipeMembros.filter(m => m.ativo === false).length
+      } : null,
+      totalAtivos: membrosDaEquipe.filter(m => m.ativo !== false).length,
+      totalInativos: membrosDaEquipe.filter(m => m.ativo === false).length
+    });
+  }
+
+  equipes.sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
+  return { raiz: "Administrativo", equipes };
+}
+
+// Filtra a árvore administrativa por nome (funcionário, subequipe ou
+// equipe) — mesmo espírito de filtrarArvorePorBusca, mas adaptado ao
+// formato equipe > coordenador > subequipe > membro. Mantém um nó sempre
+// que ele mesmo bate na busca OU algum descendente bate.
+function filtrarArvoreAdministrativaPorBusca(arvoreAdmin, termoBruto) {
+  const termo = normalizarBusca(termoBruto.trim());
+  if (!termo) return arvoreAdmin;
+  const bateNome = f => normalizarBusca(f?.nome || "").includes(termo);
+  const filtrarGrupo = grupo => {
+    if (!grupo) return null;
+    const membros = grupo.membros.filter(bateNome);
+    const grupoBate = normalizarBusca(grupo.nome).includes(termo);
+    if (membros.length === 0 && !grupoBate) return null;
+    return { ...grupo, membros: grupoBate ? grupo.membros : membros };
+  };
+  const equipes = arvoreAdmin.equipes
+    .map(eq => {
+      const coordenadores = eq.coordenadores
+        .map(c => {
+          const subequipes = c.subequipes.map(filtrarGrupo).filter(Boolean);
+          const coordBate = bateNome(c.coordenador);
+          if (subequipes.length === 0 && !coordBate) return null;
+          return { ...c, subequipes: coordBate ? c.subequipes : subequipes };
+        })
+        .filter(Boolean);
+      const semSubequipe = filtrarGrupo(eq.semSubequipe);
+      const equipeBate = normalizarBusca(eq.nome).includes(termo) || bateNome(eq.gerente);
+      const passa = equipeBate || coordenadores.length > 0 || !!semSubequipe;
+      if (!passa) return null;
+      return {
+        ...eq,
+        coordenadores: equipeBate ? eq.coordenadores : coordenadores,
+        semSubequipe: equipeBate ? eq.semSubequipe : semSubequipe
+      };
+    })
+    .filter(Boolean);
+  return { ...arvoreAdmin, equipes };
+}
 // Contexto para levar o handler de clique em pessoa até LinhaPessoa sem
 // precisar repassar a prop manualmente por todos os níveis intermediários
 // da árvore (NoSuperintendencia → NoDiretoria → CardGerencia → LinhaPessoa).
@@ -12220,7 +12501,10 @@ function nomeExibicao(pessoaOuId, mapaOuNull) {
   if (!pessoaOuId) return "";
   const id = typeof pessoaOuId === "object" ? pessoaOuId.id : pessoaOuId;
   const mapa = mapaOuNull;
-  return (mapa && mapa.get(id)) || (typeof pessoaOuId === "object" ? pessoaOuId.nome_completo : "") || "";
+  // funcionarios_comercial usa `nome_completo`; funcionarios_administrativo
+  // usa `nome` — aceita as duas para que LinhaPessoa sirva às duas árvores.
+  const nomeBruto = typeof pessoaOuId === "object" ? (pessoaOuId.nome_completo || pessoaOuId.nome) : "";
+  return (mapa && mapa.get(id)) || nomeBruto || "";
 }
 function LinhaPessoa({ pessoa, nivel, destaque, inativo }) {
   const cor = NIVEL_COR[nivel];
@@ -12228,6 +12512,10 @@ function LinhaPessoa({ pessoa, nivel, destaque, inativo }) {
   const mapaNomes = React.useContext(ContextoNomesExibicao);
   const nome = nomeExibicao(pessoa, mapaNomes);
   const clicavel = !!onSelecionar;
+  // `inativo` normalmente vem calculado de fora (situacao, no comercial —
+  // ver ehAtivo em montarArvore). Quando não é passado explicitamente,
+  // cai para o schema administrativo (`ativo` boolean).
+  const estaInativo = inativo !== undefined ? inativo : pessoa.ativo === false;
   return /*#__PURE__*/React.createElement("div", {
     onClick: clicavel ? () => onSelecionar(pessoa) : undefined,
     style: {
@@ -12236,7 +12524,7 @@ function LinhaPessoa({ pessoa, nivel, destaque, inativo }) {
       gap: 10,
       padding: "8px 10px",
       borderRadius: 10,
-      opacity: inativo ? 0.55 : 1,
+      opacity: estaInativo ? 0.55 : 1,
       background: destaque ? "var(--marca-50)" : "transparent",
       cursor: clicavel ? "pointer" : "default"
     }
@@ -12245,9 +12533,11 @@ function LinhaPessoa({ pessoa, nivel, destaque, inativo }) {
       /*#__PURE__*/React.createElement("div", {
         style: { fontSize: 13, fontWeight: 600, color: "var(--cinza-900)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }
       }, nome),
-      /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, color: "var(--cinza-400)" } }, pessoa.cargo_origem)
+      // funcionarios_comercial usa `cargo_origem`; funcionarios_administrativo
+      // usa `cargo`.
+      /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, color: "var(--cinza-400)" } }, pessoa.cargo_origem || pessoa.cargo || "")
     ),
-    inativo && /*#__PURE__*/React.createElement("span", {
+    estaInativo && /*#__PURE__*/React.createElement("span", {
       style: {
         fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 20,
         background: "var(--cinza-200)", color: "var(--cinza-600)", flexShrink: 0
@@ -12323,6 +12613,242 @@ function CardGerencia({ gerencia, aberta, onToggle }) {
             ...vendedoresAtivos.map(v => /*#__PURE__*/React.createElement(LinhaPessoa, { key: v.id, pessoa: v, nivel: "vendedor" })),
             ...vendedoresInativos.map(v => /*#__PURE__*/React.createElement(LinhaPessoa, { key: v.id, pessoa: v, nivel: "vendedor", inativo: true }))
           ]
+    )
+  );
+}
+// ─── COMPONENTES VISUAIS DA ÁRVORE ADMINISTRATIVA ─────────────────────────
+// Espelham os componentes da árvore comercial (NoSuperintendencia >
+// NoDiretoria > CardGerencia), mas para o formato equipe > coordenador >
+// subequipe > membro do administrativo. Reaproveitam LinhaPessoa (com os
+// níveis "gerente"/"coordenador"/"membro" já registrados em NIVEL_COR/
+// NIVEL_LABEL) em vez de um componente de linha próprio — LinhaPessoa já
+// lida com os dois schemas (nome/nome_completo, ativo/situacao).
+
+// Grupo de membros de uma subequipe (ou o grupo especial "Sem subequipe
+// definida", quando `semSubequipe` é true — cabeçalho em âmbar para chamar
+// atenção de que esses membros ainda não têm subequipe atribuída na
+// planilha de origem). Equivalente, um nível abaixo, ao CardGerencia.
+function NoSubequipe({ grupo, aberta, onToggle, semSubequipe }) {
+  const ativos = grupo.membros.filter(m => m.ativo !== false);
+  const inativos = grupo.membros.filter(m => m.ativo === false);
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: semSubequipe ? "var(--amber-100)" : "var(--cor-branco)",
+      border: `1px solid ${semSubequipe ? "var(--amber-200)" : "var(--cinza-100)"}`,
+      borderRadius: 10, overflow: "hidden"
+    }
+  },
+    /*#__PURE__*/React.createElement("button", {
+      onClick: onToggle,
+      style: {
+        width: "100%", display: "flex", alignItems: "center", gap: 8,
+        padding: "8px 10px", background: "transparent", border: "none",
+        cursor: "pointer", textAlign: "left"
+      }
+    },
+      /*#__PURE__*/React.createElement("span", { style: { fontSize: 11, color: "var(--cinza-400)", transform: aberta ? "rotate(90deg)" : "rotate(0deg)", transition: "transform .15s", flexShrink: 0 } }, "▶"),
+      semSubequipe && /*#__PURE__*/React.createElement("span", { style: { fontSize: 12, flexShrink: 0 } }, "⚠️"),
+      /*#__PURE__*/React.createElement("span", { style: { fontSize: 12.5, fontWeight: 700, color: semSubequipe ? "var(--amber-800)" : "var(--cinza-800)", flex: 1 } }, grupo.nome),
+      /*#__PURE__*/React.createElement("span", {
+        style: { fontSize: 10.5, fontWeight: 600, color: "var(--cinza-500)", background: "var(--cinza-100)", padding: "2px 8px", borderRadius: 20, flexShrink: 0 }
+      }, textoAtivosInativos(grupo.ativos, grupo.inativos))
+    ),
+    aberta && /*#__PURE__*/React.createElement("div", {
+      style: { padding: "0 8px 8px 26px", display: "flex", flexDirection: "column", gap: 2 }
+    },
+      ativos.map(m => /*#__PURE__*/React.createElement(LinhaPessoa, { key: m.id, pessoa: m, nivel: "membro" })),
+      inativos.map(m => /*#__PURE__*/React.createElement(LinhaPessoa, { key: m.id, pessoa: m, nivel: "membro", inativo: true }))
+    )
+  );
+}
+// Card de um coordenador, com suas subequipes (NoSubequipe) aninhadas
+// dentro. Equivalente, um nível abaixo, ao CardGerencia dentro de
+// NoDiretoria.
+function NoCoordenador({ item, estadoAberto, onToggleChave, chavePrefixo }) {
+  const { coordenador, subequipes } = item;
+  const chaveCoord = `${chavePrefixo}_c_${coordenador.id}`;
+  const aberta = !!estadoAberto[chaveCoord];
+  const totalAtivos = subequipes.reduce((s, sub) => s + sub.ativos, 0) + (coordenador.ativo !== false ? 1 : 0);
+  const totalInativos = subequipes.reduce((s, sub) => s + sub.inativos, 0) + (coordenador.ativo === false ? 1 : 0);
+  return /*#__PURE__*/React.createElement("div", {
+    style: { background: "var(--cinza-50)", border: "1px solid var(--cinza-100)", borderRadius: 12, overflow: "hidden" }
+  },
+    /*#__PURE__*/React.createElement("button", {
+      onClick: () => onToggleChave(chaveCoord),
+      style: {
+        width: "100%", display: "flex", alignItems: "center", gap: 10,
+        padding: "10px 12px", background: "transparent", border: "none",
+        cursor: "pointer", textAlign: "left"
+      }
+    },
+      /*#__PURE__*/React.createElement("span", { style: { fontSize: 12, color: "var(--cinza-400)", transform: aberta ? "rotate(90deg)" : "rotate(0deg)", transition: "transform .15s", flexShrink: 0 } }, "▶"),
+      /*#__PURE__*/React.createElement(Avatar, { nome: coordenador.nome, id: coordenador.id, size: 26 }),
+      /*#__PURE__*/React.createElement("div", { style: { flex: 1, minWidth: 0 } },
+        /*#__PURE__*/React.createElement("div", { style: { fontSize: 13, fontWeight: 700, color: "var(--cinza-900)" } }, coordenador.nome),
+        /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, color: "var(--cinza-400)" } },
+          subequipes.length, " ", subequipes.length === 1 ? "subequipe" : "subequipes")
+      ),
+      /*#__PURE__*/React.createElement("span", {
+        style: { fontSize: 11, fontWeight: 600, color: "var(--cinza-500)", background: "var(--cinza-100)", padding: "2px 8px", borderRadius: 20, flexShrink: 0 }
+      }, textoAtivosInativos(totalAtivos, totalInativos))
+    ),
+    aberta && /*#__PURE__*/React.createElement("div", {
+      style: { padding: "0 10px 10px 34px", display: "flex", flexDirection: "column", gap: 6 }
+    },
+      /*#__PURE__*/React.createElement(LinhaPessoa, { pessoa: coordenador, nivel: "coordenador", destaque: true }),
+      subequipes.length === 0
+        ? /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: "var(--cinza-300)", padding: "6px 10px" } }, "Nenhuma subequipe cadastrada.")
+        : subequipes.map(sub => /*#__PURE__*/React.createElement(NoSubequipe, {
+            key: sub.nome,
+            grupo: sub,
+            aberta: !!estadoAberto[`${chaveCoord}_s_${sub.nome}`],
+            onToggle: () => onToggleChave(`${chaveCoord}_s_${sub.nome}`)
+          }))
+    )
+  );
+}
+// Nó de uma equipe inteira: gerente no topo, coordenadores (com
+// subequipes) abaixo, e o grupo "Sem subequipe definida" (se houver) por
+// último, sempre visível para não esconder a pendência de dados.
+// Equivalente ao NoSuperintendencia da árvore comercial (topo da árvore).
+function NoEquipeAdministrativa({ equipe, aberta, onToggle, estadoAberto, onToggleChave }) {
+  return /*#__PURE__*/React.createElement("div", {
+    style: { background: "var(--cor-branco)", border: "1px solid var(--cinza-200)", borderRadius: 14, overflow: "hidden" }
+  },
+    /*#__PURE__*/React.createElement("button", {
+      onClick: onToggle,
+      style: {
+        width: "100%", display: "flex", alignItems: "center", gap: 10,
+        padding: "12px 16px", background: "transparent", border: "none",
+        cursor: "pointer", textAlign: "left"
+      }
+    },
+      /*#__PURE__*/React.createElement("span", { style: { fontSize: 13, color: "var(--cinza-400)", transform: aberta ? "rotate(90deg)" : "rotate(0deg)", transition: "transform .15s", flexShrink: 0 } }, "▶"),
+      equipe.gerente ? /*#__PURE__*/React.createElement(Avatar, { nome: equipe.gerente.nome, id: equipe.gerente.id, size: 30 })
+        : /*#__PURE__*/React.createElement("div", { style: { width: 30, height: 30, borderRadius: "50%", background: "var(--cinza-200)", flexShrink: 0 } }),
+      /*#__PURE__*/React.createElement("div", { style: { flex: 1, minWidth: 0 } },
+        /*#__PURE__*/React.createElement("div", { style: { fontSize: 14.5, fontWeight: 800, color: "var(--cinza-900)" } }, equipe.nome),
+        /*#__PURE__*/React.createElement("div", { style: { fontSize: 11.5, color: "var(--cinza-400)" } },
+          equipe.gerente ? equipe.gerente.nome : "Sem gerente definido")
+      ),
+      equipe.semSubequipe && /*#__PURE__*/React.createElement("span", { title: "Há membros sem subequipe definida", style: { fontSize: 13, flexShrink: 0 } }, "⚠️"),
+      /*#__PURE__*/React.createElement("span", {
+        style: { fontSize: 11.5, fontWeight: 600, color: "var(--cinza-500)", background: "var(--cinza-100)", padding: "3px 10px", borderRadius: 20, flexShrink: 0 }
+      }, textoAtivosInativos(equipe.totalAtivos, equipe.totalInativos))
+    ),
+    aberta && /*#__PURE__*/React.createElement("div", {
+      style: { padding: "0 16px 16px 40px", display: "flex", flexDirection: "column", gap: 8 }
+    },
+      equipe.gerente && /*#__PURE__*/React.createElement(LinhaPessoa, { pessoa: equipe.gerente, nivel: "gerente", destaque: true }),
+      equipe.coordenadores.map(item => /*#__PURE__*/React.createElement(NoCoordenador, {
+        key: item.coordenador.id,
+        item,
+        estadoAberto,
+        onToggleChave,
+        chavePrefixo: `eq_${equipe.nome}`
+      })),
+      equipe.semSubequipe && /*#__PURE__*/React.createElement(NoSubequipe, {
+        grupo: equipe.semSubequipe,
+        semSubequipe: true,
+        aberta: !!estadoAberto[`eq_${equipe.nome}_sem_sub`],
+        onToggle: () => onToggleChave(`eq_${equipe.nome}_sem_sub`)
+      }),
+      equipe.coordenadores.length === 0 && !equipe.semSubequipe && !equipe.gerente && /*#__PURE__*/React.createElement("div", {
+        style: { fontSize: 12, color: "var(--cinza-300)" }
+      }, "Nenhum membro nesta equipe.")
+    )
+  );
+}
+// Nó-raiz "Administrativo": mesmo peso visual de NoSuperintendencia (mesmo
+// cabeçalho em gradiente, mesmo raio/sombra), mas envolvendo as equipes
+// administrativas (NoEquipeAdministrativa) em vez de diretorias. Fica lado
+// a lado com os nós de superintendência numa única lista dentro da aba
+// "Estrutura" — não é mais uma aba própria. Busca os próprios dados via
+// useArvoreAdministrativaData (independente da árvore comercial), mas
+// recebe `busca`/`estadoAberto`/`onToggleChave` do pai (ArvoreHierarquia)
+// para participar da mesma busca e do mesmo controle de expandir/colapsar
+// que os nós comerciais.
+function NoRaizAdministrativo({ busca, aberta, onToggle, estadoAberto, onToggleChave, onExpandirEquipes, sessaoPronta = true }) {
+  const { carregando, erro, funcionarios } = useArvoreAdministrativaData(sessaoPronta);
+
+  const arvoreCompleta = useMemo(() => montarArvoreAdministrativa(funcionarios), [funcionarios]);
+  const arvore = useMemo(() => filtrarArvoreAdministrativaPorBusca(arvoreCompleta, busca), [arvoreCompleta, busca]);
+
+  const totalComSubequipePendente = useMemo(
+    () => arvoreCompleta.equipes.filter(eq => eq.semSubequipe).length,
+    [arvoreCompleta]
+  );
+
+  // Expande as equipes que batem na busca — o toggle do nó-raiz ("adm") já
+  // é tratado pelo pai (ArvoreHierarquia); aqui só cuidamos do nível de
+  // equipe para dentro, mesmo espírito do efeito equivalente do lado
+  // comercial. `onExpandirEquipes` funde um lote de chaves de uma vez no
+  // estado `aberto` do pai (equivalente a várias chamadas de onToggleChave,
+  // mas sem re-render intermediário).
+  useEffect(() => {
+    if (!busca.trim() || !onExpandirEquipes) return;
+    const chaves = arvore.equipes.map(eq => `eq_${eq.nome}`);
+    if (chaves.length > 0) onExpandirEquipes(chaves);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [busca, arvore]);
+
+  if (carregando) {
+    return /*#__PURE__*/React.createElement("div", {
+      style: { background: "var(--cor-branco)", borderRadius: 16, boxShadow: "0 1px 3px var(--sombra-leve)", padding: 20, fontSize: 13, color: "var(--cinza-400)" }
+    }, "Carregando estrutura administrativa…");
+  }
+  if (erro) {
+    return /*#__PURE__*/React.createElement("div", {
+      style: { background: "var(--cor-branco)", borderRadius: 16, boxShadow: "0 1px 3px var(--sombra-leve)", padding: 20, fontSize: 13, color: "var(--vermelho-600)" }
+    }, "Não foi possível carregar a estrutura administrativa: ", erro);
+  }
+  // Se há busca ativa e nada bate no lado administrativo, o nó-raiz some da
+  // lista (mesmo comportamento de um NoSuperintendencia sem resultados) —
+  // quem decide isso é o chamador, checando arvore.equipes.length.
+  if (busca.trim() && arvore.equipes.length === 0) return null;
+
+  return /*#__PURE__*/React.createElement("div", {
+    style: { background: "var(--cor-branco)", borderRadius: 16, boxShadow: "0 1px 3px var(--sombra-leve)", overflow: "hidden" }
+  },
+    /*#__PURE__*/React.createElement("button", {
+      onClick: onToggle,
+      style: {
+        width: "100%", display: "flex", alignItems: "center", gap: 14,
+        padding: "18px 20px", border: "none", cursor: "pointer", textAlign: "left",
+        background: aberta ? "var(--marca-gradiente)" : "var(--cor-branco)",
+        color: aberta ? "var(--cor-branco)" : "var(--cinza-900)",
+        transition: "background .15s"
+      }
+    },
+      /*#__PURE__*/React.createElement("span", { style: { fontSize: 15, transform: aberta ? "rotate(90deg)" : "rotate(0deg)", transition: "transform .15s", flexShrink: 0 } }, "▶"),
+      /*#__PURE__*/React.createElement("div", { style: { width: 40, height: 40, borderRadius: "50%", background: aberta ? "rgba(255,255,255,.3)" : "var(--cinza-100)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, flexShrink: 0 } }, "🏢"),
+      /*#__PURE__*/React.createElement("div", { style: { flex: 1, minWidth: 0 } },
+        /*#__PURE__*/React.createElement("div", { style: { fontSize: 17, fontWeight: 800 } }, "Administrativo"),
+        /*#__PURE__*/React.createElement("div", { style: { fontSize: 12.5, opacity: .85, marginTop: 2 } },
+          arvoreCompleta.equipes.length, " ", arvoreCompleta.equipes.length === 1 ? "equipe" : "equipes",
+          totalComSubequipePendente > 0 && ` · ⚠️ ${totalComSubequipePendente} sem subequipe definida`)
+      ),
+      /*#__PURE__*/React.createElement("span", {
+        style: {
+          fontSize: 13, fontWeight: 700, padding: "5px 12px", borderRadius: 20, flexShrink: 0,
+          background: aberta ? "rgba(255,255,255,.22)" : "var(--marca-50)",
+          color: aberta ? "var(--cor-branco)" : "var(--marca-600)"
+        }
+      }, `${funcionarios.filter(f => f.ativo !== false).length} ativos`)
+    ),
+    aberta && /*#__PURE__*/React.createElement("div", {
+      style: { padding: 20, display: "flex", flexDirection: "column", gap: 10, background: "var(--cinza-50)" }
+    },
+      arvore.equipes.length === 0
+        ? /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: "var(--cinza-300)" } }, "Nenhuma equipe cadastrada.")
+        : arvore.equipes.map(eq => /*#__PURE__*/React.createElement(NoEquipeAdministrativa, {
+            key: eq.nome,
+            equipe: eq,
+            aberta: !!estadoAberto[`eq_${eq.nome}`],
+            onToggle: () => onToggleChave(`eq_${eq.nome}`),
+            estadoAberto,
+            onToggleChave
+          }))
     )
   );
 }
@@ -13247,13 +13773,20 @@ const RUBRICA_ACAO_LOG = {
 // passam pela Edge Function admin-gerenciar-acesso. Por design, erros aqui
 // só vão pro console — não travam o fluxo principal (importação/criação de
 // login), mas também não avisam visivelmente o usuário se o log falhar.
-async function registrarLogAcessosClient({ acao, funcionario_comercial_id, funcionario_nome, funcionario_matricula, origem, detalhe, _debug }) {
+// Aceita tanto `funcionario_comercial_id` quanto `funcionario_administrativo_id`
+// (mutuamente exclusivos, dependendo de qual tabela originou a ação) — sem
+// isso, chamadas do lado administrativo (ver criarUsuariosAdminEmLote)
+// perdiam esse campo silenciosamente: como não fazia parte da assinatura,
+// virava uma propriedade extra ignorada no destructuring, e a linha ficava
+// gravada em log_acessos sem nenhum vínculo de FK com o funcionário.
+async function registrarLogAcessosClient({ acao, funcionario_comercial_id, funcionario_administrativo_id, funcionario_nome, funcionario_matricula, origem, detalhe, _debug }) {
   try {
     const { data: { user } } = await supa.auth.getUser();
     const payload = {
       ator_email: user?.email || null,
       ator_user_id: user?.id || null,
       funcionario_comercial_id: funcionario_comercial_id || null,
+      funcionario_administrativo_id: funcionario_administrativo_id || null,
       funcionario_nome: funcionario_nome || null,
       funcionario_matricula: funcionario_matricula || null,
       acao,
@@ -13428,21 +13961,60 @@ function PainelPermissoes() {
   const { tabela, excecoes, carregando, definirPermissao, definirExcecao, removerExcecao } = usePermissoes({ nivel: "admin_geral" }, true);
   const [salvando, setSalvando] = useState(null); // `${papel}:${chave}` ou `${funcId}:${chave}` em voo
   const [erro, setErro] = useState("");
+  // Toggle Administrativo/Comercial: decide de qual hierarquia a tela lê
+  // pessoas (tanto na busca de exceção individual quanto na matriz por
+  // papel). "comercial" preserva o comportamento original desta tela;
+  // "administrativo" troca a fonte para funcionarios_administrativo e os
+  // níveis namespaced (admin_gerente/admin_coordenador/admin_membro — ver
+  // PAPEL_ADMINISTRATIVO_PARA_NIVEL em resolverNivel), sem nunca colidir
+  // com os papéis comerciais na mesma tabela permissoes_papel.
+  const [ladoSelecionado, setLadoSelecionado] = useState("comercial"); // "comercial" | "administrativo"
   // Dados de pessoas, só para a busca de exceção individual — mesma fonte
   // que a árvore usa, então os funcionario_id batem com os de
-  // permissoes_excecao.
-  const dadosPessoas = useArvoreComercialData(true);
+  // permissoes_excecao. Os dois hooks sempre rodam (não é condicional),
+  // para o toggle poder trocar entre eles sem re-buscar do zero.
+  const dadosComercial = useArvoreComercialData(true);
+  const dadosAdministrativo = useArvoreAdministrativaData(true);
+  const dadosPessoas = ladoSelecionado === "administrativo" ? dadosAdministrativo : dadosComercial;
+  const niveisConfiguraveisAtivos = ladoSelecionado === "administrativo" ? NIVEIS_CONFIGURAVEIS_ADMINISTRATIVO : NIVEIS_CONFIGURAVEIS;
+  // Nível padrão (fallback) de uma pessoa quando ela não tem nível/papel
+  // gravado — depende do lado ativo, já que "vendedor" não faz sentido
+  // como fallback para uma pessoa administrativa e vice-versa.
+  const nivelPadraoDoLado = ladoSelecionado === "administrativo" ? "admin_membro" : "vendedor";
+  // Resolve o nível efetivo de uma pessoa conforme o lado ativo: comercial
+  // já usa `nivel` direto; administrativo usa `papel` (cru, ex.: "gerente")
+  // e precisa passar pelo mesmo namespacing usado no login (resolverNivel),
+  // para nunca colidir com o "gerente" comercial na tabela permissoes_papel.
+  function nivelDaPessoa(pessoa) {
+    if (ladoSelecionado === "administrativo") return resolverNivel(pessoa) || nivelPadraoDoLado;
+    return pessoa.nivel || nivelPadraoDoLado;
+  }
   const [busca, setBusca] = useState("");
   const [pessoaExcecao, setPessoaExcecao] = useState(null);
+  // Trocar de lado limpa a pessoa selecionada — ela pertence à lista do
+  // lado anterior e sumiria da busca, deixando o painel da direita aberto
+  // para alguém que não está mais na lista visível.
+  function selecionarLado(lado) {
+    setLadoSelecionado(lado);
+    setPessoaExcecao(null);
+    setBusca("");
+  }
   const nomesExibicaoPessoas = useMemo(() => calcularNomesExibicao(dadosPessoas.funcionarios), [dadosPessoas.funcionarios]);
   // Caminho da pessoa na hierarquia (ex.: "Diretoria X · Gerência Y"), para
   // deixar claro QUEM é quem quando há nomes parecidos ou mesmo cargo —
   // sem isso, a busca só mostrava nome/cargo/matrícula, insuficiente para
-  // diferenciar duas pessoas homônimas em setores diferentes.
+  // diferenciar duas pessoas homônimas em setores diferentes. Só existe
+  // hierarquia por diretoria/gerência do lado comercial; do lado
+  // administrativo, a estrutura é equipe/subequipe (ver
+  // montarArvoreAdministrativa) — usamos essas colunas direto, sem lookup.
   function caminhoHierarquico(pessoa) {
+    if (ladoSelecionado === "administrativo") {
+      const partes = [pessoa.equipe_id, pessoa.subequipe_id].filter(Boolean);
+      return partes.length ? partes.join(" · ") : "sem vínculo de equipe";
+    }
     const partes = [];
-    const dir = dadosPessoas.diretorias.find(d => d.id === pessoa.diretoria_id);
-    const ger = dadosPessoas.gerencias.find(g => g.id === pessoa.gerencia_id);
+    const dir = dadosComercial.diretorias.find(d => d.id === pessoa.diretoria_id);
+    const ger = dadosComercial.gerencias.find(g => g.id === pessoa.gerencia_id);
     if (dir) partes.push(dir.nome);
     if (ger) partes.push(ger.nome);
     return partes.length ? partes.join(" · ") : "sem vínculo de hierarquia";
@@ -13451,14 +14023,16 @@ function PainelPermissoes() {
   // saber o alcance real de um toggle na matriz antes de clicar nele.
   const contagemPorPapel = useMemo(() => {
     const c = {};
-    for (const nivel of NIVEIS_CONFIGURAVEIS) c[nivel] = 0;
+    for (const nivel of niveisConfiguraveisAtivos) c[nivel] = 0;
     for (const f of dadosPessoas.funcionarios) {
-      const nivel = f.nivel || "vendedor";
-      const ativo = (f.situacao || "ATIVO").toUpperCase() === "ATIVO";
+      const nivel = nivelDaPessoa(f);
+      const ativo = ladoSelecionado === "administrativo"
+        ? (f.ativo !== false)
+        : (f.situacao || "ATIVO").toUpperCase() === "ATIVO";
       if (ativo && c[nivel] !== undefined) c[nivel]++;
     }
     return c;
-  }, [dadosPessoas.funcionarios]);
+  }, [dadosPessoas.funcionarios, ladoSelecionado]);
   // Lista da coluna esquerda: todas as pessoas ATIVAS por padrão (busca
   // vazia), filtrada por nome ou matrícula conforme o admin digita.
   // Diferente da versão anterior (que só mostrava algo a partir de 2
@@ -13467,17 +14041,21 @@ function PainelPermissoes() {
   // sistema" sem precisar saber o nome de cor. Limitada a 60 itens por vez
   // para não pesar a tela com ~581 pessoas renderizadas de uma vez; a
   // busca por nome/matrícula é o caminho para achar quem não aparece de
-  // cara na lista.
+  // cara na lista. Campo de nome difere por lado: comercial usa
+  // nome_completo, administrativo usa nome (ver normalizarFuncComercial /
+  // schema de funcionarios_administrativo).
   const listaPessoasSelecao = useMemo(() => {
     const termo = busca.trim().toLowerCase();
-    const ativas = dadosPessoas.funcionarios.filter(f => (f.situacao || "ATIVO").toUpperCase() === "ATIVO");
+    const ativas = dadosPessoas.funcionarios.filter(f =>
+      ladoSelecionado === "administrativo" ? (f.ativo !== false) : (f.situacao || "ATIVO").toUpperCase() === "ATIVO"
+    );
     const filtradas = termo
-      ? ativas.filter(f => (f.nome_completo || "").toLowerCase().includes(termo) || (f.matricula || "").toLowerCase().includes(termo))
+      ? ativas.filter(f => (f.nome_completo || f.nome || "").toLowerCase().includes(termo) || (f.matricula || "").toLowerCase().includes(termo))
       : ativas;
     return [...filtradas]
       .sort((a, b) => nomeExibicao(a, nomesExibicaoPessoas).localeCompare(nomeExibicao(b, nomesExibicaoPessoas), "pt-BR", { sensitivity: "base" }))
       .slice(0, 60);
-  }, [busca, dadosPessoas.funcionarios, nomesExibicaoPessoas]);
+  }, [busca, dadosPessoas.funcionarios, nomesExibicaoPessoas, ladoSelecionado]);
 
   async function toggle(papel, chave, valorAtual) {
     const chaveOp = `${papel}:${chave}`;
@@ -13502,7 +14080,7 @@ function PainelPermissoes() {
   function valorEfetivoPessoa(pessoa, chave) {
     const doIndividuo = excecoes[pessoa.id]?.[chave];
     if (doIndividuo !== undefined) return doIndividuo;
-    return valorEfetivo(pessoa.nivel || "vendedor", chave);
+    return valorEfetivo(nivelDaPessoa(pessoa), chave);
   }
   function temExcecao(pessoa, chave) {
     return excecoes[pessoa.id]?.[chave] !== undefined;
@@ -13515,7 +14093,7 @@ function PainelPermissoes() {
     try {
       await definirExcecao(pessoa.id, chave, !valorAtual);
     } catch (e) {
-      setErro(`Não foi possível salvar exceção de "${chave}" para ${pessoa.nome_completo}: ${e.message || e}`);
+      setErro(`Não foi possível salvar exceção de "${chave}" para ${pessoa.nome_completo || pessoa.nome}: ${e.message || e}`);
     } finally {
       setSalvando(null);
     }
@@ -13528,7 +14106,7 @@ function PainelPermissoes() {
     try {
       await removerExcecao(pessoa.id, chave);
     } catch (e) {
-      setErro(`Não foi possível remover exceção de "${chave}" para ${pessoa.nome_completo}: ${e.message || e}`);
+      setErro(`Não foi possível remover exceção de "${chave}" para ${pessoa.nome_completo || pessoa.nome}: ${e.message || e}`);
     } finally {
       setSalvando(null);
     }
@@ -13545,6 +14123,28 @@ function PainelPermissoes() {
     erro && /*#__PURE__*/React.createElement("div", {
       style: { background: "var(--vermelho-100)", color: "var(--vermelho-700)", padding: "10px 14px", borderRadius: 10, fontSize: 12.5 }
     }, `❌ ${erro}`),
+    // ── Toggle Administrativo/Comercial — decide a fonte de pessoas usada
+    // tanto na busca de exceção individual quanto na matriz por papel
+    // abaixo. Fica no topo, antes de tudo, porque muda o que as duas
+    // seções seguintes mostram.
+    /*#__PURE__*/React.createElement("div", {
+      style: { display: "inline-flex", background: "var(--cinza-100)", borderRadius: 12, padding: 4, gap: 4, alignSelf: "flex-start" }
+    },
+      [{ id: "comercial", label: "Comercial" }, { id: "administrativo", label: "Administrativo" }].map(opcao =>
+        /*#__PURE__*/React.createElement("button", {
+          key: opcao.id,
+          onClick: () => selecionarLado(opcao.id),
+          style: {
+            padding: "8px 18px", borderRadius: 9, border: "none", cursor: "pointer",
+            fontSize: 13, fontWeight: 700,
+            background: ladoSelecionado === opcao.id ? "var(--cor-branco)" : "transparent",
+            color: ladoSelecionado === opcao.id ? "var(--cinza-900)" : "var(--cinza-400)",
+            boxShadow: ladoSelecionado === opcao.id ? "0 1px 3px rgba(0,0,0,.08)" : "none",
+            transition: "background .15s, color .15s"
+          }
+        }, opcao.label)
+      )
+    ),
     // ── Exceções individuais — layout de duas colunas ───────────────────
     // Esquerda: busca + lista de pessoas ativas para selecionar. Direita:
     // painel de permissões da pessoa selecionada. Substituiu o formato
@@ -13595,7 +14195,7 @@ function PainelPermissoes() {
                 /*#__PURE__*/React.createElement("div", { style: { fontWeight: 700 } },
                   `${nomeExibicao(f, nomesExibicaoPessoas)}`),
                 /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, color: "var(--cinza-400)" } },
-                  `${f.cargo_origem || f.nivel || ""} · ${caminhoHierarquico(f)}`)
+                  `${f.cargo_origem || f.cargo || nivelDaPessoa(f) || ""} · ${caminhoHierarquico(f)}`)
               );
             })
           )
@@ -13614,7 +14214,7 @@ function PainelPermissoes() {
             /*#__PURE__*/React.createElement("div", null,
               /*#__PURE__*/React.createElement("div", { style: { fontSize: 15, fontWeight: 700, color: "var(--cinza-900)" } }, nomeExibicao(pessoaExcecao, nomesExibicaoPessoas)),
               /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: "var(--cinza-400)", marginTop: 2 } },
-                `${pessoaExcecao.cargo_origem || ""} · Papel: ${pessoaExcecao.nivel || "vendedor"} · mat. ${pessoaExcecao.matricula || "—"}`),
+                `${pessoaExcecao.cargo_origem || pessoaExcecao.cargo || ""} · Papel: ${nivelDaPessoa(pessoaExcecao)} · mat. ${pessoaExcecao.matricula || "—"}`),
               /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: "var(--cinza-400)" } }, caminhoHierarquico(pessoaExcecao))
             ),
             /*#__PURE__*/React.createElement("button", {
@@ -13692,7 +14292,7 @@ function PainelPermissoes() {
           /*#__PURE__*/React.createElement("thead", null,
             /*#__PURE__*/React.createElement("tr", { style: { background: "var(--cinza-50)" } },
               /*#__PURE__*/React.createElement("th", { style: { textAlign: "left", padding: "10px 16px", fontWeight: 700, color: "var(--cinza-700)" } }, "Permissão"),
-              NIVEIS_CONFIGURAVEIS.map(nivel => /*#__PURE__*/React.createElement("th", {
+              niveisConfiguraveisAtivos.map(nivel => /*#__PURE__*/React.createElement("th", {
                 key: nivel,
                 style: { textAlign: "center", padding: "10px 12px", fontWeight: 700, color: "var(--cinza-700)" }
               }, /*#__PURE__*/React.createElement("div", { style: { textTransform: "capitalize" } }, nivel),
@@ -13705,14 +14305,14 @@ function PainelPermissoes() {
             grupos.flatMap(grupo => ([
               /*#__PURE__*/React.createElement("tr", { key: `grupo_${grupo}` },
                 /*#__PURE__*/React.createElement("td", {
-                  colSpan: NIVEIS_CONFIGURAVEIS.length + 1,
+                  colSpan: niveisConfiguraveisAtivos.length + 1,
                   style: { padding: "8px 16px", background: "var(--cinza-50)", fontWeight: 700, color: "var(--cinza-500)", fontSize: 11.5, textTransform: "uppercase", letterSpacing: 0.4 }
                 }, grupo)
               ),
               ...PERMISSOES_CATALOGO.filter(p => p.grupo === grupo).map(p =>
                 /*#__PURE__*/React.createElement("tr", { key: p.chave, style: { borderTop: "1px solid var(--cinza-100)" } },
                   /*#__PURE__*/React.createElement("td", { style: { padding: "10px 16px", color: "var(--cinza-900)" } }, p.label),
-                  NIVEIS_CONFIGURAVEIS.map(nivel => {
+                  niveisConfiguraveisAtivos.map(nivel => {
                     const ligado = valorEfetivo(nivel, p.chave);
                     const emVoo = salvando === `${nivel}:${p.chave}`;
                     return /*#__PURE__*/React.createElement("td", { key: nivel, style: { textAlign: "center", padding: "8px 12px" } },
@@ -14129,12 +14729,19 @@ function PainelPendenciasGeral({ podeEditar = false } = {}) {
 
 function ArvoreHierarquia({ pode = () => true, ocorrencias = [], funcionariosUnificados = [] } = {}) {
   const { carregando, erro, superintendencias, diretorias, gerencias, funcionarios, atualizarFuncionarioLocal, refetch } = useArvoreComercialData();
+  // Dados administrativos, buscados à parte só para alimentar o card de
+  // "logins em lote" administrativo logo abaixo do card comercial (ver
+  // JSX mais abaixo). Não participa da árvore/busca desta tela, que
+  // continua 100% comercial — é só para o resumo de acesso.
+  const { carregando: carregandoAdmin, funcionarios: funcionariosAdmin } = useArvoreAdministrativaData();
   const [aba, setAba] = useState("estrutura"); // "estrutura" | "permissoes" | "pendencias"
   const [busca, setBusca] = useState("");
   const [aberto, setAberto] = useState({});
   const toggle = chave => setAberto(prev => ({ ...prev, [chave]: !prev[chave] }));
   const [criandoUsuarios, setCriandoUsuarios] = useState(false);
   const [resumoUsuarios, setResumoUsuarios] = useState(null);
+  const [criandoUsuariosAdmin, setCriandoUsuariosAdmin] = useState(false);
+  const [resumoUsuariosAdmin, setResumoUsuariosAdmin] = useState(null);
   const [modalImportar, setModalImportar] = useState(false);
   const [modalImportarAdmin, setModalImportarAdmin] = useState(false);
   const [modalLog, setModalLog] = useState(false);
@@ -14212,10 +14819,12 @@ function ArvoreHierarquia({ pode = () => true, ocorrencias = [], funcionariosUni
 
   // Expande automaticamente todos os níveis quando há uma busca ativa, para
   // que o resultado filtrado apareça já visível em vez de escondido em nós
-  // colapsados.
+  // colapsados. Inclui o nó-raiz "adm" (Administrativo) — sem isso, uma
+  // busca que só bate do lado administrativo ficaria escondida atrás do
+  // nó-raiz ainda colapsado.
   useEffect(() => {
     if (!busca.trim()) return;
-    const novo = {};
+    const novo = { adm: true };
     for (const s of arvore) {
       novo[`s_${s.id}`] = true;
       for (const d of s.diretorias) {
@@ -14236,6 +14845,73 @@ function ArvoreHierarquia({ pode = () => true, ocorrencias = [], funcionariosUni
     revogados: funcionarios.filter(f => !!f.auth_user_id && !!f.acesso_revogado).length,
     ativosComAcesso: funcionarios.filter(f => !!f.auth_user_id && !f.acesso_revogado).length
   }), [superintendencias, diretorias, gerencias, funcionarios]);
+
+  // Mesmo resumo de acesso do comercial (totais), mas para
+  // funcionarios_administrativo — alimenta só o card administrativo, não
+  // a árvore desta tela.
+  const totaisAdmin = useMemo(() => ({
+    total: funcionariosAdmin.length,
+    comLogin: funcionariosAdmin.filter(f => !!f.auth_user_id).length,
+    revogados: funcionariosAdmin.filter(f => !!f.auth_user_id && !!f.acesso_revogado).length,
+    ativosComAcesso: funcionariosAdmin.filter(f => !!f.auth_user_id && !f.acesso_revogado).length
+  }), [funcionariosAdmin]);
+  const semLoginCountAdmin = useMemo(
+    () => funcionariosAdmin.filter(f => !f.auth_user_id).length,
+    [funcionariosAdmin]
+  );
+  // Nome de exibição para a lista "quem está sem login" do administrativo.
+  // funcionarios_administrativo já usa nome único por linha (coluna
+  // "nome"), sem o problema de desambiguação que existe no comercial, então
+  // aqui não precisa de calcularNomesExibicao/nomeExibicao — usa f.nome
+  // direto.
+
+  async function criarUsuariosAdminEmLote() {
+    if (criandoUsuariosAdmin) return;
+    setCriandoUsuariosAdmin(true);
+    setResumoUsuariosAdmin(null);
+    const acumulado = { criados: 0, jaExistiam: 0, falhas: [] };
+    const LOTE = 40;
+    try {
+      for (let i = 0; i < 30; i++) { // trava de segurança: no máx. 30 lotes (1200 pessoas)
+        const res = await fetch(EDGE_CRIAR_USUARIOS_ADMINISTRATIVO_LOTE, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "apikey": SUPA_KEY,
+            "Authorization": `Bearer ${SUPA_KEY}`
+          },
+          body: JSON.stringify({ limite: LOTE })
+        });
+        const json = await res.json();
+        if (!json.ok) {
+          setResumoUsuariosAdmin({ erro: json.erro || "Falha desconhecida.", ...acumulado });
+          setCriandoUsuariosAdmin(false);
+          return;
+        }
+        acumulado.criados += json.resultados.criados.length;
+        acumulado.jaExistiam += json.resultados.jaExistiam.length;
+        acumulado.falhas.push(...json.resultados.falhas);
+        for (const item of json.resultados.criados) {
+          const f = funcionariosAdmin.find(f => f.id === item.id);
+          registrarLogAcessosClient({
+            acao: "criar_login",
+            funcionario_administrativo_id: item.id,
+            funcionario_nome: item.nome,
+            funcionario_matricula: f?.matricula || null,
+            origem: "manual",
+            detalhe: { email: f?.email || null }
+          });
+        }
+        setResumoUsuariosAdmin({ ...acumulado, senha: json.senha_inicial, emAndamento: true });
+        if (json.processados_neste_lote < LOTE) break; // acabou
+      }
+      setResumoUsuariosAdmin(prev => ({ ...prev, emAndamento: false }));
+    } catch (e) {
+      setResumoUsuariosAdmin({ erro: "Não foi possível contatar a Edge Function. Verifique se ela está publicada.", ...acumulado });
+    } finally {
+      setCriandoUsuariosAdmin(false);
+    }
+  }
 
   if (carregando) {
     return /*#__PURE__*/React.createElement("div", {
@@ -14283,11 +14959,13 @@ function ArvoreHierarquia({ pode = () => true, ocorrencias = [], funcionariosUni
         }, "📥 Importar administrativo")
       )
     ),
-    // ── Abas internas do Painel de Acessos: Estrutura (árvore original),
-    // Permissões (configuração por papel) e Pendências (busca de todas as
-    // ocorrências criadas no sistema). Mantido simples — botões de
-    // alternância, sem depender de mais nenhuma lib de rota.
-    /*#__PURE__*/React.createElement("div", { style: { display: "flex", gap: 8 } },
+    // ── Abas internas do Painel de Acessos: Estrutura (árvore única, com
+    // os nós "Administrativo" e "Comercial" lado a lado — ver comentário
+    // mais abaixo, perto do map de NoSuperintendencia), Permissões
+    // (configuração por papel) e Pendências (busca de todas as ocorrências
+    // criadas no sistema). Mantido simples — botões de alternância, sem
+    // depender de mais nenhuma lib de rota.
+    /*#__PURE__*/React.createElement("div", { style: { display: "flex", gap: 8, flexWrap: "wrap" } },
       ["estrutura", "permissoes", "pendencias"].map(a => /*#__PURE__*/React.createElement("button", {
         key: a,
         onClick: () => setAba(a),
@@ -14393,6 +15071,71 @@ function ArvoreHierarquia({ pode = () => true, ocorrencias = [], funcionariosUni
       )
     ),
 
+    // ── Card de resumo de acesso — ADMINISTRATIVO ─────────────────────────
+    // Espelha o card comercial acima, mas para funcionarios_administrativo
+    // (useArvoreAdministrativaData, buscado no topo do componente). Fica
+    // logo abaixo do card comercial, na mesma tela — não abre árvore
+    // própria aqui, é só o resumo + botão de lote; a navegação pela
+    // estrutura administrativa continua acontecendo em outra tela.
+    !carregandoAdmin && /*#__PURE__*/React.createElement("div", {
+      style: {
+        background: "var(--cor-branco)", border: "1px solid var(--cinza-200)",
+        borderRadius: 14, padding: "18px 20px", display: "flex", flexDirection: "column", gap: 14
+      }
+    },
+      /*#__PURE__*/React.createElement("div", { style: { fontSize: 12.5, fontWeight: 800, color: "var(--cinza-500)", textTransform: "uppercase", letterSpacing: 0.3 } }, "Administrativo"),
+      /*#__PURE__*/React.createElement("div", { style: { display: "flex", gap: 20, flexWrap: "wrap" } },
+        /*#__PURE__*/React.createElement("div", null,
+          /*#__PURE__*/React.createElement("div", { style: { fontSize: 22, fontWeight: 800, color: "var(--verde-600)" } }, totaisAdmin.ativosComAcesso),
+          /*#__PURE__*/React.createElement("div", { style: { fontSize: 11.5, color: "var(--cinza-400)", fontWeight: 600 } }, "Com acesso ativo")
+        ),
+        /*#__PURE__*/React.createElement("div", null,
+          /*#__PURE__*/React.createElement("div", { style: { fontSize: 22, fontWeight: 800, color: "var(--amber-700)" } }, semLoginCountAdmin),
+          /*#__PURE__*/React.createElement("div", { style: { fontSize: 11.5, color: "var(--cinza-400)", fontWeight: 600 } }, "Sem login criado")
+        ),
+        /*#__PURE__*/React.createElement("div", null,
+          /*#__PURE__*/React.createElement("div", { style: { fontSize: 22, fontWeight: 800, color: "var(--vermelho-600)" } }, totaisAdmin.revogados),
+          /*#__PURE__*/React.createElement("div", { style: { fontSize: 11.5, color: "var(--cinza-400)", fontWeight: 600 } }, "Acesso inativo")
+        )
+      ),
+      semLoginCountAdmin > 0 && /*#__PURE__*/React.createElement("div", {
+        style: {
+          background: "var(--amber-100)", border: "1px solid var(--amber-200)",
+          borderRadius: 12, padding: "12px 16px", display: "flex",
+          flexDirection: "column", gap: 10
+        }
+      },
+        /*#__PURE__*/React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" } },
+          /*#__PURE__*/React.createElement("div", { style: { flex: 1, minWidth: 220, fontSize: 12.5, color: "var(--amber-800)" } },
+            "⚠️ ", semLoginCountAdmin, " funcionário(s) administrativo(s) ainda sem login criado (auth_user_id vazio)."),
+          /*#__PURE__*/React.createElement("button", {
+            onClick: criarUsuariosAdminEmLote,
+            disabled: criandoUsuariosAdmin,
+            style: {
+              padding: "8px 16px", borderRadius: 10, border: "none",
+              background: criandoUsuariosAdmin ? "var(--cinza-300)" : "var(--marca-600)",
+              color: "var(--cor-branco)", fontSize: 12.5, fontWeight: 700,
+              cursor: criandoUsuariosAdmin ? "default" : "pointer", flexShrink: 0
+            }
+          }, criandoUsuariosAdmin ? "Criando… (não feche esta aba)" : "Criar logins em lote")
+        ),
+        /*#__PURE__*/React.createElement("details", null,
+          /*#__PURE__*/React.createElement("summary", { style: { fontSize: 12, fontWeight: 700, color: "var(--amber-800)", cursor: "pointer" } },
+            "Ver quem está sem login"),
+          /*#__PURE__*/React.createElement("ul", { style: { paddingLeft: 18, marginTop: 8, display: "flex", flexDirection: "column", gap: 2, fontSize: 12.5, color: "var(--amber-800)", maxHeight: 220, overflow: "auto" } },
+            funcionariosAdmin.filter(f => !f.auth_user_id).sort((a, b) => (a.nome || "").localeCompare(b.nome || "", "pt-BR", { sensitivity: "base" })).map(f =>
+              /*#__PURE__*/React.createElement("li", { key: f.id }, f.nome, " — mat. ", f.matricula)))
+        )
+      ),
+      totaisAdmin.revogados > 0 && /*#__PURE__*/React.createElement("details", null,
+        /*#__PURE__*/React.createElement("summary", { style: { fontSize: 12, fontWeight: 700, color: "var(--vermelho-600)", cursor: "pointer" } },
+          "Ver quem está com acesso inativo"),
+        /*#__PURE__*/React.createElement("ul", { style: { paddingLeft: 18, marginTop: 8, display: "flex", flexDirection: "column", gap: 2, fontSize: 12.5, color: "var(--vermelho-600)", maxHeight: 220, overflow: "auto" } },
+          funcionariosAdmin.filter(f => !!f.auth_user_id && !!f.acesso_revogado).sort((a, b) => (a.nome || "").localeCompare(b.nome || "", "pt-BR", { sensitivity: "base" })).map(f =>
+            /*#__PURE__*/React.createElement("li", { key: f.id }, f.nome, " — mat. ", f.matricula)))
+      )
+    ),
+
     /*#__PURE__*/React.createElement("input", {
       value: busca,
       onChange: e => setBusca(e.target.value),
@@ -14421,20 +15164,45 @@ function ArvoreHierarquia({ pode = () => true, ocorrencias = [], funcionariosUni
     ),
     /*#__PURE__*/React.createElement(ContextoNomesExibicao.Provider, { value: nomesExibicao },
       /*#__PURE__*/React.createElement(ContextoSelecaoPessoa.Provider, { value: setPessoaSelecionada },
-        arvore.length === 0
-          ? /*#__PURE__*/React.createElement("div", { style: { padding: 40, textAlign: "center", color: "var(--cinza-300)", fontSize: 13 } }, "Nenhum resultado para essa busca.")
-          : arvore.map(s => /*#__PURE__*/React.createElement(NoSuperintendencia, {
-              key: s.id,
-              superintendencia: s,
-              aberta: !!aberto[`s_${s.id}`],
-              onToggle: () => toggle(`s_${s.id}`),
-              estadoAberto: aberto,
-              onToggleChave: toggle
-            }))
+        // Lista única: nó-raiz "Administrativo" (funcionarios_administrativo)
+        // seguido dos nós de superintendência já existentes ("Comercial").
+        // Ambos compartilham a mesma busca (`busca`) e o mesmo controle de
+        // expandir/colapsar (`aberto`/`toggle`) — chave "adm" reservada para
+        // o toggle do nó administrativo, para não colidir com as chaves
+        // `s_<id>` usadas pelas superintendências.
+        /*#__PURE__*/React.createElement(React.Fragment, null,
+          /*#__PURE__*/React.createElement(NoRaizAdministrativo, {
+            busca,
+            aberta: !!aberto.adm,
+            onToggle: () => toggle("adm"),
+            estadoAberto: aberto,
+            onToggleChave: toggle,
+            onExpandirEquipes: chaves => setAberto(prev => {
+              const novo = { ...prev };
+              chaves.forEach(c => { novo[c] = true; });
+              return novo;
+            })
+          }),
+          arvore.length === 0
+            ? (busca.trim() ? /*#__PURE__*/React.createElement("div", { style: { padding: 40, textAlign: "center", color: "var(--cinza-300)", fontSize: 13 } }, "Nenhum resultado para essa busca.") : null)
+            : arvore.map(s => /*#__PURE__*/React.createElement(NoSuperintendencia, {
+                key: s.id,
+                superintendencia: s,
+                aberta: !!aberto[`s_${s.id}`],
+                onToggle: () => toggle(`s_${s.id}`),
+                estadoAberto: aberto,
+                onToggleChave: toggle
+              }))
+        )
       )
     )
     ), // fecha o Fragment de aba === "estrutura"
-    pessoaSelecionada && /*#__PURE__*/React.createElement(ModalPerfilComercial, {
+    // ModalPerfilComercial espera o schema de funcionarios_comercial
+    // (nome_completo, matricula, gerencia_id, etc.) — pessoas vindas da
+    // árvore administrativa (funcionarios_administrativo) têm um schema
+    // diferente (nome, sem matricula/gerencia) e ainda não têm modal de
+    // edição próprio, então o clique nelas não abre nada por enquanto.
+    pessoaSelecionada && pessoaSelecionada.nome_completo && /*#__PURE__*/React.createElement(ModalPerfilComercial, {
       pessoa: pessoaSelecionada,
       nomeExibicao: nomeExibicao(pessoaSelecionada, nomesExibicao),
       superintendencias,
