@@ -14749,6 +14749,23 @@ function ArvoreHierarquia({ pode = () => true, ocorrencias = [], funcionariosUni
   // controle de acesso (ModalPerfilComercial). null = modal fechado.
   const [pessoaSelecionada, setPessoaSelecionada] = useState(null);
 
+  // Avisa antes de recarregar/fechar a aba durante a criação de logins em
+  // lote — recarregar no meio do processo (ex.: Ctrl+Shift+R) mata o loop
+  // de `await fetch` no meio de um lote, sem dar chance da UI mostrar
+  // sucesso/falha daquele lote específico. A pessoa via a tela "sumir" sem
+  // saber se aquele lote terminou do lado do servidor ou não, e ao clicar
+  // de novo o próximo lote podia parecer "não fez nada" quando na verdade
+  // era só o anterior que tinha sido interrompido no meio.
+  useEffect(() => {
+    if (!criandoUsuarios && !criandoUsuariosAdmin) return;
+    function avisar(e) {
+      e.preventDefault();
+      e.returnValue = "";
+    }
+    window.addEventListener("beforeunload", avisar);
+    return () => window.removeEventListener("beforeunload", avisar);
+  }, [criandoUsuarios, criandoUsuariosAdmin]);
+
   const semLoginCount = useMemo(
     () => funcionarios.filter(f => !f.auth_user_id).length,
     [funcionarios]
@@ -15051,6 +15068,28 @@ function ArvoreHierarquia({ pode = () => true, ocorrencias = [], funcionariosUni
             }
           }, criandoUsuarios ? "Criando… (não feche esta aba)" : "Criar logins em lote")
         ),
+        // ── Resumo do resultado — movido para logo abaixo do botão (antes
+        // ficava renderizado lá embaixo, depois do card administrativo
+        // inteiro e do campo de busca, longe o suficiente do botão para
+        // passar despercebido, inclusive escondendo mensagens de falha reais
+        // que já eram calculadas mas ninguém via na tela sem rolar bastante).
+        resumoUsuarios && /*#__PURE__*/React.createElement("div", {
+          style: {
+            background: resumoUsuarios.erro ? "var(--vermelho-100)" : "var(--verde-100)",
+            border: `1px solid ${resumoUsuarios.erro ? "var(--vermelho-300)" : "var(--verde-200)"}`,
+            borderRadius: 12, padding: "12px 16px", fontSize: 12.5,
+            color: resumoUsuarios.erro ? "var(--vermelho-800)" : "var(--verde-800)"
+          }
+        },
+          resumoUsuarios.erro && `❌ ${resumoUsuarios.erro}`,
+          !resumoUsuarios.erro && /*#__PURE__*/React.createElement(React.Fragment, null,
+            resumoUsuarios.emAndamento ? "⏳ Processando… " : "✅ Concluído. ",
+            `${resumoUsuarios.criados} login(s) criado(s) · ${resumoUsuarios.jaExistiam} já existiam · ${(resumoUsuarios.falhas || []).length} falha(s).`,
+            resumoUsuarios.senha && /*#__PURE__*/React.createElement("div", { style: { marginTop: 4 } }, `Senha inicial padrão: ${resumoUsuarios.senha}`),
+            resumoUsuarios.falhas && resumoUsuarios.falhas.length > 0 && /*#__PURE__*/React.createElement("ul", { style: { marginTop: 6, paddingLeft: 18 } },
+              resumoUsuarios.falhas.map(f => /*#__PURE__*/React.createElement("li", { key: f.id }, `${f.nome}: ${f.motivo}`)))
+          )
+        ),
         // Lista com nome + matrícula de quem está sem login — recolhida por
         // padrão para não ocupar espaço quando forem muitos, mas consultável
         // na hora sem precisar caçar pessoa por pessoa na árvore.
@@ -15119,6 +15158,30 @@ function ArvoreHierarquia({ pode = () => true, ocorrencias = [], funcionariosUni
             }
           }, criandoUsuariosAdmin ? "Criando… (não feche esta aba)" : "Criar logins em lote")
         ),
+        // ── Resumo do resultado — faltava por completo antes: o estado
+        // `resumoUsuariosAdmin` já era atualizado (inclusive com a lista de
+        // falhas e motivos), mas nunca havia nenhum elemento no JSX que o
+        // renderizasse — por isso falhas reais (ex.: e-mail duplicado/
+        // vazio) nunca apareciam na tela, mesmo quando aconteciam. Espelha
+        // exatamente o bloco já usado no card comercial (resumoUsuarios)
+        // logo acima.
+        resumoUsuariosAdmin && /*#__PURE__*/React.createElement("div", {
+          style: {
+            background: resumoUsuariosAdmin.erro ? "var(--vermelho-100)" : "var(--verde-100)",
+            border: `1px solid ${resumoUsuariosAdmin.erro ? "var(--vermelho-300)" : "var(--verde-200)"}`,
+            borderRadius: 12, padding: "12px 16px", fontSize: 12.5,
+            color: resumoUsuariosAdmin.erro ? "var(--vermelho-800)" : "var(--verde-800)"
+          }
+        },
+          resumoUsuariosAdmin.erro && `❌ ${resumoUsuariosAdmin.erro}`,
+          !resumoUsuariosAdmin.erro && /*#__PURE__*/React.createElement(React.Fragment, null,
+            resumoUsuariosAdmin.emAndamento ? "⏳ Processando… " : "✅ Concluído. ",
+            `${resumoUsuariosAdmin.criados} login(s) criado(s) · ${resumoUsuariosAdmin.jaExistiam} já existiam · ${(resumoUsuariosAdmin.falhas || []).length} falha(s).`,
+            resumoUsuariosAdmin.senha && /*#__PURE__*/React.createElement("div", { style: { marginTop: 4 } }, `Senha inicial padrão: ${resumoUsuariosAdmin.senha}`),
+            resumoUsuariosAdmin.falhas && resumoUsuariosAdmin.falhas.length > 0 && /*#__PURE__*/React.createElement("ul", { style: { marginTop: 6, paddingLeft: 18 } },
+              resumoUsuariosAdmin.falhas.map(f => /*#__PURE__*/React.createElement("li", { key: f.id }, `${f.nome}: ${f.motivo}`)))
+          )
+        ),
         /*#__PURE__*/React.createElement("details", null,
           /*#__PURE__*/React.createElement("summary", { style: { fontSize: 12, fontWeight: 700, color: "var(--amber-800)", cursor: "pointer" } },
             "Ver quem está sem login"),
@@ -15145,23 +15208,6 @@ function ArvoreHierarquia({ pode = () => true, ocorrencias = [], funcionariosUni
         fontSize: 13, outline: "none", background: "var(--cor-branco)", color: "var(--cinza-900)"
       }
     }),
-    resumoUsuarios && /*#__PURE__*/React.createElement("div", {
-      style: {
-        background: resumoUsuarios.erro ? "var(--vermelho-100)" : "var(--verde-100)",
-        border: `1px solid ${resumoUsuarios.erro ? "var(--vermelho-300)" : "var(--verde-200)"}`,
-        borderRadius: 12, padding: "12px 16px", fontSize: 12.5,
-        color: resumoUsuarios.erro ? "var(--vermelho-800)" : "var(--verde-800)"
-      }
-    },
-      resumoUsuarios.erro && `❌ ${resumoUsuarios.erro}`,
-      !resumoUsuarios.erro && /*#__PURE__*/React.createElement(React.Fragment, null,
-        resumoUsuarios.emAndamento ? "⏳ Processando… " : "✅ Concluído. ",
-        `${resumoUsuarios.criados} login(s) criado(s) · ${resumoUsuarios.jaExistiam} já existiam · ${(resumoUsuarios.falhas || []).length} falha(s).`,
-        resumoUsuarios.senha && /*#__PURE__*/React.createElement("div", { style: { marginTop: 4 } }, `Senha inicial padrão: ${resumoUsuarios.senha}`),
-        resumoUsuarios.falhas && resumoUsuarios.falhas.length > 0 && /*#__PURE__*/React.createElement("ul", { style: { marginTop: 6, paddingLeft: 18 } },
-          resumoUsuarios.falhas.map(f => /*#__PURE__*/React.createElement("li", { key: f.id }, `${f.nome}: ${f.motivo}`)))
-      )
-    ),
     /*#__PURE__*/React.createElement(ContextoNomesExibicao.Provider, { value: nomesExibicao },
       /*#__PURE__*/React.createElement(ContextoSelecaoPessoa.Provider, { value: setPessoaSelecionada },
         // Lista única: nó-raiz "Administrativo" (funcionarios_administrativo)
