@@ -12782,10 +12782,18 @@ function CardGerencia({ gerencia, aberta, onToggle }) {
 function NoSubequipe({ grupo, aberta, onToggle, semSubequipe }) {
   const ativos = grupo.membros.filter(m => m.ativo !== false);
   const inativos = grupo.membros.filter(m => m.ativo === false);
+  // Cores fixas (não dependem de var(--cor-branco)/var(--cinza-*), que no
+  // tema escuro do painel mantêm texto escuro sobre fundo escuro e ficam
+  // ilegíveis) — contraste garantido nos dois temas.
+  const corFundo = semSubequipe ? "#3a2d10" : "#1f2733";
+  const corBorda = semSubequipe ? "#6b5220" : "#3a4453";
+  const corTexto = semSubequipe ? "#f5c451" : "#e8ecf1";
+  const corBadgeFundo = "#2c3644";
+  const corBadgeTexto = "#b7c0cc";
   return /*#__PURE__*/React.createElement("div", {
     style: {
-      background: semSubequipe ? "var(--amber-100)" : "var(--cor-branco)",
-      border: `1px solid ${semSubequipe ? "var(--amber-200)" : "var(--cinza-100)"}`,
+      background: corFundo,
+      border: `1px solid ${corBorda}`,
       borderRadius: 10, overflow: "hidden"
     }
   },
@@ -12797,11 +12805,11 @@ function NoSubequipe({ grupo, aberta, onToggle, semSubequipe }) {
         cursor: "pointer", textAlign: "left"
       }
     },
-      /*#__PURE__*/React.createElement("span", { style: { fontSize: 11, color: "var(--cinza-400)", transform: aberta ? "rotate(90deg)" : "rotate(0deg)", transition: "transform .15s", flexShrink: 0 } }, "▶"),
+      /*#__PURE__*/React.createElement("span", { style: { fontSize: 11, color: corTexto, opacity: 0.6, transform: aberta ? "rotate(90deg)" : "rotate(0deg)", transition: "transform .15s", flexShrink: 0 } }, "▶"),
       semSubequipe && /*#__PURE__*/React.createElement("span", { style: { fontSize: 12, flexShrink: 0 } }, "⚠️"),
-      /*#__PURE__*/React.createElement("span", { style: { fontSize: 12.5, fontWeight: 700, color: semSubequipe ? "var(--amber-800)" : "var(--cinza-800)", flex: 1 } }, grupo.nome),
+      /*#__PURE__*/React.createElement("span", { style: { fontSize: 12.5, fontWeight: 700, color: corTexto, flex: 1 } }, grupo.nome),
       /*#__PURE__*/React.createElement("span", {
-        style: { fontSize: 10.5, fontWeight: 600, color: "var(--cinza-500)", background: "var(--cinza-100)", padding: "2px 8px", borderRadius: 20, flexShrink: 0 }
+        style: { fontSize: 10.5, fontWeight: 600, color: corBadgeTexto, background: corBadgeFundo, padding: "2px 8px", borderRadius: 20, flexShrink: 0 }
       }, textoAtivosInativos(grupo.ativos, grupo.inativos))
     ),
     aberta && /*#__PURE__*/React.createElement("div", {
