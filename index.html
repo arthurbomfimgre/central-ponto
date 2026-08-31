@@ -12360,6 +12360,125 @@ function useArvoreAdministrativaData(sessaoPronta = true) {
   return { ...estado, atualizarFuncionarioLocal, refetch: () => buscar(null) };
 }
 
+// ── SecaoSemEmail ───────────────────────────────────────────────────────
+// Lista quem está sem login por falta de e-mail cadastrado (email nulo ou
+// vazio na tabela) e deixa corrigir isso ali mesmo, sem precisar abrir o
+// modal de perfil inteiro nem sair da tela.
+//
+// Existe porque as Edge Functions de criação de login em lote
+// (criar-usuarios-comercial-lote / criar-usuarios-administrativo-lote) só
+// conseguem criar login pra quem já tem e-mail — quem não tem e-mail nunca
+// chega a ser tentado, e antes da correção isso ficava invisível: o card
+// mostrava "N sem login", mas o resumo da execução do lote só falava das
+// pessoas que TINHAM e-mail (ainda que malformado). As duas Edge Functions
+// agora devolvem `resultados.sem_email_count` com a contagem real desse
+// grupo — este componente é o "onde" desse número vira uma lista acionável.
+//
+// Genérico o bastante para servir tanto o card Comercial quanto o
+// Administrativo: recebe a tabela (nome da tabela no Supabase), a lista já
+// filtrada de quem não tem e-mail, o nome de exibição de cada um, e chama
+// `onSalvo` depois de um update bem-sucedido para o pai atualizar o estado
+// local (mesmo padrão de atualizarFuncionarioLocal usado em
+// ModalPerfilComercial).
+function SecaoSemEmail({ tabela, pessoas, corTexto, onSalvo }) {
+  // Rascunho de e-mail em edição por id — só grava no banco quando a
+  // pessoa clica em "Salvar" daquela linha, não a cada tecla.
+  const [rascunhos, setRascunhos] = useState({});
+  const [salvandoId, setSalvandoId] = useState(null);
+  const [erroPorId, setErroPorId] = useState({});
+  const EMAIL_REGEX_CLIENT = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+  function valorAtual(pessoa) {
+    return rascunhos[pessoa.id] ?? (pessoa.email || "");
+  }
+
+  async function salvar(pessoa) {
+    const email = (valorAtual(pessoa) || "").trim().toLowerCase();
+    if (!email) {
+      setErroPorId(prev => ({ ...prev, [pessoa.id]: "Informe um e-mail." }));
+      return;
+    }
+    if (!EMAIL_REGEX_CLIENT.test(email)) {
+      setErroPorId(prev => ({ ...prev, [pessoa.id]: "Formato de e-mail inválido." }));
+      return;
+    }
+    setSalvandoId(pessoa.id);
+    setErroPorId(prev => ({ ...prev, [pessoa.id]: null }));
+    try {
+      const { data, error } = await supa
+        .from(tabela)
+        .update({ email })
+        .eq("id", pessoa.id)
+        .select()
+        .single();
+      if (error) throw error;
+      onSalvo({ ...pessoa, ...data });
+      setRascunhos(prev => {
+        const novo = { ...prev };
+        delete novo[pessoa.id];
+        return novo;
+      });
+    } catch (e) {
+      setErroPorId(prev => ({ ...prev, [pessoa.id]: extrairMensagemErro(e) }));
+    } finally {
+      setSalvandoId(null);
+    }
+  }
+
+  if (!pessoas || pessoas.length === 0) return null;
+
+  return /*#__PURE__*/React.createElement("details", null,
+    /*#__PURE__*/React.createElement("summary", { style: { fontSize: 12, fontWeight: 700, color: corTexto, cursor: "pointer" } },
+      `Ver quem está sem e-mail cadastrado (${pessoas.length})`),
+    /*#__PURE__*/React.createElement("div", { style: { marginTop: 8, display: "flex", flexDirection: "column", gap: 8, maxHeight: 320, overflow: "auto" } },
+      pessoas.map(pessoa => {
+        const nome = pessoa.nome_completo || pessoa.nome || "";
+        const erro = erroPorId[pessoa.id];
+        const salvando = salvandoId === pessoa.id;
+        return /*#__PURE__*/React.createElement("div", {
+          key: pessoa.id,
+          style: {
+            display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap",
+            background: "var(--cor-branco)", border: "1px solid var(--cinza-200)",
+            borderRadius: 8, padding: "8px 10px"
+          }
+        },
+          /*#__PURE__*/React.createElement("div", { style: { fontSize: 12.5, fontWeight: 600, color: "var(--cinza-700)", minWidth: 160, flex: "1 1 160px" } },
+            nome, pessoa.matricula && /*#__PURE__*/React.createElement("span", { style: { fontWeight: 400, color: "var(--cinza-400)" } }, " — mat. ", pessoa.matricula)),
+          /*#__PURE__*/React.createElement("input", {
+            type: "email",
+            value: valorAtual(pessoa),
+            placeholder: gerarEmail(nome || "nome sobrenome"),
+            onChange: e => {
+              const v = e.target.value;
+              setRascunhos(prev => ({ ...prev, [pessoa.id]: v }));
+              if (erroPorId[pessoa.id]) setErroPorId(prev => ({ ...prev, [pessoa.id]: null }));
+            },
+            onKeyDown: e => { if (e.key === "Enter") salvar(pessoa); },
+            disabled: salvando,
+            style: {
+              flex: "2 1 220px", padding: "6px 10px", borderRadius: 8,
+              border: `1px solid ${erro ? "var(--vermelho-400)" : "var(--cinza-200)"}`,
+              fontSize: 12.5, outline: "none", color: "var(--cinza-900)"
+            }
+          }),
+          /*#__PURE__*/React.createElement("button", {
+            onClick: () => salvar(pessoa),
+            disabled: salvando,
+            style: {
+              padding: "6px 12px", borderRadius: 8, border: "none",
+              background: salvando ? "var(--cinza-300)" : "var(--marca-600)",
+              color: "var(--cor-branco)", fontSize: 12, fontWeight: 700,
+              cursor: salvando ? "default" : "pointer", flexShrink: 0
+            }
+          }, salvando ? "Salvando…" : "Salvar"),
+          erro && /*#__PURE__*/React.createElement("div", { style: { width: "100%", fontSize: 11.5, color: "var(--vermelho-600)" } }, erro)
+        );
+      })
+    )
+  );
+}
+
 const GRUPO_SEM_SUBEQUIPE_LABEL = "Sem subequipe definida";
 
 // Monta a árvore em memória: raiz "Administrativo" -> uma entrada por
@@ -14733,7 +14852,7 @@ function ArvoreHierarquia({ pode = () => true, ocorrencias = [], funcionariosUni
   // "logins em lote" administrativo logo abaixo do card comercial (ver
   // JSX mais abaixo). Não participa da árvore/busca desta tela, que
   // continua 100% comercial — é só para o resumo de acesso.
-  const { carregando: carregandoAdmin, funcionarios: funcionariosAdmin } = useArvoreAdministrativaData();
+  const { carregando: carregandoAdmin, funcionarios: funcionariosAdmin, atualizarFuncionarioLocal: atualizarFuncionarioLocalAdmin } = useArvoreAdministrativaData();
   const [aba, setAba] = useState("estrutura"); // "estrutura" | "permissoes" | "pendencias"
   const [busca, setBusca] = useState("");
   const [aberto, setAberto] = useState({});
@@ -14773,6 +14892,15 @@ function ArvoreHierarquia({ pode = () => true, ocorrencias = [], funcionariosUni
   // Nome de exibição de cada funcionário (apelido, ou nomes desambiguados)
   // — ver calcularNomesExibicao. Recalculado só quando a lista mudar.
   const nomesExibicao = useMemo(() => calcularNomesExibicao(funcionarios), [funcionarios]);
+  // Quem está sem login E sem e-mail cadastrado — subconjunto de
+  // semLoginCount. "Criar logins em lote" nunca vai conseguir criar login
+  // pra essas pessoas (a Edge Function pula quem não tem email), então
+  // aparecem à parte, com edição inline (ver SecaoSemEmail).
+  const semEmailLista = useMemo(
+    () => funcionarios.filter(f => !f.auth_user_id && !(f.email && f.email.trim()))
+      .sort((a, b) => nomeExibicao(a, nomesExibicao).localeCompare(nomeExibicao(b, nomesExibicao), "pt-BR", { sensitivity: "base" })),
+    [funcionarios, nomesExibicao]
+  );
 
   async function criarUsuariosEmLote() {
     if (criandoUsuarios) return;
@@ -14803,6 +14931,9 @@ function ArvoreHierarquia({ pode = () => true, ocorrencias = [], funcionariosUni
         acumulado.criados += json.resultados.criados.length;
         acumulado.jaExistiam += json.resultados.jaExistiam.length;
         acumulado.falhas.push(...json.resultados.falhas);
+        // sem_email_count vem recalculado do servidor a cada chamada —
+        // não precisa acumular entre lotes, só usar o valor mais recente.
+        acumulado.semEmailCount = json.resultados.sem_email_count || 0;
         // A Edge Function devolve só {id, nome} por criado — busca matrícula
         // e e-mail na lista de funcionários já carregada no client (mesma
         // fonte usada pelo resto da tela) para o log ficar completo.
@@ -14881,6 +15012,11 @@ function ArvoreHierarquia({ pode = () => true, ocorrencias = [], funcionariosUni
   // "nome"), sem o problema de desambiguação que existe no comercial, então
   // aqui não precisa de calcularNomesExibicao/nomeExibicao — usa f.nome
   // direto.
+  const semEmailListaAdmin = useMemo(
+    () => funcionariosAdmin.filter(f => !f.auth_user_id && !(f.email && f.email.trim()))
+      .sort((a, b) => (a.nome || "").localeCompare(b.nome || "", "pt-BR", { sensitivity: "base" })),
+    [funcionariosAdmin]
+  );
 
   async function criarUsuariosAdminEmLote() {
     if (criandoUsuariosAdmin) return;
@@ -14908,6 +15044,9 @@ function ArvoreHierarquia({ pode = () => true, ocorrencias = [], funcionariosUni
         acumulado.criados += json.resultados.criados.length;
         acumulado.jaExistiam += json.resultados.jaExistiam.length;
         acumulado.falhas.push(...json.resultados.falhas);
+        // sem_email_count vem recalculado do servidor a cada chamada —
+        // não precisa acumular entre lotes, só usar o valor mais recente.
+        acumulado.semEmailCount = json.resultados.sem_email_count || 0;
         for (const item of json.resultados.criados) {
           const f = funcionariosAdmin.find(f => f.id === item.id);
           registrarLogAcessosClient({
@@ -15086,6 +15225,12 @@ function ArvoreHierarquia({ pode = () => true, ocorrencias = [], funcionariosUni
             resumoUsuarios.emAndamento ? "⏳ Processando… " : "✅ Concluído. ",
             `${resumoUsuarios.criados} login(s) criado(s) · ${resumoUsuarios.jaExistiam} já existiam · ${(resumoUsuarios.falhas || []).length} falha(s).`,
             resumoUsuarios.senha && /*#__PURE__*/React.createElement("div", { style: { marginTop: 4 } }, `Senha inicial padrão: ${resumoUsuarios.senha}`),
+            // sem_email_count vem da Edge Function (contagem no servidor,
+            // sempre a mais atual) — some quando chega a 0. Reforça o
+            // aviso já mostrado pela SecaoSemEmail, deixando claro que
+            // essas pessoas não são "falha" nem foram nem tentadas.
+            !!resumoUsuarios.semEmailCount && /*#__PURE__*/React.createElement("div", { style: { marginTop: 4 } },
+              `${resumoUsuarios.semEmailCount} pessoa(s) sem e-mail cadastrado não foram tentadas — cadastre o e-mail em "Ver quem está sem e-mail cadastrado" acima.`),
             resumoUsuarios.falhas && resumoUsuarios.falhas.length > 0 && /*#__PURE__*/React.createElement("ul", { style: { marginTop: 6, paddingLeft: 18 } },
               resumoUsuarios.falhas.map(f => /*#__PURE__*/React.createElement("li", { key: f.id }, `${f.nome}: ${f.motivo}`)))
           )
@@ -15099,7 +15244,17 @@ function ArvoreHierarquia({ pode = () => true, ocorrencias = [], funcionariosUni
           /*#__PURE__*/React.createElement("ul", { style: { paddingLeft: 18, marginTop: 8, display: "flex", flexDirection: "column", gap: 2, fontSize: 12.5, color: "var(--amber-800)", maxHeight: 220, overflow: "auto" } },
             funcionarios.filter(f => !f.auth_user_id).sort((a, b) => nomeExibicao(a, nomesExibicao).localeCompare(nomeExibicao(b, nomesExibicao), "pt-BR", { sensitivity: "base" })).map(f =>
               /*#__PURE__*/React.createElement("li", { key: f.id }, nomeExibicao(f, nomesExibicao), " — mat. ", f.matricula)))
-        )
+        ),
+        // Subconjunto de "sem login" que nem tem e-mail cadastrado — a
+        // Edge Function de criação em lote pula essas pessoas silenciosamente
+        // (não consegue criar login sem e-mail), então ficam destacadas à
+        // parte, com um jeito de corrigir o e-mail ali mesmo.
+        /*#__PURE__*/React.createElement(SecaoSemEmail, {
+          tabela: "funcionarios_comercial",
+          pessoas: semEmailLista,
+          corTexto: "var(--amber-800)",
+          onSalvo: atualizarFuncionarioLocal
+        })
       ),
       totais.revogados > 0 && /*#__PURE__*/React.createElement("details", null,
         /*#__PURE__*/React.createElement("summary", { style: { fontSize: 12, fontWeight: 700, color: "var(--vermelho-600)", cursor: "pointer" } },
@@ -15178,6 +15333,8 @@ function ArvoreHierarquia({ pode = () => true, ocorrencias = [], funcionariosUni
             resumoUsuariosAdmin.emAndamento ? "⏳ Processando… " : "✅ Concluído. ",
             `${resumoUsuariosAdmin.criados} login(s) criado(s) · ${resumoUsuariosAdmin.jaExistiam} já existiam · ${(resumoUsuariosAdmin.falhas || []).length} falha(s).`,
             resumoUsuariosAdmin.senha && /*#__PURE__*/React.createElement("div", { style: { marginTop: 4 } }, `Senha inicial padrão: ${resumoUsuariosAdmin.senha}`),
+            !!resumoUsuariosAdmin.semEmailCount && /*#__PURE__*/React.createElement("div", { style: { marginTop: 4 } },
+              `${resumoUsuariosAdmin.semEmailCount} pessoa(s) sem e-mail cadastrado não foram tentadas — cadastre o e-mail em "Ver quem está sem e-mail cadastrado" acima.`),
             resumoUsuariosAdmin.falhas && resumoUsuariosAdmin.falhas.length > 0 && /*#__PURE__*/React.createElement("ul", { style: { marginTop: 6, paddingLeft: 18 } },
               resumoUsuariosAdmin.falhas.map(f => /*#__PURE__*/React.createElement("li", { key: f.id }, `${f.nome}: ${f.motivo}`)))
           )
@@ -15188,7 +15345,15 @@ function ArvoreHierarquia({ pode = () => true, ocorrencias = [], funcionariosUni
           /*#__PURE__*/React.createElement("ul", { style: { paddingLeft: 18, marginTop: 8, display: "flex", flexDirection: "column", gap: 2, fontSize: 12.5, color: "var(--amber-800)", maxHeight: 220, overflow: "auto" } },
             funcionariosAdmin.filter(f => !f.auth_user_id).sort((a, b) => (a.nome || "").localeCompare(b.nome || "", "pt-BR", { sensitivity: "base" })).map(f =>
               /*#__PURE__*/React.createElement("li", { key: f.id }, f.nome, " — mat. ", f.matricula)))
-        )
+        ),
+        // Espelha o mesmo bloco do card comercial acima, para
+        // funcionarios_administrativo.
+        /*#__PURE__*/React.createElement(SecaoSemEmail, {
+          tabela: "funcionarios_administrativo",
+          pessoas: semEmailListaAdmin,
+          corTexto: "var(--amber-800)",
+          onSalvo: atualizarFuncionarioLocalAdmin
+        })
       ),
       totaisAdmin.revogados > 0 && /*#__PURE__*/React.createElement("details", null,
         /*#__PURE__*/React.createElement("summary", { style: { fontSize: 12, fontWeight: 700, color: "var(--vermelho-600)", cursor: "pointer" } },
