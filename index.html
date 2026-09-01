@@ -10096,7 +10096,6 @@ function PainelOcorrencias({
   isAdmin,
   mesFiltro,
   setMesFiltro,
-  seletorEscopo,
   sessaoPronta = true,
   contaTesteAtivaAgora = false
 }) {
@@ -10106,6 +10105,11 @@ function PainelOcorrencias({
   const [obs, setObs] = useState("");
   const [filtroStatus, setFiltroStatus] = useState("Todos");
   const [filtroCargo, setFiltroCargo] = useState("Todos");
+  // Filtro de tipo de ocorrência e busca por nome/matrícula — exclusivos do
+  // modo Tabela (a Fila de trabalho não usa, pois lá o objetivo é resolver
+  // pendências uma a uma, não localizar uma pessoa/tipo específico).
+  const [filtroTipo, setFiltroTipo] = useState("Todos");
+  const [buscaTexto, setBuscaTexto] = useState("");
   // Sem sessaoPronta/contaTesteAtivaAgora, a carga inicial e o polling de
   // useSharedState nunca disparavam — o print do EasyMob ficava gravado no
   // Supabase mas nunca era buscado para exibição aqui.
@@ -10113,10 +10117,13 @@ function PainelOcorrencias({
   const cargosDisponiveis = useMemo(() => [...new Set(funcionarios.map(f => f.cargo).filter(Boolean))].sort((a, b) => a.localeCompare(b, "pt-BR", {
     sensitivity: "base"
   })), [funcionarios]);
+  const tiposDisponiveis = useMemo(() => [...new Set(ocorrencias.map(o => o.tipo).filter(Boolean))].sort((a, b) => a.localeCompare(b, "pt-BR", {
+    sensitivity: "base"
+  })), [ocorrencias]);
 
-  // Base filtrada só por cargo (usada para KPIs e para os contadores dos
-  // botões de status, que devem refletir o universo do cargo selecionado
-  // independente do status escolhido).
+  // Base filtrada só por cargo (usada para os contadores dos botões de
+  // status, que devem refletir o universo do cargo selecionado independente
+  // do status escolhido).
   const ocorrenciasFiltroCargo = ocorrencias.filter(o => {
     const func = resolverFuncionarioDaOcorrencia(funcionarios, o);
     if (!func) return false;
@@ -10124,10 +10131,20 @@ function PainelOcorrencias({
     return true;
   });
 
-  // Base final: cargo + status, fonte única para os dois modos de
-  // visualização (fila e tabela) e para a exportação.
+  // Base final: cargo + status + tipo + busca por nome/matrícula — fonte
+  // única para os dois modos de visualização (fila e tabela) e para a
+  // exportação. Tipo e busca só se aplicam de fato no modo Tabela (a UI só
+  // os exibe lá), mas por virem vazios/"Todos" por padrão, não afetam a
+  // Fila enquanto o usuário não trocar de modo e mexer neles.
+  const buscaNorm = normalizarBusca(buscaTexto.trim());
   const ocorrenciasFiltradas = ocorrenciasFiltroCargo.filter(o => {
     if (filtroStatus !== "Todos" && o.status !== filtroStatus) return false;
+    if (filtroTipo !== "Todos" && o.tipo !== filtroTipo) return false;
+    if (buscaNorm) {
+      const func = resolverFuncionarioDaOcorrencia(funcionarios, o);
+      const alvo = normalizarBusca(`${func?.nome || ""} ${func?.matricula || ""}`);
+      if (!alvo.includes(buscaNorm)) return false;
+    }
     return true;
   }).sort((a, b) => (b.atualizadoEm || b.data || "").localeCompare(a.atualizadoEm || a.data || ""));
 
@@ -10209,6 +10226,7 @@ function PainelOcorrencias({
       return {
         "Data": fmtDate(o.data),
         "Funcionário": func?.nome || "—",
+        "Matrícula": func?.matricula || "—",
         "Setor": func?.setor || "—",
         "Tipo": o.tipo,
         "Status": o.status,
@@ -10268,19 +10286,6 @@ function PainelOcorrencias({
     }
   }, m.label)));
 
-  // ── KPIs — sempre visíveis, substituem os contadores dos pills ─────────
-  const kpis = /*#__PURE__*/React.createElement("div", {
-    style: { display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 12, marginBottom: 20 }
-  }, /*#__PURE__*/React.createElement(KpiCard, {
-    label: "Total", value: contadores.Todos, sub: "ocorrências", icon: "📋"
-  }), /*#__PURE__*/React.createElement(KpiCard, {
-    label: "Pendentes", value: porStatus.Pendente, sub: "a resolver", accent: porStatus.Pendente > 0 ? "var(--vermelho-600)" : undefined, icon: "⏳"
-  }), /*#__PURE__*/React.createElement(KpiCard, {
-    label: "Verificados", value: porStatus.Verificado, sub: "concluídos", accent: "var(--verde-600)", icon: "✅"
-  }), /*#__PURE__*/React.createElement(KpiCard, {
-    label: "Rejeitados", value: porStatus.Rejeitado, sub: "", accent: porStatus.Rejeitado > 0 ? "var(--vermelho-600)" : undefined, icon: "✕"
-  }));
-
   // ── Filtros unificados: status (pills com contador) + cargo ─────────────
   const filtros = /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     style: { display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap" }
@@ -10311,8 +10316,30 @@ function PainelOcorrencias({
     value: filtroCargo,
     onChange: e => setFiltroCargo(e.target.value),
     style: { padding: "9px 14px", borderRadius: 10, border: "1px solid var(--cinza-200)", fontSize: 13, background: "var(--cor-branco)", cursor: "pointer" }
-  }, ["Todos", ...cargosDisponiveis].map(c => /*#__PURE__*/React.createElement("option", { key: c }, c)))), filtroCargo !== "Todos" && /*#__PURE__*/React.createElement("button", {
-    onClick: () => setFiltroCargo("Todos"),
+  }, ["Todos", ...cargosDisponiveis].map(c => /*#__PURE__*/React.createElement("option", { key: c }, c)))),
+  // Tipo e busca por nome/matrícula — exclusivos do modo Tabela, já que a
+  // Fila é uma lista de ação item a item, não um universo para recortar.
+  modoVisualizacao === "tabela" && /*#__PURE__*/React.createElement("div", {
+    style: { display: "flex", flexDirection: "column", gap: 4 }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: { fontSize: 11, fontWeight: 700, color: "var(--cinza-400)", textTransform: "uppercase", letterSpacing: ".05em" }
+  }, "Tipo"), /*#__PURE__*/React.createElement("select", {
+    value: filtroTipo,
+    onChange: e => setFiltroTipo(e.target.value),
+    style: { padding: "9px 14px", borderRadius: 10, border: "1px solid var(--cinza-200)", fontSize: 13, background: "var(--cor-branco)", cursor: "pointer" }
+  }, ["Todos", ...tiposDisponiveis].map(t => /*#__PURE__*/React.createElement("option", { key: t }, t)))),
+  modoVisualizacao === "tabela" && /*#__PURE__*/React.createElement("div", {
+    style: { display: "flex", flexDirection: "column", gap: 4, flex: "1 1 220px" }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: { fontSize: 11, fontWeight: 700, color: "var(--cinza-400)", textTransform: "uppercase", letterSpacing: ".05em" }
+  }, "Buscar"), /*#__PURE__*/React.createElement("input", {
+    value: buscaTexto,
+    onChange: e => setBuscaTexto(e.target.value),
+    placeholder: "Nome ou matrícula…",
+    style: { padding: "9px 14px", borderRadius: 10, border: "1px solid var(--cinza-200)", fontSize: 13, background: "var(--cor-branco)", outline: "none", boxSizing: "border-box" }
+  })),
+  (filtroCargo !== "Todos" || (modoVisualizacao === "tabela" && (filtroTipo !== "Todos" || buscaTexto.trim()))) && /*#__PURE__*/React.createElement("button", {
+    onClick: () => { setFiltroCargo("Todos"); setFiltroTipo("Todos"); setBuscaTexto(""); },
     style: { padding: "9px 14px", borderRadius: 10, border: "1px solid var(--cinza-200)", background: "var(--cinza-50)", fontSize: 12, fontWeight: 600, color: "var(--cinza-500)", cursor: "pointer" }
   }, "✕ Limpar filtros")));
 
@@ -10397,7 +10424,7 @@ function PainelOcorrencias({
     style: { width: "100%", borderCollapse: "collapse", minWidth: 700 }
   }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", {
     style: { background: "var(--cinza-50)", borderBottom: "1px solid var(--cinza-100)" }
-  }, ["Data", "Funcionário", "Setor", "Tipo", "Status", "Observação"].map(h => /*#__PURE__*/React.createElement("th", {
+  }, ["Data", "Funcionário", "Matrícula", "Setor", "Tipo", "Status", "Observação"].map(h => /*#__PURE__*/React.createElement("th", {
     key: h,
     style: { padding: "11px 16px", fontSize: 11, fontWeight: 700, color: "var(--cinza-400)", textAlign: "left", letterSpacing: ".06em", textTransform: "uppercase", whiteSpace: "nowrap" }
   }, h)))), /*#__PURE__*/React.createElement("tbody", null, ocorrenciasFiltradas.map((o, i) => {
@@ -10410,13 +10437,14 @@ function PainelOcorrencias({
       /*#__PURE__*/React.createElement(Avatar, { nome: func?.nome || "?", id: func?.id || 0, size: 26 }),
       /*#__PURE__*/React.createElement("span", { style: { fontSize: 12, fontWeight: 600, color: "var(--cinza-900)" } }, func?.nome?.split(" ").slice(0, 2).join(" ") || "—")
     )),
+    /*#__PURE__*/React.createElement("td", { style: { padding: "10px 16px", fontSize: 12, color: "var(--cinza-500)", fontFamily: "monospace" } }, func?.matricula || "—"),
     /*#__PURE__*/React.createElement("td", { style: { padding: "10px 16px", fontSize: 12, color: "var(--cinza-500)" } }, func?.setor || "—"),
     /*#__PURE__*/React.createElement("td", { style: { padding: "10px 16px", fontSize: 12, fontWeight: 600, color: "var(--cinza-900)" } }, tipoIcon(o.tipo), " ", o.tipo),
     /*#__PURE__*/React.createElement("td", { style: { padding: "10px 16px" } }, /*#__PURE__*/React.createElement(Badge, { status: o.status })),
     /*#__PURE__*/React.createElement("td", { style: { padding: "10px 16px", fontSize: 12, color: "var(--cinza-500)", maxWidth: 200 } }, o.observacaoAdmin || /*#__PURE__*/React.createElement("span", { style: { color: "var(--cinza-300)" } }, "—")));
   }))), ocorrenciasFiltradas.length === 0 && /*#__PURE__*/React.createElement("div", {
     style: { padding: 40, textAlign: "center", color: "var(--cinza-400)", fontSize: 13 }
-  }, "Nenhuma ocorrência no período selecionado."));
+  }, "Nenhuma ocorrência encontrada com esses filtros."));
 
   // ── Modal de ação (só usado no modo Fila) ────────────────────────────────
   const modalAcao = modal && /*#__PURE__*/React.createElement(Modal, {
@@ -10458,9 +10486,7 @@ function PainelOcorrencias({
 
   return /*#__PURE__*/React.createElement("div", null,
     cabecalho,
-    seletorEscopo || null,
     toggle,
-    kpis,
     filtros,
     modoVisualizacao === "fila" ? listaFila : tabela,
     modalAcao
@@ -13017,124 +13043,6 @@ function NoRaizAdministrativo({ busca, aberta, onToggle, estadoAberto, onToggleC
     )
   );
 }
-// Seletor de escopo de relatório — exclusivo do superintendente, usado em
-// Dashboard e Relatórios. Checkbox por diretoria (marca/desmarca todas as
-// gerências dela de uma vez) + checkbox por gerência individualmente.
-// Conjunto vazio de `selecionadas` = sem recorte (mostra tudo); a UI trata
-// esse estado como "nenhuma marcada" para não confundir o usuário com tudo
-// pré-marcado silenciosamente.
-// Checkbox customizado no mesmo estilo visual do calendário (SeletorData):
-// quadrado com borda, preenche com var(--marca-gradiente) e ✓ branco quando
-// marcado, fundo var(--marca-50) no hover. `indeterminado` desenha um traço
-// no lugar do ✓ (usado no checkbox "pai" de diretoria quando só parte das
-// gerências está marcada). Puramente visual — o clique é tratado pelo
-// container pai (label/div), para não duplicar o toggle via bubbling.
-function CheckboxMarca({ checked, indeterminado, size = 18 }) {
-  const marcado = checked || indeterminado;
-  return /*#__PURE__*/React.createElement("span", {
-    style: {
-      width: size, height: size, flexShrink: 0,
-      border: marcado ? "none" : "1px solid var(--cinza-300)",
-      borderRadius: 6,
-      background: marcado ? "var(--marca-gradiente)" : "var(--cor-branco)",
-      color: "var(--cor-branco)",
-      display: "flex", alignItems: "center", justifyContent: "center",
-      fontSize: size * 0.7,
-      fontWeight: 700,
-      lineHeight: 1,
-      transition: "background .12s, border-color .12s"
-    }
-  }, indeterminado && !checked ? "–" : checked ? "✓" : "");
-}
-function SeletorEscopoRelatorio({ gerencias, diretorias, selecionadas, setSelecionadas }) {
-  const [aberto, setAberto] = useState(false);
-  const gerenciasPorDiretoria = useMemo(() => {
-    const map = new Map();
-    gerencias.forEach(g => {
-      if (!map.has(g.diretoria_id)) map.set(g.diretoria_id, []);
-      map.get(g.diretoria_id).push(g);
-    });
-    return map;
-  }, [gerencias]);
-  const diretoriasComGerencia = diretorias.filter(d => (gerenciasPorDiretoria.get(d.id) || []).length > 0)
-    .slice().sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
-  function toggleGerencia(id) {
-    setSelecionadas(prev => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      return next;
-    });
-  }
-  function toggleDiretoria(d) {
-    const idsGerenciasDaDir = (gerenciasPorDiretoria.get(d.id) || []).map(g => g.id);
-    const todasMarcadas = idsGerenciasDaDir.every(id => selecionadas.has(id));
-    setSelecionadas(prev => {
-      const next = new Set(prev);
-      idsGerenciasDaDir.forEach(id => todasMarcadas ? next.delete(id) : next.add(id));
-      return next;
-    });
-  }
-  const qtdSelecionadas = selecionadas.size;
-  return /*#__PURE__*/React.createElement("div", {
-    style: { background: "var(--cor-branco)", border: "1px solid var(--cinza-100)", borderRadius: 14, marginBottom: 20, overflow: "hidden" }
-  },
-    /*#__PURE__*/React.createElement("button", {
-      onClick: () => setAberto(a => !a),
-      style: {
-        width: "100%", display: "flex", alignItems: "center", gap: 10,
-        padding: "12px 16px", background: "transparent", border: "none",
-        cursor: "pointer", textAlign: "left"
-      }
-    },
-      /*#__PURE__*/React.createElement("span", { style: { fontSize: 12, color: "var(--cinza-400)", transform: aberto ? "rotate(90deg)" : "rotate(0deg)", transition: "transform .15s", flexShrink: 0 } }, "▶"),
-      /*#__PURE__*/React.createElement("span", { style: { fontSize: 13, fontWeight: 700, color: "var(--cinza-900)", flex: 1 } }, "🔎 Escopo do relatório"),
-      /*#__PURE__*/React.createElement("span", {
-        style: { fontSize: 11, fontWeight: 600, color: "var(--marca-600)", background: "var(--marca-50)", padding: "3px 10px", borderRadius: 20, flexShrink: 0 }
-      }, qtdSelecionadas === 0 ? "Todas as gerências" : `${qtdSelecionadas} ${qtdSelecionadas === 1 ? "gerência selecionada" : "gerências selecionadas"}`)
-    ),
-    aberto && /*#__PURE__*/React.createElement("div", {
-      style: { padding: "0 16px 16px 16px", display: "flex", flexDirection: "column", gap: 10 }
-    },
-      /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: "var(--cinza-400)" } },
-        "Sem nada marcado, o relatório mostra todas as diretorias e gerências. Marque abaixo para restringir a um recorte específico."),
-      qtdSelecionadas > 0 && /*#__PURE__*/React.createElement("button", {
-        onClick: () => setSelecionadas(new Set()),
-        style: {
-          alignSelf: "flex-start", background: "var(--cinza-100)", color: "var(--cinza-600)",
-          border: "none", borderRadius: 8, padding: "6px 12px", fontSize: 12, fontWeight: 600, cursor: "pointer"
-        }
-      }, "Limpar seleção"),
-      diretoriasComGerencia.map(d => {
-        const gerenciasDaDir = gerenciasPorDiretoria.get(d.id) || [];
-        const todasMarcadas = gerenciasDaDir.every(g => selecionadas.has(g.id));
-        const algumaMarcada = gerenciasDaDir.some(g => selecionadas.has(g.id));
-        return /*#__PURE__*/React.createElement("div", {
-          key: d.id,
-          style: { background: "var(--cinza-50)", border: "1px solid var(--cinza-100)", borderRadius: 12, padding: "10px 12px" }
-        },
-          /*#__PURE__*/React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer", marginBottom: 6 }, onClick: () => toggleDiretoria(d) },
-            /*#__PURE__*/React.createElement(CheckboxMarca, {
-              checked: todasMarcadas,
-              indeterminado: algumaMarcada && !todasMarcadas
-            }),
-            /*#__PURE__*/React.createElement("span", { style: { fontSize: 13, fontWeight: 700, color: "var(--cinza-900)" } }, d.nome)
-          ),
-          /*#__PURE__*/React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: "8px 16px", paddingLeft: 23 } },
-            gerenciasDaDir.slice().sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR")).map(g =>
-              /*#__PURE__*/React.createElement("div", { key: g.id, style: { display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }, onClick: () => toggleGerencia(g.id) },
-                /*#__PURE__*/React.createElement(CheckboxMarca, {
-                  checked: selecionadas.has(g.id),
-                  size: 16
-                }),
-                /*#__PURE__*/React.createElement("span", { style: { fontSize: 12.5, color: "var(--cinza-600)" } }, g.nome)
-              )
-            )
-          )
-        );
-      })
-    )
-  );
-}
 // Linha de um vendedor dentro da árvore de "Funcionários" (visão de
 // superintendente/diretor) — mesmo layout de dado (Avatar, Semáforo, badge
 // de situação, botões Ver perfil/Excluir) já usado na tabela plana, só que
@@ -14503,394 +14411,6 @@ function PainelPermissoes() {
     )
   );
 }
-// ── Painel de Pendências (aba "📋 Pendências" do Painel de Acessos) ────────
-// Lista TODAS as ocorrências do sistema (qualquer status, qualquer
-// funcionário), com busca por nome/matrícula e filtros de status/tipo —
-// pensado para o GRE localizar rapidamente uma pendência específica sem
-// precisar navegar pela árvore ou pelos relatórios por mês.
-function ModalEditarPendencia({
-  ocorrencia,
-  funcionario,
-  onSalvar,
-  onExcluir,
-  onClose
-}) {
-  const o = ocorrencia;
-  const [tipo, setTipo] = useState(o.tipo || "");
-  const [data, setData] = useState(o.data || "");
-  const [status, setStatus] = useState(o.status || "Pendente");
-  const [resposta, setResposta] = useState(o.resposta || "");
-  const [observacaoAdmin, setObservacaoAdmin] = useState(o.observacaoAdmin || "");
-  const [easymobEnviado, setEasymobEnviado] = useState(!!o.easymobEnviado);
-  const [confirmandoExclusao, setConfirmandoExclusao] = useState(false);
-  const [salvando, setSalvando] = useState(false);
-  const [erro, setErro] = useState("");
-
-  async function salvar() {
-    setErro("");
-    if (!data) {
-      setErro("Informe a data da ocorrência.");
-      return;
-    }
-    setSalvando(true);
-    try {
-      await onSalvar({
-        ...o,
-        tipo,
-        data,
-        status,
-        resposta,
-        observacaoAdmin,
-        easymobEnviado,
-        atualizadoEm: agoraISO()
-      });
-      onClose();
-    } catch (e) {
-      setErro(e.message || "Erro ao salvar alterações.");
-    } finally {
-      setSalvando(false);
-    }
-  }
-
-  async function excluir() {
-    setSalvando(true);
-    setErro("");
-    try {
-      await onExcluir(o);
-      onClose();
-    } catch (e) {
-      setErro(e.message || "Erro ao excluir pendência.");
-      setSalvando(false);
-    }
-  }
-
-  const campoStyle = {
-    width: "100%", padding: "9px 12px", borderRadius: 10, border: "1px solid var(--cinza-200)",
-    fontSize: 13, background: "var(--cor-branco)", color: "var(--cinza-900)", boxSizing: "border-box"
-  };
-  const labelStyle = { fontSize: 12.5, fontWeight: 600, color: "var(--cinza-700)", display: "block", marginBottom: 6 };
-
-  return /*#__PURE__*/React.createElement(Modal, {
-    title: "✏️ Editar pendência",
-    onClose: onClose,
-    maxWidth: 560
-  },
-    /*#__PURE__*/React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 16 } },
-      /*#__PURE__*/React.createElement("div", {
-        style: { display: "flex", alignItems: "center", gap: 12, background: "var(--cinza-50)", borderRadius: 12, padding: "12px 16px" }
-      },
-        /*#__PURE__*/React.createElement(Avatar, { nome: funcionario?.nome || "?", id: o.funcionario_id, size: 36 }),
-        /*#__PURE__*/React.createElement("div", null,
-          /*#__PURE__*/React.createElement("div", { style: { fontWeight: 700, fontSize: 14, color: "var(--cinza-900)" } }, funcionario?.nome || "Funcionário não encontrado"),
-          /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: "var(--cinza-500)" } },
-            funcionario?.matricula || "—", " · origem: ", o.origemFuncionario || "desconhecida")
-        )
-      ),
-
-      /*#__PURE__*/React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 } },
-        /*#__PURE__*/React.createElement("div", null,
-          /*#__PURE__*/React.createElement("label", { style: labelStyle }, "Tipo"),
-          /*#__PURE__*/React.createElement("input", { value: tipo, onChange: e => setTipo(e.target.value), style: campoStyle })
-        ),
-        /*#__PURE__*/React.createElement("div", null,
-          /*#__PURE__*/React.createElement("label", { style: labelStyle }, "Data"),
-          /*#__PURE__*/React.createElement("input", { type: "date", value: data, onChange: e => setData(e.target.value), style: campoStyle })
-        )
-      ),
-
-      /*#__PURE__*/React.createElement("div", null,
-        /*#__PURE__*/React.createElement("label", { style: labelStyle }, "Status"),
-        /*#__PURE__*/React.createElement("select", { value: status, onChange: e => setStatus(e.target.value), style: { ...campoStyle, cursor: "pointer" } },
-          ["Pendente", "Corrigido", "Verificado", "Rejeitado"].map(s =>
-            /*#__PURE__*/React.createElement("option", { key: s, value: s }, s))
-        )
-      ),
-
-      /*#__PURE__*/React.createElement("div", null,
-        /*#__PURE__*/React.createElement("label", { style: labelStyle }, "Resposta do colaborador"),
-        /*#__PURE__*/React.createElement("textarea", {
-          value: resposta, onChange: e => setResposta(e.target.value), rows: 2,
-          style: { ...campoStyle, resize: "vertical", fontFamily: "inherit" }
-        })
-      ),
-
-      /*#__PURE__*/React.createElement("div", null,
-        /*#__PURE__*/React.createElement("label", { style: labelStyle }, "Observação administrativa"),
-        /*#__PURE__*/React.createElement("textarea", {
-          value: observacaoAdmin, onChange: e => setObservacaoAdmin(e.target.value), rows: 2,
-          style: { ...campoStyle, resize: "vertical", fontFamily: "inherit" }
-        })
-      ),
-
-      /*#__PURE__*/React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--cinza-700)", cursor: "pointer" } },
-        /*#__PURE__*/React.createElement("input", { type: "checkbox", checked: easymobEnviado, onChange: e => setEasymobEnviado(e.target.checked) }),
-        "Print do EasyMob enviado"
-      ),
-
-      erro && /*#__PURE__*/React.createElement("div", { style: { fontSize: 12.5, color: "var(--vermelho-600)" } }, erro),
-
-      /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, color: "var(--cinza-400)" } },
-        "Toda alteração é registrada automaticamente no log de auditoria de pendências."),
-
-      confirmandoExclusao
-        ? /*#__PURE__*/React.createElement("div", {
-            style: { background: "var(--vermelho-50)", border: "1px solid var(--vermelho-200)", borderRadius: 12, padding: "12px 16px", display: "flex", flexDirection: "column", gap: 10 }
-          },
-            /*#__PURE__*/React.createElement("div", { style: { fontSize: 13, color: "var(--vermelho-700)" } }, "Confirma a exclusão definitiva desta pendência? Esta ação não pode ser desfeita."),
-            /*#__PURE__*/React.createElement("div", { style: { display: "flex", gap: 8 } },
-              /*#__PURE__*/React.createElement("button", {
-                onClick: excluir, disabled: salvando,
-                style: { flex: 1, padding: "9px 14px", borderRadius: 10, border: "none", background: "var(--vermelho-600)", color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer" }
-              }, salvando ? "Excluindo…" : "Sim, excluir"),
-              /*#__PURE__*/React.createElement("button", {
-                onClick: () => setConfirmandoExclusao(false), disabled: salvando,
-                style: { flex: 1, padding: "9px 14px", borderRadius: 10, border: "1px solid var(--cinza-200)", background: "var(--cor-branco)", color: "var(--cinza-700)", fontWeight: 700, fontSize: 13, cursor: "pointer" }
-              }, "Cancelar")
-            )
-          )
-        : /*#__PURE__*/React.createElement("div", { style: { display: "flex", gap: 8 } },
-            /*#__PURE__*/React.createElement("button", {
-              onClick: salvar, disabled: salvando,
-              style: { flex: 1, padding: "10px 14px", borderRadius: 10, border: "none", background: "var(--azul-600)", color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer" }
-            }, salvando ? "Salvando…" : "Salvar alterações"),
-            /*#__PURE__*/React.createElement("button", {
-              onClick: () => setConfirmandoExclusao(true), disabled: salvando,
-              style: { padding: "10px 14px", borderRadius: 10, border: "1px solid var(--vermelho-200)", background: "var(--cor-branco)", color: "var(--vermelho-600)", fontWeight: 700, fontSize: 13, cursor: "pointer" }
-            }, "Excluir")
-          )
-    )
-  );
-}
-
-function PainelPendenciasGeral({ podeEditar = false } = {}) {
-  const [busca, setBusca] = useState("");
-  const [filtroStatus, setFiltroStatus] = useState("todos");
-  const [filtroTipo, setFiltroTipo] = useState("todos");
-  const [ocorrenciaEditando, setOcorrenciaEditando] = useState(null);
-  const [erroSalvar, setErroSalvar] = useState(null);
-
-  // Busca ocorrências E funcionários direto do Supabase, ignorando o
-  // isolamento de localStorage que useSharedState aplicaria para a conta
-  // gre@ (sandbox) e o filtro de escopo hierárquico usado no resto do app.
-  // Esta aba é a única exceção deliberada: mostra o banco real por inteiro,
-  // combinando as duas fontes de funcionário (`funcionarios_administrativo`
-  // e `funcionarios_comercial`) — uma pendência pode referenciar qualquer
-  // uma das duas, dependendo de onde/quando foi criada.
-  const [ocorrencias, setOcorrencias] = useState([]);
-  const [funcionarios, setFuncionarios] = useState([]);
-  const [carregando, setCarregando] = useState(true);
-  const [erroCarga, setErroCarga] = useState(null);
-  useEffect(() => {
-    let ativo = true;
-    (async () => {
-      try {
-        const [ocRes, funcAdmRes, funcComRes] = await Promise.all([
-          supa.from("ocorrencias").select("data"),
-          supa.from("funcionarios_administrativo").select("*"),
-          supa.from("funcionarios_comercial").select("*")
-        ]);
-        if (ocRes.error) throw ocRes.error;
-        if (funcAdmRes.error) throw funcAdmRes.error;
-        if (funcComRes.error) throw funcComRes.error;
-        if (!ativo) return;
-        const administrativos = funcAdmRes.data || [];
-        const comerciais = (funcComRes.data || []).map(normalizarFuncComercial);
-        setOcorrencias((ocRes.data || []).map(r => r.data));
-        setFuncionarios([...administrativos, ...comerciais]);
-        setCarregando(false);
-      } catch (e) {
-        if (!ativo) return;
-        setErroCarga(e.message || "Erro ao carregar pendências.");
-        setCarregando(false);
-      }
-    })();
-    return () => { ativo = false; };
-  }, []);
-
-  // Grava a edição direto na tabela ocorrencias (upsert pela mesma
-  // convenção usada por salvarSupa em todo o resto do app: id da linha =
-  // data.id, coluna data = objeto inteiro). O trigger trg_log_pendencias
-  // cuida sozinho de registrar em log_pendencias — não logamos manualmente.
-  async function salvarEdicaoPendencia(ocorrenciaAtualizada) {
-    const { error } = await supa
-      .from("ocorrencias")
-      .update({ data: ocorrenciaAtualizada })
-      .eq("id", ocorrenciaAtualizada.id);
-    if (error) throw error;
-    setOcorrencias(prev => prev.map(o => o.id === ocorrenciaAtualizada.id ? ocorrenciaAtualizada : o));
-  }
-
-  async function excluirPendencia(ocorrencia) {
-    const { error } = await supa
-      .from("ocorrencias")
-      .delete()
-      .eq("id", ocorrencia.id);
-    if (error) throw error;
-    setOcorrencias(prev => prev.filter(o => o.id !== ocorrencia.id));
-  }
-
-  // Um único Map por id: desde a migração de ago/2026, `funcionarios_administrativo`
-  // (id UUID) e `funcionarios_comercial` (id inteiro sequencial) nunca colidem
-  // entre si, então não é mais preciso saber a origem para resolver uma
-  // ocorrência — basta o funcionario_id.
-  const funcionarioPorId = useMemo(
-    () => new Map(funcionarios.map(f => [f.id, f])),
-    [funcionarios]
-  );
-  function resolverFuncionario(o) {
-    return funcionarioPorId.get(o.funcionario_id);
-  }
-
-  const tiposPresentes = useMemo(
-    () => [...new Set(ocorrencias.map(o => o.tipo).filter(Boolean))].sort(),
-    [ocorrencias]
-  );
-
-  const listaFiltrada = useMemo(() => {
-    const termo = normalizarBusca(busca.trim());
-    return ocorrencias
-      .filter(o => filtroStatus === "todos" || o.status === filtroStatus)
-      .filter(o => filtroTipo === "todos" || o.tipo === filtroTipo)
-      .filter(o => {
-        if (!termo) return true;
-        const f = resolverFuncionario(o);
-        const alvo = normalizarBusca(`${f?.nome || ""} ${f?.matricula || ""}`);
-        return alvo.includes(termo);
-      })
-      .sort((a, b) => (b.atualizadoEm || b.data || "").localeCompare(a.atualizadoEm || a.data || ""));
-  }, [ocorrencias, filtroStatus, filtroTipo, busca, funcionarioPorId]);
-
-  const corStatus = status => {
-    if (status === "Pendente") return { bg: "var(--vermelho-100)", fg: "var(--vermelho-600)" };
-    if (status === "Corrigido") return { bg: "var(--amarelo-100)", fg: "var(--amarelo-700)" };
-    if (status === "Verificado") return { bg: "var(--verde-100)", fg: "var(--verde-700)" };
-    return { bg: "var(--cinza-100)", fg: "var(--cinza-600)" };
-  };
-
-  if (carregando) {
-    return /*#__PURE__*/React.createElement("div", { style: { padding: 24, textAlign: "center", color: "var(--cinza-400)", fontSize: 13 } }, "Carregando pendências…");
-  }
-  if (erroCarga) {
-    return /*#__PURE__*/React.createElement("div", { style: { padding: 24, textAlign: "center", color: "var(--vermelho-600)", fontSize: 13 } }, "Não foi possível carregar as pendências: ", erroCarga);
-  }
-
-  return /*#__PURE__*/React.createElement(React.Fragment, null,
-  /*#__PURE__*/React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 14 } },
-    /*#__PURE__*/React.createElement("div", { style: { fontSize: 13, color: "var(--cinza-400)", lineHeight: 1.5 } },
-      "Busca todas as pendências já criadas no sistema, de qualquer funcionário e qualquer status.",
-      !podeEditar && " Você tem acesso somente leitura a esta lista — edição e exclusão são restritas."),
-
-    /* ── Filtros ── */
-    /*#__PURE__*/React.createElement("div", {
-      style: { display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }
-    },
-      /*#__PURE__*/React.createElement("input", {
-        value: busca,
-        onChange: e => setBusca(e.target.value),
-        placeholder: "Buscar por nome ou matrícula…",
-        style: {
-          flex: "1 1 240px", padding: "9px 14px", borderRadius: 10, border: "1px solid var(--cinza-200)",
-          fontSize: 13, outline: "none", background: "var(--cor-branco)", color: "var(--cinza-900)"
-        }
-      }),
-      /*#__PURE__*/React.createElement("select", {
-        value: filtroStatus,
-        onChange: e => setFiltroStatus(e.target.value),
-        style: {
-          padding: "9px 12px", borderRadius: 10, border: "1px solid var(--cinza-200)",
-          fontSize: 12.5, fontWeight: 600, background: "var(--cor-branco)", color: "var(--cinza-900)", cursor: "pointer"
-        }
-      },
-        /*#__PURE__*/React.createElement("option", { value: "todos" }, "Todos os status"),
-        ["Pendente", "Corrigido", "Verificado", "Rejeitado"].map(s =>
-          /*#__PURE__*/React.createElement("option", { key: s, value: s }, s))
-      ),
-      /*#__PURE__*/React.createElement("select", {
-        value: filtroTipo,
-        onChange: e => setFiltroTipo(e.target.value),
-        style: {
-          padding: "9px 12px", borderRadius: 10, border: "1px solid var(--cinza-200)",
-          fontSize: 12.5, fontWeight: 600, background: "var(--cor-branco)", color: "var(--cinza-900)", cursor: "pointer"
-        }
-      },
-        /*#__PURE__*/React.createElement("option", { value: "todos" }, "Todos os tipos"),
-        tiposPresentes.map(t => /*#__PURE__*/React.createElement("option", { key: t, value: t }, t))
-      ),
-      /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: "var(--cinza-400)", marginLeft: "auto" } },
-        `${listaFiltrada.length} ${listaFiltrada.length === 1 ? "resultado" : "resultados"}`)
-    ),
-
-    /* ── Lista ── */
-    /*#__PURE__*/React.createElement("div", {
-      style: { background: "var(--cor-branco)", border: "1px solid var(--cinza-200)", borderRadius: 14, overflow: "hidden" }
-    },
-      listaFiltrada.length === 0
-        ? /*#__PURE__*/React.createElement("div", {
-            style: { padding: "32px 20px", textAlign: "center", color: "var(--cinza-400)", fontSize: 13 }
-          }, "Nenhuma pendência encontrada com esses filtros.")
-        : /*#__PURE__*/React.createElement("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: 12.5 } },
-            /*#__PURE__*/React.createElement("thead", null,
-              /*#__PURE__*/React.createElement("tr", { style: { background: "var(--cinza-50)" } },
-                /*#__PURE__*/React.createElement("th", { style: { textAlign: "left", padding: "10px 16px", fontWeight: 700, color: "var(--cinza-700)" } }, "Funcionário"),
-                /*#__PURE__*/React.createElement("th", { style: { textAlign: "left", padding: "10px 16px", fontWeight: 700, color: "var(--cinza-700)" } }, "Tipo"),
-                /*#__PURE__*/React.createElement("th", { style: { textAlign: "left", padding: "10px 16px", fontWeight: 700, color: "var(--cinza-700)" } }, "Data"),
-                /*#__PURE__*/React.createElement("th", { style: { textAlign: "left", padding: "10px 16px", fontWeight: 700, color: "var(--cinza-700)" } }, "Status")
-              )
-            ),
-            /*#__PURE__*/React.createElement("tbody", null,
-              listaFiltrada.map(o => {
-                const f = resolverFuncionario(o);
-                const cor = corStatus(o.status);
-                return /*#__PURE__*/React.createElement("tr", {
-                  key: o.id,
-                  onClick: podeEditar ? () => setOcorrenciaEditando(o) : undefined,
-                  style: { borderTop: "1px solid var(--cinza-100)", cursor: podeEditar ? "pointer" : "default" },
-                  onMouseEnter: podeEditar ? e => e.currentTarget.style.background = "var(--cinza-50)" : undefined,
-                  onMouseLeave: podeEditar ? e => e.currentTarget.style.background = "transparent" : undefined
-                },
-                  /*#__PURE__*/React.createElement("td", { style: { padding: "10px 16px", color: "var(--cinza-900)", fontWeight: 600 } },
-                    f?.nome || "—", f?.matricula ? /*#__PURE__*/React.createElement("span", { style: { color: "var(--cinza-400)", fontWeight: 500 } }, ` · ${f.matricula}`) : null),
-                  /*#__PURE__*/React.createElement("td", { style: { padding: "10px 16px", color: "var(--cinza-700)" } }, o.tipo || "—"),
-                  /*#__PURE__*/React.createElement("td", { style: { padding: "10px 16px", color: "var(--cinza-700)" } },
-                    o.data ? new Date(o.data + "T00:00:00").toLocaleDateString("pt-BR") : "—"),
-                  /*#__PURE__*/React.createElement("td", { style: { padding: "10px 16px" } },
-                    /*#__PURE__*/React.createElement("span", {
-                      style: { padding: "3px 10px", borderRadius: 20, fontSize: 11, fontWeight: 700, background: cor.bg, color: cor.fg }
-                    }, o.status || "—"))
-                );
-              })
-            )
-          )
-    )
-    ),
-    erroSalvar && /*#__PURE__*/React.createElement("div", {
-      style: { position: "fixed", bottom: 20, left: "50%", transform: "translateX(-50%)", background: "var(--vermelho-600)", color: "#fff", padding: "10px 18px", borderRadius: 10, fontSize: 13, zIndex: 1100 }
-    }, erroSalvar),
-    podeEditar && ocorrenciaEditando && /*#__PURE__*/React.createElement(ModalEditarPendencia, {
-      ocorrencia: ocorrenciaEditando,
-      funcionario: resolverFuncionario(ocorrenciaEditando),
-      onClose: () => setOcorrenciaEditando(null),
-      onSalvar: async atualizada => {
-        try {
-          await salvarEdicaoPendencia(atualizada);
-          setErroSalvar(null);
-        } catch (e) {
-          setErroSalvar(e.message || "Erro ao salvar alterações.");
-          throw e;
-        }
-      },
-      onExcluir: async ocorrencia => {
-        try {
-          await excluirPendencia(ocorrencia);
-          setErroSalvar(null);
-        } catch (e) {
-          setErroSalvar(e.message || "Erro ao excluir pendência.");
-          throw e;
-        }
-      }
-    })
-  );
-}
 
 function ArvoreHierarquia({ pode = () => true, ocorrencias = [], funcionariosUnificados = [] } = {}) {
   const { carregando, erro, superintendencias, diretorias, gerencias, funcionarios, atualizarFuncionarioLocal, refetch } = useArvoreComercialData();
@@ -14899,7 +14419,7 @@ function ArvoreHierarquia({ pode = () => true, ocorrencias = [], funcionariosUni
   // JSX mais abaixo). Não participa da árvore/busca desta tela, que
   // continua 100% comercial — é só para o resumo de acesso.
   const { carregando: carregandoAdmin, funcionarios: funcionariosAdmin, atualizarFuncionarioLocal: atualizarFuncionarioLocalAdmin } = useArvoreAdministrativaData();
-  const [aba, setAba] = useState("estrutura"); // "estrutura" | "permissoes" | "pendencias"
+  const [aba, setAba] = useState("estrutura"); // "estrutura" | "permissoes"
   const [busca, setBusca] = useState("");
   const [aberto, setAberto] = useState({});
   const toggle = chave => setAberto(prev => ({ ...prev, [chave]: !prev[chave] }));
@@ -15172,12 +14692,14 @@ function ArvoreHierarquia({ pode = () => true, ocorrencias = [], funcionariosUni
     ),
     // ── Abas internas do Painel de Acessos: Estrutura (árvore única, com
     // os nós "Administrativo" e "Comercial" lado a lado — ver comentário
-    // mais abaixo, perto do map de NoSuperintendencia), Permissões
-    // (configuração por papel) e Pendências (busca de todas as ocorrências
-    // criadas no sistema). Mantido simples — botões de alternância, sem
-    // depender de mais nenhuma lib de rota.
+    // mais abaixo, perto do map de NoSuperintendencia) e Permissões
+    // (configuração por papel). A antiga aba "Pendências" (busca geral de
+    // ocorrências) foi removida daqui e incorporada ao modo Tabela da tela
+    // de Relatórios (PainelOcorrencias), com filtros de tipo/busca por
+    // nome/matrícula e exportação — ver ali. Mantido simples — botões de
+    // alternância, sem depender de mais nenhuma lib de rota.
     /*#__PURE__*/React.createElement("div", { style: { display: "flex", gap: 8, flexWrap: "wrap" } },
-      ["estrutura", "permissoes", "pendencias"].map(a => /*#__PURE__*/React.createElement("button", {
+      ["estrutura", "permissoes"].map(a => /*#__PURE__*/React.createElement("button", {
         key: a,
         onClick: () => setAba(a),
         style: {
@@ -15186,10 +14708,9 @@ function ArvoreHierarquia({ pode = () => true, ocorrencias = [], funcionariosUni
           background: aba === a ? "var(--marca-gradiente)" : "var(--cinza-100)",
           color: aba === a ? "var(--cor-branco)" : "var(--cinza-600)"
         }
-      }, a === "estrutura" ? "🌳 Estrutura" : a === "permissoes" ? "🛡️ Permissões" : "📋 Pendências"))
+      }, a === "estrutura" ? "🌳 Estrutura" : "🛡️ Permissões"))
     ),
     aba === "permissoes" && /*#__PURE__*/React.createElement(PainelPermissoes, null),
-    aba === "pendencias" && /*#__PURE__*/React.createElement(PainelPendenciasGeral, { podeEditar: pode("editar_pendencias") }),
     modalLog && /*#__PURE__*/React.createElement(ModalLogAcessos, {
       onClose: () => setModalLog(false)
     }),
@@ -15863,9 +15384,13 @@ function App() {
       });
       if (view === "relatorios") return /*#__PURE__*/React.createElement(PainelOcorrencias, {
         // Usa a base já recortada por gerência/diretoria (ocorrenciasRelatorio/
-        // funcionariosRelatorio) em vez de ocorrenciasFiltradas/funcionariosExibidos:
-        // isso garante que o seletorEscopo do superintendente valha tanto no modo
-        // Fila quanto no modo Tabela, e não só na análise como era antes.
+        // funcionariosRelatorio, mesmo recorte que o Dashboard usa) em vez de
+        // ocorrenciasFiltradas/funcionariosExibidos — mantém o escopo
+        // hierárquico do usuário (gerente só vê sua equipe, etc.) também no
+        // modo Tabela, que agora concentra a busca/exportação geral de
+        // ocorrências (antes era a aba "Pendências" do Painel de Acessos,
+        // que via o sistema inteiro sem esse recorte — decisão deliberada
+        // de alinhar com o resto do app).
         ocorrencias: ocorrenciasRelatorio,
         setOcorrencias: setOcorrencias,
         funcionarios: funcionariosRelatorio,
@@ -15875,13 +15400,7 @@ function App() {
         mesFiltro: mesFiltro,
         setMesFiltro: setMesFiltro,
         sessaoPronta: sessaoPronta,
-        contaTesteAtivaAgora: contaTesteAtivaAgora,
-        seletorEscopo: (usuario?.nivel === "superintendente" || usuario?.nivel === "admin_geral") && /*#__PURE__*/React.createElement(SeletorEscopoRelatorio, {
-          gerencias: gerenciasDaSuperEscopo,
-          diretorias: dadosComercial.diretorias,
-          selecionadas: gerenciasEscopoRelatorio,
-          setSelecionadas: setGerenciasEscopoRelatorio
-        })
+        contaTesteAtivaAgora: contaTesteAtivaAgora
       });
       if (view === "hierarquia" && previewHierarquia && isAdmin) return /*#__PURE__*/React.createElement(ArvoreHierarquia, {
         pode: pode,
