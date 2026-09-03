@@ -10644,13 +10644,34 @@ function ModalExportarRelatorio({ ocorrencias, funcionarios, onClose }) {
     subCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: CINZA_SUBTITULO } };
     ws.getRow(2).height = 22;
 
-    // Linha 3 — legenda de cores por status
-    ws.mergeCells(3, 1, 3, totalColunas);
-    const legendaCell = ws.getCell(3, 1);
-    legendaCell.value = "🟠 Pendente   |   🟢 Corrigido   |   🔵 Verificado   |   🔴 Rejeitado";
-    legendaCell.font = { size: 10 };
-    legendaCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: CINZA_LEGENDA } };
-    ws.getRow(3).height = 22;
+    // Linha 3 — legenda de cores por status, usando quadradinhos coloridos
+    // reais (fill de célula) em vez de emoji, que não renderiza de forma
+    // confiável no Excel.
+    ws.getRow(3).height = 20;
+    const legendaItens = [
+      { cor: CORES_STATUS["Pendente"], texto: "Pendente" },
+      { cor: CORES_STATUS["Corrigido"], texto: "Corrigido" },
+      { cor: CORES_STATUS["Verificado"], texto: "Verificado" },
+      { cor: CORES_STATUS["Rejeitado"], texto: "Rejeitado" }
+    ];
+    // Preenche o fundo da linha inteira com a cor de base da legenda antes
+    // de sobrepor os quadradinhos e textos.
+    for (let c = 1; c <= totalColunas; c++) {
+      ws.getCell(3, c).fill = { type: "pattern", pattern: "solid", fgColor: { argb: CINZA_LEGENDA } };
+    }
+    let colAtual = 1;
+    legendaItens.forEach((item, idx) => {
+      const quadradoCell = ws.getCell(3, colAtual);
+      quadradoCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: item.cor } };
+      quadradoCell.border = { top: { style: "thin" }, bottom: { style: "thin" }, left: { style: "thin" }, right: { style: "thin" } };
+      colAtual++;
+      const textoCell = ws.getCell(3, colAtual);
+      textoCell.value = item.texto;
+      textoCell.font = { size: 10 };
+      textoCell.alignment = { vertical: "middle" };
+      colAtual++;
+      if (idx < legendaItens.length - 1) colAtual++; // respiro antes do próximo item, exceto no último
+    });
 
     // Linha 4 — cabeçalho da tabela
     const headerRow = ws.getRow(4);
