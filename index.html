@@ -10211,6 +10211,7 @@ function PainelOcorrencias({
   setOcorrencias,
   funcionarios,
   setFuncionarios,
+  gerenciasComercial,
   addNotif,
   isAdmin,
   mesFiltro,
@@ -10519,6 +10520,7 @@ function PainelOcorrencias({
     modalExportar && /*#__PURE__*/React.createElement(ModalExportarRelatorio, {
       ocorrencias: ocorrenciasParaExportar || ocorrencias,
       funcionarios: funcionarios,
+      gerencias: gerenciasComercial || [],
       onClose: () => setModalExportar(false)
     })
   );
@@ -10529,18 +10531,28 @@ function PainelOcorrencias({
 // independentes dos filtros da tela (o usuário pode estar vendo só
 // "Pendente" na tela e ainda assim exportar um recorte de período maior,
 // com todos os status). Gera a planilha XLSX ao confirmar.
-function ModalExportarRelatorio({ ocorrencias, funcionarios, onClose }) {
+function ModalExportarRelatorio({ ocorrencias, funcionarios, gerencias = [], onClose }) {
   const [dataDe, setDataDe] = useState("");
   const [dataAte, setDataAte] = useState("");
   const [statusSelecionados, setStatusSelecionados] = useState(() => new Set());
   const [filtroTipo, setFiltroTipo] = useState("Todos");
   const [filtroCargo, setFiltroCargo] = useState("Todos");
+  const [filtroGerencia, setFiltroGerencia] = useState("Todas");
   const [buscaFuncionario, setBuscaFuncionario] = useState("");
   const [funcionarioSelecionado, setFuncionarioSelecionado] = useState(null);
   const [mostrarSugestoes, setMostrarSugestoes] = useState(false);
 
   const tiposDisponiveis = useMemo(() => [...new Set(ocorrencias.map(o => o.tipo).filter(Boolean))].sort((a, b) => a.localeCompare(b, "pt-BR", { sensitivity: "base" })), [ocorrencias]);
   const cargosDisponiveis = useMemo(() => [...new Set(funcionarios.map(f => f.cargo).filter(Boolean))].sort((a, b) => a.localeCompare(b, "pt-BR", { sensitivity: "base" })), [funcionarios]);
+  // Só oferece no filtro as gerências que de fato têm alguém no escopo
+  // atual (funcionarios já vem recortado por hierarquia/gestor).
+  const gerenciasDisponiveis = useMemo(() => {
+    const idsComFuncionario = new Set(funcionarios.map(f => f.gerencia_id).filter(Boolean));
+    return gerencias
+      .filter(g => idsComFuncionario.has(g.id))
+      .slice()
+      .sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR", { sensitivity: "base" }));
+  }, [gerencias, funcionarios]);
 
   const sugestoesFuncionario = useMemo(() => {
     const termo = normalizarBusca(buscaFuncionario.trim());
@@ -10567,6 +10579,7 @@ function ModalExportarRelatorio({ ocorrencias, funcionarios, onClose }) {
       if (statusSelecionados.size > 0 && !statusSelecionados.has(o.status)) return false;
       if (filtroTipo !== "Todos" && o.tipo !== filtroTipo) return false;
       if (filtroCargo !== "Todos" && func.cargo !== filtroCargo) return false;
+      if (filtroGerencia !== "Todas" && func.gerencia_id !== filtroGerencia) return false;
       if (funcionarioSelecionado && func.id !== funcionarioSelecionado.id) return false;
       return true;
     }).sort((a, b) => {
@@ -10578,7 +10591,7 @@ function ModalExportarRelatorio({ ocorrencias, funcionarios, onClose }) {
       if (porNome !== 0) return porNome;
       return (a.data || "").localeCompare(b.data || "");
     });
-  }, [ocorrencias, funcionarios, dataDe, dataAte, statusSelecionados, filtroTipo, filtroCargo, funcionarioSelecionado]);
+  }, [ocorrencias, funcionarios, dataDe, dataAte, statusSelecionados, filtroTipo, filtroCargo, filtroGerencia, funcionarioSelecionado]);
 
   // Cor de fundo por status — mesmo espírito da legenda de cores do
   // relatório de pendências do DP (verde=ok, laranja=atenção, etc.),
@@ -10777,6 +10790,20 @@ function ModalExportarRelatorio({ ocorrencias, funcionarios, onClose }) {
           value: filtroCargo, onChange: e => setFiltroCargo(e.target.value),
           style: { ...campoStyle, cursor: "pointer" }
         }, ["Todos", ...cargosDisponiveis].map(c => /*#__PURE__*/React.createElement("option", { key: c }, c)))
+      )
+    ),
+
+    /*# Gerência / equipe — visível para todos os níveis de gestão que
+        tenham gerências no seu escopo (gerenciasDisponiveis já vem
+        recortado a partir de `funcionarios`) #*/
+    gerenciasDisponiveis.length > 0 && /*#__PURE__*/React.createElement("div", null,
+      /*#__PURE__*/React.createElement("label", { style: labelStyle }, "Gerência / equipe"),
+      /*#__PURE__*/React.createElement("select", {
+        value: filtroGerencia, onChange: e => setFiltroGerencia(e.target.value),
+        style: { ...campoStyle, cursor: "pointer" }
+      },
+        /*#__PURE__*/React.createElement("option", { value: "Todas" }, "Todas"),
+        gerenciasDisponiveis.map(g => /*#__PURE__*/React.createElement("option", { key: g.id, value: g.id }, g.nome))
       )
     ),
 
@@ -15770,6 +15797,7 @@ function App() {
         setOcorrencias: setOcorrencias,
         funcionarios: funcionariosRelatorio,
         setFuncionarios: setFuncionarios,
+        gerenciasComercial: dadosComercial.gerencias,
         addNotif: addNotif,
         isAdmin: isAdmin,
         mesFiltro: mesFiltro,
