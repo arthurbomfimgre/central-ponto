@@ -5896,6 +5896,123 @@ function ModalAvisarGestor({
 }
 
 // ─── DASHBOARD ADMIN ──────────────────────────────────────────────────────────
+function SeletorEscopoRelatorio({
+  gerencias,
+  diretorias,
+  selecionadas,
+  setSelecionadas
+}) {
+  const [aberto, setAberto] = useState(false);
+  const refWrapper = useRef(null);
+  useEffect(() => {
+    function onClickFora(e) {
+      if (refWrapper.current && !refWrapper.current.contains(e.target)) setAberto(false);
+    }
+    document.addEventListener("mousedown", onClickFora);
+    return () => document.removeEventListener("mousedown", onClickFora);
+  }, []);
+  const diretoriaPorId = useMemo(() => {
+    const m = new Map();
+    (diretorias || []).forEach(d => m.set(d.id, d));
+    return m;
+  }, [diretorias]);
+  const gerenciasOrdenadas = useMemo(
+    () => [...(gerencias || [])].sort((a, b) => a.nome.localeCompare(b.nome)),
+    [gerencias]
+  );
+  function toggleGerencia(id) {
+    setSelecionadas(prev => {
+      const novo = new Set(prev);
+      if (novo.has(id)) novo.delete(id);
+      else novo.add(id);
+      return novo;
+    });
+  }
+  function limparTudo() {
+    setSelecionadas(new Set());
+  }
+  const qtdSelecionadas = selecionadas.size;
+  const label = qtdSelecionadas === 0
+    ? "Todas as gerências"
+    : `${qtdSelecionadas} gerência${qtdSelecionadas > 1 ? "s" : ""} selecionada${qtdSelecionadas > 1 ? "s" : ""}`;
+  return /*#__PURE__*/React.createElement("div", {
+    ref: refWrapper,
+    style: { position: "relative", marginBottom: 14 }
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: () => setAberto(a => !a),
+    style: {
+      display: "flex",
+      alignItems: "center",
+      gap: 8,
+      background: "var(--cinza-100, #f3f4f6)",
+      border: "1px solid var(--cinza-300, #d1d5db)",
+      borderRadius: 10,
+      padding: "9px 14px",
+      fontSize: 13,
+      fontWeight: 600,
+      color: "var(--cinza-700, #374151)",
+      cursor: "pointer"
+    }
+  }, "🔎 ", label, " ▾"), aberto && /*#__PURE__*/React.createElement("div", {
+    style: {
+      position: "absolute",
+      top: "calc(100% + 6px)",
+      left: 0,
+      zIndex: 20,
+      minWidth: 280,
+      maxHeight: 320,
+      overflowY: "auto",
+      background: "var(--cor-branco, #fff)",
+      border: "1px solid var(--cinza-200, #e5e7eb)",
+      borderRadius: 12,
+      boxShadow: "0 8px 24px rgba(0,0,0,0.12)",
+      padding: 10
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      justifyContent: "space-between",
+      alignItems: "center",
+      padding: "4px 6px 8px",
+      borderBottom: "1px solid var(--cinza-200, #e5e7eb)",
+      marginBottom: 6
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: { fontSize: 12, fontWeight: 700, color: "var(--cinza-500)" }
+  }, "Filtrar por gerência"), /*#__PURE__*/React.createElement("button", {
+    onClick: limparTudo,
+    style: {
+      border: "none",
+      background: "none",
+      color: "var(--indigo-500)",
+      fontSize: 12,
+      fontWeight: 600,
+      cursor: "pointer"
+    }
+  }, "Limpar")), gerenciasOrdenadas.length === 0 ? /*#__PURE__*/React.createElement("div", {
+    style: { fontSize: 13, color: "var(--cinza-500)", padding: 8 }
+  }, "Nenhuma gerência disponível.") : gerenciasOrdenadas.map(g => {
+    const dir = diretoriaPorId.get(g.diretoria_id);
+    return /*#__PURE__*/React.createElement("label", {
+      key: g.id,
+      style: {
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        padding: "6px 6px",
+        borderRadius: 6,
+        cursor: "pointer",
+        fontSize: 13
+      }
+    }, /*#__PURE__*/React.createElement("input", {
+      type: "checkbox",
+      checked: selecionadas.has(g.id),
+      onChange: () => toggleGerencia(g.id)
+    }), /*#__PURE__*/React.createElement("span", null, g.nome, dir ? /*#__PURE__*/React.createElement("span", {
+      style: { color: "var(--cinza-500)", fontSize: 11 }
+    }, " · ", dir.nome) : null));
+  })));
+}
 function Dashboard({
   ocorrencias,
   setView,
