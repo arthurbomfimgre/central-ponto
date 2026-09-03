@@ -10568,7 +10568,15 @@ function ModalExportarRelatorio({ ocorrencias, funcionarios, onClose }) {
       if (filtroCargo !== "Todos" && func.cargo !== filtroCargo) return false;
       if (funcionarioSelecionado && func.id !== funcionarioSelecionado.id) return false;
       return true;
-    }).sort((a, b) => (a.data || "").localeCompare(b.data || ""));
+    }).sort((a, b) => {
+      const funcA = resolverFuncionarioDaOcorrencia(funcionarios, a);
+      const funcB = resolverFuncionarioDaOcorrencia(funcionarios, b);
+      const nomeA = funcA?.nome || "";
+      const nomeB = funcB?.nome || "";
+      const porNome = nomeA.localeCompare(nomeB, "pt-BR", { sensitivity: "base" });
+      if (porNome !== 0) return porNome;
+      return (a.data || "").localeCompare(b.data || "");
+    });
   }, [ocorrencias, funcionarios, dataDe, dataAte, statusSelecionados, filtroTipo, filtroCargo, funcionarioSelecionado]);
 
   // Cor de fundo por status — mesmo espírito da legenda de cores do
