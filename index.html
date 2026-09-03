@@ -10207,6 +10207,7 @@ function PerfilFuncionario({
 // toggle entre os dois modos. Rota/label pública continua "Relatórios".
 function PainelOcorrencias({
   ocorrencias,
+  ocorrenciasParaExportar,
   setOcorrencias,
   funcionarios,
   setFuncionarios,
@@ -10516,7 +10517,7 @@ function PainelOcorrencias({
     tabela,
     modalAcao,
     modalExportar && /*#__PURE__*/React.createElement(ModalExportarRelatorio, {
-      ocorrencias: ocorrencias,
+      ocorrencias: ocorrenciasParaExportar || ocorrencias,
       funcionarios: funcionarios,
       onClose: () => setModalExportar(false)
     })
@@ -15572,6 +15573,22 @@ function App() {
     const idsDoEscopo = new Set(funcionariosRelatorio.map(f => f.id));
     return ocorrenciasFiltradas.filter(o => idsDoEscopo.has(o.funcionario_id));
   }, [ocorrenciasFiltradas, usuario, gerenciasEscopoRelatorio, funcionariosRelatorio]);
+  // Base equivalente a ocorrenciasRelatorio, mas SEM o recorte por
+  // mesFiltro — usada só pelo modal de exportação, que tem filtro de
+  // período próprio e não deve ficar refém do mês selecionado na tela
+  // (ex.: mês atual sem pendências não pode esvaziar a exportação).
+  const ocorrenciasRelatorioTodasDatas = useMemo(() => {
+    let base = ocorrenciasExibidas;
+    if (isGestor) {
+      const idsDoEscopo = new Set(funcionariosExibidos.map(f => f.id));
+      base = base.filter(o => idsDoEscopo.has(o.funcionario_id));
+    }
+    if (usuario?.nivel === "superintendente" && gerenciasEscopoRelatorio.size > 0) {
+      const idsDoEscopo = new Set(funcionariosRelatorio.map(f => f.id));
+      base = base.filter(o => idsDoEscopo.has(o.funcionario_id));
+    }
+    return base;
+  }, [ocorrenciasExibidas, isGestor, funcionariosExibidos, usuario, gerenciasEscopoRelatorio, funcionariosRelatorio]);
   // Gate explícito: enquanto as telas da hierarquia comercial nova estão em
   // construção, só a conta gre@portovale.com.br (CONTAS_TESTE) as
   // enxerga. Nenhum admin/funcionário real vê nada diferente até este flag
@@ -15749,11 +15766,8 @@ function App() {
         // um modal de exportação com filtros próprios (ver
         // ModalExportarRelatorio).
         ocorrencias: ocorrenciasRelatorio,
+        ocorrenciasParaExportar: ocorrenciasRelatorioTodasDatas,
         setOcorrencias: setOcorrencias,
-        funcionarios: funcionariosRelatorio,
-        setFuncionarios: setFuncionarios,
-        addNotif: addNotif,
-        isAdmin: isAdmin,
         mesFiltro: mesFiltro,
         setMesFiltro: setMesFiltro,
         sessaoPronta: sessaoPronta,
