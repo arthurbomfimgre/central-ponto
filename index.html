@@ -10,6 +10,7 @@
   <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
   <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 
   <link rel="stylesheet" href="styles.css">
@@ -10570,28 +10571,122 @@ function ModalExportarRelatorio({ ocorrencias, funcionarios, onClose }) {
     }).sort((a, b) => (a.data || "").localeCompare(b.data || ""));
   }, [ocorrencias, funcionarios, dataDe, dataAte, statusSelecionados, filtroTipo, filtroCargo, funcionarioSelecionado]);
 
-  function exportar() {
-    const rows = ocorrenciasFiltradas.map(o => {
+  // Cor de fundo por status — mesmo espírito da legenda de cores do
+  // relatório de pendências do DP (verde=ok, laranja=atenção, etc.),
+  // adaptada aos status usados aqui.
+  const CORES_STATUS = {
+    "Pendente": "FFFFAB40",   // laranja
+    "Corrigido": "FFA5D6A7",  // verde
+    "Verificado": "FF90CAF9", // azul claro
+    "Rejeitado": "FFEF9A9A"   // vermelho claro
+  };
+  const AZUL_HEADER = "FF1565C0";
+  const CINZA_SUBTITULO = "FFE3F2FD";
+  const CINZA_LEGENDA = "FFF5F5F5";
+
+  async function exportar() {
+    const colunas = [
+      { header: "Data", key: "data", width: 12 },
+      { header: "Funcionário", key: "funcionario", width: 32 },
+      { header: "Matrícula", key: "matricula", width: 14 },
+      { header: "Setor", key: "setor", width: 26 },
+      { header: "Cargo", key: "cargo", width: 22 },
+      { header: "Tipo", key: "tipo", width: 30 },
+      { header: "Status", key: "status", width: 16 },
+      { header: "Observação", key: "observacao", width: 34 },
+      { header: "Resposta do colaborador", key: "resposta", width: 34 },
+      { header: "Criado em", key: "criadoEm", width: 18 },
+      { header: "Atualizado em", key: "atualizadoEm", width: 18 }
+    ];
+
+    const linhas = ocorrenciasFiltradas.map(o => {
       const func = resolverFuncionarioDaOcorrencia(funcionarios, o);
       return {
-        "Data": fmtDate(o.data),
-        "Funcionário": func?.nome || "—",
-        "Matrícula": func?.matricula || "—",
-        "Setor": func?.setor || "—",
-        "Cargo": func?.cargo || "—",
-        "Tipo": o.tipo,
-        "Status": o.status,
-        "Observação": o.observacaoAdmin || "",
-        "Resposta do colaborador": o.resposta || "",
-        "Criado em": fmtDateHora(o.criadoEm),
-        "Atualizado em": fmtDateHora(o.atualizadoEm)
+        data: fmtDate(o.data),
+        funcionario: func?.nome || "—",
+        matricula: func?.matricula || "—",
+        setor: func?.setor || "—",
+        cargo: func?.cargo || "—",
+        tipo: o.tipo,
+        status: o.status,
+        observacao: o.observacaoAdmin || "",
+        resposta: o.resposta || "",
+        criadoEm: fmtDateHora(o.criadoEm),
+        atualizadoEm: fmtDateHora(o.atualizadoEm)
       };
     });
-    const ws = XLSX.utils.json_to_sheet(rows);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Ocorrências");
+
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet("Ocorrências");
+    ws.columns = colunas;
+
+    const totalColunas = colunas.length;
+    const periodoTexto = dataDe || dataAte
+      ? `${dataDe ? fmtDate(dataDe) : "início"} a ${dataAte ? fmtDate(dataAte) : "hoje"}`
+      : "Todo o período";
+    const hoje = new Date();
+    const emissaoTexto = hoje.toLocaleDateString("pt-BR");
+
+    // Linha 1 — título
+    ws.mergeCells(1, 1, 1, totalColunas);
+    const tituloCell = ws.getCell(1, 1);
+    tituloCell.value = "RELATÓRIO DE OCORRÊNCIAS DE PONTO";
+    tituloCell.font = { bold: true, size: 14, color: { argb: "FFFFFFFF" } };
+    tituloCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: AZUL_HEADER } };
+    tituloCell.alignment = { horizontal: "center", vertical: "middle" };
+    ws.getRow(1).height = 28;
+
+    // Linha 2 — subtítulo (período / emissão / total)
+    ws.mergeCells(2, 1, 2, totalColunas);
+    const subCell = ws.getCell(2, 1);
+    subCell.value = `Período: ${periodoTexto}   |   Emissão: ${emissaoTexto}   |   Total de ocorrências: ${linhas.length}`;
+    subCell.font = { size: 11 };
+    subCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: CINZA_SUBTITULO } };
+    ws.getRow(2).height = 22;
+
+    // Linha 3 — legenda de cores por status
+    ws.mergeCells(3, 1, 3, totalColunas);
+    const legendaCell = ws.getCell(3, 1);
+    legendaCell.value = "🟠 Pendente   |   🟢 Corrigido   |   🔵 Verificado   |   🔴 Rejeitado";
+    legendaCell.font = { size: 10 };
+    legendaCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: CINZA_LEGENDA } };
+    ws.getRow(3).height = 22;
+
+    // Linha 4 — cabeçalho da tabela
+    const headerRow = ws.getRow(4);
+    colunas.forEach((col, i) => {
+      const cell = headerRow.getCell(i + 1);
+      cell.value = col.header;
+      cell.font = { bold: true, color: { argb: "FFFFFFFF" } };
+      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: AZUL_HEADER } };
+      cell.alignment = { horizontal: "center", vertical: "middle" };
+      cell.border = { top: { style: "thin" }, bottom: { style: "thin" }, left: { style: "thin" }, right: { style: "thin" } };
+    });
+    headerRow.height = 22;
+
+    // Linhas de dados, coloridas por status
+    linhas.forEach(linha => {
+      const row = ws.addRow(linha);
+      const cor = CORES_STATUS[linha.status] || "FFFFFFFF";
+      row.eachCell({ includeEmpty: true }, cell => {
+        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: cor } };
+        cell.border = { top: { style: "thin" }, bottom: { style: "thin" }, left: { style: "thin" }, right: { style: "thin" } };
+      });
+    });
+
+    ws.views = [{ state: "frozen", ySplit: 4 }];
+
+    const buffer = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buffer], { type: "application/octet-stream" });
+    const url = URL.createObjectURL(blob);
     const sufixoPeriodo = dataDe || dataAte ? `${dataDe || "inicio"}_a_${dataAte || "hoje"}` : "geral";
-    XLSX.writeFile(wb, `relatorio_ponto_${sufixoPeriodo}.xlsx`);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `relatorio_ponto_${sufixoPeriodo}.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
     onClose();
   }
 
