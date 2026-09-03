@@ -10099,66 +10099,62 @@ function PainelOcorrencias({
   sessaoPronta = true,
   contaTesteAtivaAgora = false
 }) {
-  // Sempre inicia em "fila" — não persiste a última escolha do usuário.
-  const [modoVisualizacao, setModoVisualizacao] = useState("fila");
   const [modal, setModal] = useState(null);
   const [obs, setObs] = useState("");
   const [filtroStatus, setFiltroStatus] = useState("Todos");
-  const [filtroCargo, setFiltroCargo] = useState("Todos");
-  // Filtro de tipo de ocorrência e busca por nome/matrícula — exclusivos do
-  // modo Tabela (a Fila de trabalho não usa, pois lá o objetivo é resolver
-  // pendências uma a uma, não localizar uma pessoa/tipo específico).
   const [filtroTipo, setFiltroTipo] = useState("Todos");
   const [buscaTexto, setBuscaTexto] = useState("");
+  const [modalExportar, setModalExportar] = useState(false);
   // Sem sessaoPronta/contaTesteAtivaAgora, a carga inicial e o polling de
   // useSharedState nunca disparavam — o print do EasyMob ficava gravado no
   // Supabase mas nunca era buscado para exibição aqui.
   const [easymobMap] = useSharedState(`${SK_EASYMOB}_map`, {}, sessaoPronta, contaTesteAtivaAgora);
-  const cargosDisponiveis = useMemo(() => [...new Set(funcionarios.map(f => f.cargo).filter(Boolean))].sort((a, b) => a.localeCompare(b, "pt-BR", {
-    sensitivity: "base"
-  })), [funcionarios]);
   const tiposDisponiveis = useMemo(() => [...new Set(ocorrencias.map(o => o.tipo).filter(Boolean))].sort((a, b) => a.localeCompare(b, "pt-BR", {
     sensitivity: "base"
   })), [ocorrencias]);
 
-  // Base filtrada só por cargo (usada para os contadores dos botões de
-  // status, que devem refletir o universo do cargo selecionado independente
-  // do status escolhido).
-  const ocorrenciasFiltroCargo = ocorrencias.filter(o => {
+  // Base da tela principal: presa ao mês selecionado no topo (mesmo
+  // comportamento de sempre) + status + tipo + busca por nome/matrícula.
+  // Única lista agora — antes havia dois modos (Fila/Tabela) com bases
+  // ligeiramente diferentes; foram unificados numa tabela só, com os
+  // botões de ação (verificar/rejeitar/excluir) direto na linha.
+  const buscaNorm = normalizarBusca(buscaTexto.trim());
+  const ocorrenciasFiltradas = ocorrencias.filter(o => {
     const func = resolverFuncionarioDaOcorrencia(funcionarios, o);
     if (!func) return false;
-    if (filtroCargo !== "Todos" && func.cargo !== filtroCargo) return false;
-    return true;
-  });
-
-  // Base final: cargo + status + tipo + busca por nome/matrícula — fonte
-  // única para os dois modos de visualização (fila e tabela) e para a
-  // exportação. Tipo e busca só se aplicam de fato no modo Tabela (a UI só
-  // os exibe lá), mas por virem vazios/"Todos" por padrão, não afetam a
-  // Fila enquanto o usuário não trocar de modo e mexer neles.
-  const buscaNorm = normalizarBusca(buscaTexto.trim());
-  const ocorrenciasFiltradas = ocorrenciasFiltroCargo.filter(o => {
     if (filtroStatus !== "Todos" && o.status !== filtroStatus) return false;
     if (filtroTipo !== "Todos" && o.tipo !== filtroTipo) return false;
     if (buscaNorm) {
-      const func = resolverFuncionarioDaOcorrencia(funcionarios, o);
-      const alvo = normalizarBusca(`${func?.nome || ""} ${func?.matricula || ""}`);
+      const alvo = normalizarBusca(`${func.nome || ""} ${func.matricula || ""}`);
       if (!alvo.includes(buscaNorm)) return false;
     }
     return true;
   }).sort((a, b) => (b.atualizadoEm || b.data || "").localeCompare(a.atualizadoEm || a.data || ""));
 
+  // Contadores dos pills de status — refletem tipo + busca já aplicados,
+  // mas não o próprio status (para o usuário poder ver quantas há em cada
+  // status antes de escolher um).
+  const ocorrenciasParaContagem = ocorrencias.filter(o => {
+    const func = resolverFuncionarioDaOcorrencia(funcionarios, o);
+    if (!func) return false;
+    if (filtroTipo !== "Todos" && o.tipo !== filtroTipo) return false;
+    if (buscaNorm) {
+      const alvo = normalizarBusca(`${func.nome || ""} ${func.matricula || ""}`);
+      if (!alvo.includes(buscaNorm)) return false;
+    }
+    return true;
+  });
   const porStatus = {
-    Pendente: ocorrenciasFiltroCargo.filter(o => o.status === "Pendente").length,
-    Corrigido: ocorrenciasFiltroCargo.filter(o => o.status === "Corrigido").length,
-    Verificado: ocorrenciasFiltroCargo.filter(o => o.status === "Verificado").length,
-    Rejeitado: ocorrenciasFiltroCargo.filter(o => o.status === "Rejeitado").length
+    Pendente: ocorrenciasParaContagem.filter(o => o.status === "Pendente").length,
+    Corrigido: ocorrenciasParaContagem.filter(o => o.status === "Corrigido").length,
+    Verificado: ocorrenciasParaContagem.filter(o => o.status === "Verificado").length,
+    Rejeitado: ocorrenciasParaContagem.filter(o => o.status === "Rejeitado").length
   };
   const contadores = {
-    Todos: ocorrenciasFiltroCargo.length,
+    Todos: ocorrenciasParaContagem.length,
     ...porStatus
   };
-  const novosCorrigidos = ocorrenciasFiltroCargo.filter(o => o.status === "Corrigido" && o.novo).length;
+  const novosCorrigidos = ocorrenciasParaContagem.filter(o => o.status === "Corrigido" && o.novo).length;
 
   useEffect(() => {
     const novos = ocorrencias.filter(o => o.novo).map(o => o.id);
@@ -10220,73 +10216,29 @@ function PainelOcorrencias({
     setModal(null);
     setObs("");
   }
-  function exportarXLSX() {
-    const rows = ocorrenciasFiltradas.map(o => {
-      const func = resolverFuncionarioDaOcorrencia(funcionarios, o);
-      return {
-        "Data": fmtDate(o.data),
-        "Funcionário": func?.nome || "—",
-        "Matrícula": func?.matricula || "—",
-        "Setor": func?.setor || "—",
-        "Tipo": o.tipo,
-        "Status": o.status,
-        "Observação": o.observacaoAdmin || "",
-        "Criado em": fmtDateHora(o.criadoEm),
-        "Atualizado em": fmtDateHora(o.atualizadoEm)
-      };
-    });
-    const ws = XLSX.utils.json_to_sheet(rows);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Ocorrências");
-    XLSX.writeFile(wb, `relatorio_ponto_${mesFiltro || "geral"}.xlsx`);
-  }
 
-  const statusColors = {
-    Pendente: { bg: "var(--laranja-50)", color: "var(--laranja-700)" },
-    Corrigido: { bg: "var(--amarelo-100)", color: "var(--amarelo-700)" },
-    Verificado: { bg: "var(--verde-100)", color: "var(--verde-700)" },
-    Rejeitado: { bg: "var(--vermelho-100)", color: "var(--vermelho-600)" }
-  };
-
-  // ── Cabeçalho comum: título, descrição, seletor de mês, exportar ────────
+  // ── Cabeçalho: título, seletor de mês, botão de exportar ─────────────────
   const cabecalho = /*#__PURE__*/React.createElement("div", {
     style: { display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 24, flexWrap: "wrap", gap: 12 }
   }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("h1", {
     style: { fontSize: 24, fontWeight: 700, color: "var(--cinza-900)", margin: 0 }
   }, "Relatórios"), /*#__PURE__*/React.createElement("p", {
     style: { color: "var(--cinza-500)", marginTop: 4, fontSize: 14 }
-  }, modoVisualizacao === "fila"
-    ? /*#__PURE__*/React.createElement(React.Fragment, null, "Verifique no sistema ", /*#__PURE__*/React.createElement("strong", null, "Vibe"), " se as correções dos colaboradores procedem.")
-    : "Análise de ocorrências e exportação de dados"
-  )), /*#__PURE__*/React.createElement("div", {
+  }, "Todas as pendências do time — verifique correções e exporte dados.")), /*#__PURE__*/React.createElement("div", {
     style: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }
   }, /*#__PURE__*/React.createElement(SeletorMes, {
     mesFiltro: mesFiltro,
     setMesFiltro: setMesFiltro
   }), /*#__PURE__*/React.createElement("button", {
-    onClick: exportarXLSX,
+    onClick: () => setModalExportar(true),
     style: {
       display: "flex", alignItems: "center", gap: 8, background: "var(--verde-600)", color: "var(--cor-branco)",
       border: "none", borderRadius: 12, padding: "11px 20px", fontSize: 13, fontWeight: 700, cursor: "pointer",
       boxShadow: "0 4px 12px var(--sombra-verde)"
     }
-  }, "📥 Exportar XLSX")));
+  }, "📥 Exportar")));
 
-  // ── Toggle de modo ───────────────────────────────────────────────────────
-  const toggle = /*#__PURE__*/React.createElement("div", {
-    style: { display: "flex", gap: 6, marginBottom: 20, background: "var(--cinza-100)", padding: 4, borderRadius: 12, width: "fit-content" }
-  }, [{ id: "fila", label: "🔍 Fila de trabalho" }, { id: "tabela", label: "📋 Tabela/Análise" }].map(m => /*#__PURE__*/React.createElement("button", {
-    key: m.id,
-    onClick: () => setModoVisualizacao(m.id),
-    style: {
-      padding: "8px 16px", borderRadius: 9, fontSize: 12, fontWeight: 700, cursor: "pointer", border: "none",
-      background: modoVisualizacao === m.id ? "var(--cor-branco)" : "transparent",
-      color: modoVisualizacao === m.id ? "var(--cinza-900)" : "var(--cinza-500)",
-      boxShadow: modoVisualizacao === m.id ? "0 1px 3px var(--sombra-leve)" : "none"
-    }
-  }, m.label)));
-
-  // ── Filtros unificados: status (pills com contador) + cargo ─────────────
+  // ── Filtros: status (pills com contador) + tipo + busca ──────────────────
   const filtros = /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     style: { display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap" }
   }, ["Todos", "Pendente", "Corrigido", "Verificado", "Rejeitado"].map(s => /*#__PURE__*/React.createElement("button", {
@@ -10312,23 +10264,12 @@ function PainelOcorrencias({
     style: { display: "flex", flexDirection: "column", gap: 4 }
   }, /*#__PURE__*/React.createElement("span", {
     style: { fontSize: 11, fontWeight: 700, color: "var(--cinza-400)", textTransform: "uppercase", letterSpacing: ".05em" }
-  }, "Cargo"), /*#__PURE__*/React.createElement("select", {
-    value: filtroCargo,
-    onChange: e => setFiltroCargo(e.target.value),
-    style: { padding: "9px 14px", borderRadius: 10, border: "1px solid var(--cinza-200)", fontSize: 13, background: "var(--cor-branco)", cursor: "pointer" }
-  }, ["Todos", ...cargosDisponiveis].map(c => /*#__PURE__*/React.createElement("option", { key: c }, c)))),
-  // Tipo e busca por nome/matrícula — exclusivos do modo Tabela, já que a
-  // Fila é uma lista de ação item a item, não um universo para recortar.
-  modoVisualizacao === "tabela" && /*#__PURE__*/React.createElement("div", {
-    style: { display: "flex", flexDirection: "column", gap: 4 }
-  }, /*#__PURE__*/React.createElement("span", {
-    style: { fontSize: 11, fontWeight: 700, color: "var(--cinza-400)", textTransform: "uppercase", letterSpacing: ".05em" }
   }, "Tipo"), /*#__PURE__*/React.createElement("select", {
     value: filtroTipo,
     onChange: e => setFiltroTipo(e.target.value),
     style: { padding: "9px 14px", borderRadius: 10, border: "1px solid var(--cinza-200)", fontSize: 13, background: "var(--cor-branco)", cursor: "pointer" }
   }, ["Todos", ...tiposDisponiveis].map(t => /*#__PURE__*/React.createElement("option", { key: t }, t)))),
-  modoVisualizacao === "tabela" && /*#__PURE__*/React.createElement("div", {
+  /*#__PURE__*/React.createElement("div", {
     style: { display: "flex", flexDirection: "column", gap: 4, flex: "1 1 220px" }
   }, /*#__PURE__*/React.createElement("span", {
     style: { fontSize: 11, fontWeight: 700, color: "var(--cinza-400)", textTransform: "uppercase", letterSpacing: ".05em" }
@@ -10338,115 +10279,82 @@ function PainelOcorrencias({
     placeholder: "Nome ou matrícula…",
     style: { padding: "9px 14px", borderRadius: 10, border: "1px solid var(--cinza-200)", fontSize: 13, background: "var(--cor-branco)", outline: "none", boxSizing: "border-box" }
   })),
-  (filtroCargo !== "Todos" || (modoVisualizacao === "tabela" && (filtroTipo !== "Todos" || buscaTexto.trim()))) && /*#__PURE__*/React.createElement("button", {
-    onClick: () => { setFiltroCargo("Todos"); setFiltroTipo("Todos"); setBuscaTexto(""); },
+  (filtroTipo !== "Todos" || buscaTexto.trim() || filtroStatus !== "Todos") && /*#__PURE__*/React.createElement("button", {
+    onClick: () => { setFiltroStatus("Todos"); setFiltroTipo("Todos"); setBuscaTexto(""); },
     style: { padding: "9px 14px", borderRadius: 10, border: "1px solid var(--cinza-200)", background: "var(--cinza-50)", fontSize: 12, fontWeight: 600, color: "var(--cinza-500)", cursor: "pointer" }
   }, "✕ Limpar filtros")));
 
-  // ── Modo Fila de trabalho (cards de ação) ───────────────────────────────
-  const listaFila = /*#__PURE__*/React.createElement("div", {
-    style: { display: "flex", flexDirection: "column", gap: 10 }
-  }, ocorrenciasFiltradas.length === 0 && /*#__PURE__*/React.createElement("div", {
-    style: { background: "var(--cor-branco)", borderRadius: 16, padding: 40, textAlign: "center", color: "var(--cinza-400)", fontSize: 13, border: "1px solid var(--cinza-100)" }
-  }, "Nenhuma ocorrência neste filtro."), ocorrenciasFiltradas.map(o => {
-    const func = resolverFuncionarioDaOcorrencia(funcionarios, o);
-    if (!func) return null;
-    const al = getAlert(contarOcorrencias(ocorrencias, func).esquecimentos);
-    const podeVerif = o.status === "Corrigido" || (o.status === "Pendente" && o.criadoPor === "funcionario");
-    const ehErroReg = o.tipo === TIPO_EXIGE_EASYMOB;
-    const easymob = easymobMap[`${func.id}_${o.id}`];
-    return /*#__PURE__*/React.createElement("div", {
-      key: o.id,
-      style: {
-        background: "var(--cor-branco)", border: `1px solid ${o.novo ? "var(--amber-200)" : "var(--cinza-100)"}`,
-        borderRadius: 16, padding: "20px 24px", display: "flex", gap: 16, alignItems: "flex-start",
-        boxShadow: o.novo ? "0 2px 12px var(--amber-transparente)" : "0 1px 3px var(--sombra-leve)", flexWrap: "wrap"
-      }
-    }, /*#__PURE__*/React.createElement("span", { style: { fontSize: 24, flexShrink: 0, marginTop: 2 } }, tipoIcon(o.tipo)),
-    /*#__PURE__*/React.createElement(Avatar, { nome: func.nome, id: func.id, size: 42 }),
-    /*#__PURE__*/React.createElement("div", { style: { flex: 1, minWidth: 200 } },
-      /*#__PURE__*/React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" } },
-        /*#__PURE__*/React.createElement("span", { style: { fontWeight: 700, fontSize: 14, color: "var(--cinza-900)" } }, func.nome),
-        /*#__PURE__*/React.createElement("span", { style: { fontSize: 11, background: al.bg, color: al.cor, padding: "2px 8px", borderRadius: 20, fontWeight: 600 } }, al.label),
-        /*#__PURE__*/React.createElement(Badge, { status: o.status }),
-        o.criadoPor === "funcionario" && /*#__PURE__*/React.createElement("span", { style: { fontSize: 11, background: "var(--roxo-100)", color: "var(--roxo-600)", padding: "2px 8px", borderRadius: 20, fontWeight: 700 } }, "👤 Aviso do colaborador"),
-        o.novo && /*#__PURE__*/React.createElement("span", { style: { fontSize: 10, background: "var(--amber-400)", color: "var(--amber-900)", padding: "2px 8px", borderRadius: 20, fontWeight: 700 } }, "🔔 NOVO")
-      ),
-      /*#__PURE__*/React.createElement("div", { style: { fontSize: 13, color: "var(--cinza-500)", marginTop: 4 } },
-        /*#__PURE__*/React.createElement("strong", { style: { color: "var(--cinza-700)" } }, o.tipo), " · ", fmtDate(o.data), " · ", func.setor,
-        o.atualizadoEm && /*#__PURE__*/React.createElement("span", { style: { color: "var(--cinza-400)" } }, " · ", fmtDateHora(o.atualizadoEm))
-      ),
-      o.observacaoAdmin && /*#__PURE__*/React.createElement("div", { style: { marginTop: 6, fontSize: 12, background: "var(--cinza-100)", borderRadius: 8, padding: "6px 10px", color: "var(--cinza-600)" } }, /*#__PURE__*/React.createElement("strong", null, "Obs.:"), " ", o.observacaoAdmin),
-      o.observacaoFuncionario && /*#__PURE__*/React.createElement("div", { style: { marginTop: 6, fontSize: 12, background: "var(--roxo-100)", borderRadius: 8, padding: "6px 10px", color: "var(--roxo-600)", borderLeft: "3px solid var(--roxo-500)" } }, /*#__PURE__*/React.createElement("strong", null, "👤 Aviso do colaborador:"), " ", o.observacaoFuncionario),
-      o.resposta && /*#__PURE__*/React.createElement("div", { style: { marginTop: 8, background: "var(--cinza-50)", borderRadius: 10, padding: "10px 14px", fontSize: 13, color: "var(--cinza-700)", borderLeft: "3px solid var(--indigo-500)" } },
-        /*#__PURE__*/React.createElement("strong", { style: { fontSize: 12, color: "var(--indigo-500)" } }, "Colaborador marcou como corrigido"),
-        o.resposta && o.resposta !== "Corrigido no sistema Vibe." && /*#__PURE__*/React.createElement("span", { style: { display: "block", marginTop: 4, color: "var(--cinza-600)" } }, o.resposta)
-      ),
-      !o.resposta && o.status === "Pendente" && /*#__PURE__*/React.createElement("div", { style: { marginTop: 8, fontSize: 12, color: "var(--cinza-400)", fontStyle: "italic" } }, o.tipo === TIPO_PENDENTE_ESPECIFICACAO ? "Aguardando o colaborador especificar o motivo." : "Aguardando ação do colaborador."),
-      ehErroReg && /*#__PURE__*/React.createElement("div", { style: { marginTop: 8, display: "flex", alignItems: "center", gap: 8 } },
-        easymob ? /*#__PURE__*/React.createElement("button", {
-          onClick: () => {
-            const win = window.open("", "_blank");
-            if (!win) return;
-            win.document.write(
-              '<html><head><title>Print EasyMob</title></head>' +
-              '<body style="margin:0;background:#111;display:flex;align-items:center;justify-content:center;min-height:100vh;">' +
-              '<img src="' + easymob + '" style="max-width:100%;max-height:100vh;" /></body></html>'
-            );
-            win.document.close();
-          },
-          style: { background: "var(--verde-100)", color: "var(--verde-700)", border: "none", borderRadius: 8, padding: "5px 12px", fontSize: 12, fontWeight: 600, cursor: "pointer" }
-        }, "📱 Ver print EasyMob") : o.easymobEnviado ? /*#__PURE__*/React.createElement("span", { style: { fontSize: 12, color: "var(--verde-700)", fontWeight: 600 } }, "✅ Print EasyMob enviado") : /*#__PURE__*/React.createElement("span", { style: { fontSize: 12, color: "var(--amber-500)", fontWeight: 600 } }, "⚠️ Print EasyMob não enviado."))
-    ),
-    /*#__PURE__*/React.createElement("div", { style: { display: "flex", gap: 8, flexShrink: 0, alignItems: "center" } },
-      podeVerif && /*#__PURE__*/React.createElement(React.Fragment, null,
-        /*#__PURE__*/React.createElement("button", {
-          onClick: () => setModal({ ...o, acao: "verificar" }),
-          style: { background: "var(--verde-100)", color: "var(--verde-600)", border: "none", borderRadius: 10, padding: "9px 18px", fontSize: 12, fontWeight: 700, cursor: "pointer" }
-        }, "✓ Verificado"),
-        /*#__PURE__*/React.createElement("button", {
-          onClick: () => setModal({ ...o, acao: "rejeitar" }),
-          style: { background: "var(--vermelho-100)", color: "var(--vermelho-600)", border: "none", borderRadius: 10, padding: "9px 18px", fontSize: 12, fontWeight: 700, cursor: "pointer" }
-        }, "✕ Rejeitar")
-      ),
-      isAdmin && /*#__PURE__*/React.createElement("button", {
-        onClick: () => setModal({ ...o, acao: "excluir" }),
-        title: "Excluir pendência",
-        style: { background: "var(--cinza-100)", color: "var(--cinza-400)", border: "none", borderRadius: 10, padding: "9px 12px", fontSize: 13, fontWeight: 700, cursor: "pointer", flexShrink: 0 }
-      }, "🗑")
-    ));
-  }));
-
-  // ── Modo Tabela/Análise (leitura) ────────────────────────────────────────
+  // ── Tabela única, com ações (verificar/rejeitar/excluir) inline ──────────
   const tabela = /*#__PURE__*/React.createElement("div", {
     style: { background: "var(--cor-branco)", border: "1px solid var(--cinza-100)", borderRadius: 16, overflow: "auto" }
   }, /*#__PURE__*/React.createElement("table", {
-    style: { width: "100%", borderCollapse: "collapse", minWidth: 700 }
+    style: { width: "100%", borderCollapse: "collapse", minWidth: 820 }
   }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", {
     style: { background: "var(--cinza-50)", borderBottom: "1px solid var(--cinza-100)" }
-  }, ["Data", "Funcionário", "Matrícula", "Setor", "Tipo", "Status", "Observação"].map(h => /*#__PURE__*/React.createElement("th", {
+  }, ["Data", "Funcionário", "Matrícula", "Setor", "Tipo", "Status", "Observação", "Ações"].map(h => /*#__PURE__*/React.createElement("th", {
     key: h,
     style: { padding: "11px 16px", fontSize: 11, fontWeight: 700, color: "var(--cinza-400)", textAlign: "left", letterSpacing: ".06em", textTransform: "uppercase", whiteSpace: "nowrap" }
   }, h)))), /*#__PURE__*/React.createElement("tbody", null, ocorrenciasFiltradas.map((o, i) => {
     const func = resolverFuncionarioDaOcorrencia(funcionarios, o);
+    const podeVerif = o.status === "Corrigido" || (o.status === "Pendente" && o.criadoPor === "funcionario");
+    const ehErroReg = o.tipo === TIPO_EXIGE_EASYMOB;
+    const easymob = func ? easymobMap[`${func.id}_${o.id}`] : null;
     return /*#__PURE__*/React.createElement("tr", {
       key: o.id,
-      style: { borderBottom: i < ocorrenciasFiltradas.length - 1 ? "1px solid var(--cinza-50)" : "none" }
+      style: { borderBottom: i < ocorrenciasFiltradas.length - 1 ? "1px solid var(--cinza-50)" : "none", background: o.novo ? "var(--amarelo-100)" : "transparent" }
     }, /*#__PURE__*/React.createElement("td", { style: { padding: "10px 16px", fontSize: 12, color: "var(--cinza-500)", whiteSpace: "nowrap" } }, fmtDate(o.data)),
     /*#__PURE__*/React.createElement("td", { style: { padding: "10px 16px" } }, /*#__PURE__*/React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8 } },
       /*#__PURE__*/React.createElement(Avatar, { nome: func?.nome || "?", id: func?.id || 0, size: 26 }),
-      /*#__PURE__*/React.createElement("span", { style: { fontSize: 12, fontWeight: 600, color: "var(--cinza-900)" } }, func?.nome?.split(" ").slice(0, 2).join(" ") || "—")
+      /*#__PURE__*/React.createElement("div", null,
+        /*#__PURE__*/React.createElement("span", { style: { fontSize: 12, fontWeight: 600, color: "var(--cinza-900)" } }, func?.nome?.split(" ").slice(0, 2).join(" ") || "—"),
+        o.criadoPor === "funcionario" && /*#__PURE__*/React.createElement("span", { style: { display: "block", fontSize: 10, color: "var(--roxo-600)", fontWeight: 700 } }, "👤 Aviso do colaborador")
+      )
     )),
     /*#__PURE__*/React.createElement("td", { style: { padding: "10px 16px", fontSize: 12, color: "var(--cinza-500)", fontFamily: "monospace" } }, func?.matricula || "—"),
     /*#__PURE__*/React.createElement("td", { style: { padding: "10px 16px", fontSize: 12, color: "var(--cinza-500)" } }, func?.setor || "—"),
     /*#__PURE__*/React.createElement("td", { style: { padding: "10px 16px", fontSize: 12, fontWeight: 600, color: "var(--cinza-900)" } }, tipoIcon(o.tipo), " ", o.tipo),
     /*#__PURE__*/React.createElement("td", { style: { padding: "10px 16px" } }, /*#__PURE__*/React.createElement(Badge, { status: o.status })),
-    /*#__PURE__*/React.createElement("td", { style: { padding: "10px 16px", fontSize: 12, color: "var(--cinza-500)", maxWidth: 200 } }, o.observacaoAdmin || /*#__PURE__*/React.createElement("span", { style: { color: "var(--cinza-300)" } }, "—")));
+    /*#__PURE__*/React.createElement("td", { style: { padding: "10px 16px", fontSize: 12, color: "var(--cinza-500)", maxWidth: 200 } },
+      o.observacaoAdmin || /*#__PURE__*/React.createElement("span", { style: { color: "var(--cinza-300)" } }, "—"),
+      o.resposta && o.resposta !== "Corrigido no sistema Vibe." && /*#__PURE__*/React.createElement("div", { style: { marginTop: 4, fontStyle: "italic", color: "var(--cinza-600)" } }, "\"", o.resposta, "\""),
+      ehErroReg && (easymob ? /*#__PURE__*/React.createElement("button", {
+        onClick: () => {
+          const win = window.open("", "_blank");
+          if (!win) return;
+          win.document.write(
+            '<html><head><title>Print EasyMob</title></head>' +
+            '<body style="margin:0;background:#111;display:flex;align-items:center;justify-content:center;min-height:100vh;">' +
+            '<img src="' + easymob + '" style="max-width:100%;max-height:100vh;" /></body></html>'
+          );
+          win.document.close();
+        },
+        style: { display: "block", marginTop: 4, background: "var(--verde-100)", color: "var(--verde-700)", border: "none", borderRadius: 8, padding: "3px 8px", fontSize: 11, fontWeight: 600, cursor: "pointer" }
+      }, "📱 Ver print") : /*#__PURE__*/React.createElement("span", { style: { display: "block", marginTop: 4, fontSize: 11, color: o.easymobEnviado ? "var(--verde-700)" : "var(--amber-600)", fontWeight: 600 } }, o.easymobEnviado ? "✅ Print enviado" : "⚠️ Sem print"))
+    ),
+    /*#__PURE__*/React.createElement("td", { style: { padding: "10px 16px" } }, /*#__PURE__*/React.createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
+      podeVerif && /*#__PURE__*/React.createElement(React.Fragment, null,
+        /*#__PURE__*/React.createElement("button", {
+          onClick: () => setModal({ ...o, acao: "verificar" }),
+          title: "Verificar",
+          style: { background: "var(--verde-100)", color: "var(--verde-600)", border: "none", borderRadius: 8, padding: "6px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer" }
+        }, "✓"),
+        /*#__PURE__*/React.createElement("button", {
+          onClick: () => setModal({ ...o, acao: "rejeitar" }),
+          title: "Rejeitar",
+          style: { background: "var(--vermelho-100)", color: "var(--vermelho-600)", border: "none", borderRadius: 8, padding: "6px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer" }
+        }, "✕")
+      ),
+      isAdmin && /*#__PURE__*/React.createElement("button", {
+        onClick: () => setModal({ ...o, acao: "excluir" }),
+        title: "Excluir pendência",
+        style: { background: "var(--cinza-100)", color: "var(--cinza-400)", border: "none", borderRadius: 8, padding: "6px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer" }
+      }, "🗑")
+    )));
   }))), ocorrenciasFiltradas.length === 0 && /*#__PURE__*/React.createElement("div", {
     style: { padding: 40, textAlign: "center", color: "var(--cinza-400)", fontSize: 13 }
-  }, "Nenhuma ocorrência encontrada com esses filtros."));
+  }, "Nenhuma pendência encontrada com esses filtros."));
 
-  // ── Modal de ação (só usado no modo Fila) ────────────────────────────────
+  // ── Modal de ação (verificar/rejeitar/excluir) ───────────────────────────
   const modalAcao = modal && /*#__PURE__*/React.createElement(Modal, {
     title: modal.acao === "verificar" ? "✓ Confirmar verificação" : modal.acao === "excluir" ? "🗑 Excluir pendência" : "✕ Rejeitar correção",
     onClose: () => { setModal(null); setObs(""); }
@@ -10486,12 +10394,220 @@ function PainelOcorrencias({
 
   return /*#__PURE__*/React.createElement("div", null,
     cabecalho,
-    toggle,
     filtros,
-    modoVisualizacao === "fila" ? listaFila : tabela,
-    modalAcao
+    tabela,
+    modalAcao,
+    modalExportar && /*#__PURE__*/React.createElement(ModalExportarRelatorio, {
+      ocorrencias: ocorrencias,
+      funcionarios: funcionarios,
+      onClose: () => setModalExportar(false)
+    })
   );
 }
+
+// ─── MODAL DE EXPORTAÇÃO DE RELATÓRIO ──────────────────────────────────────
+// Aberto pelo botão "📥 Exportar" em Relatórios. Filtros próprios,
+// independentes dos filtros da tela (o usuário pode estar vendo só
+// "Pendente" na tela e ainda assim exportar um recorte de período maior,
+// com todos os status). Gera a planilha XLSX ao confirmar.
+function ModalExportarRelatorio({ ocorrencias, funcionarios, onClose }) {
+  const [dataDe, setDataDe] = useState("");
+  const [dataAte, setDataAte] = useState("");
+  const [statusSelecionados, setStatusSelecionados] = useState(() => new Set());
+  const [filtroTipo, setFiltroTipo] = useState("Todos");
+  const [filtroCargo, setFiltroCargo] = useState("Todos");
+  const [buscaFuncionario, setBuscaFuncionario] = useState("");
+  const [funcionarioSelecionado, setFuncionarioSelecionado] = useState(null);
+  const [mostrarSugestoes, setMostrarSugestoes] = useState(false);
+
+  const tiposDisponiveis = useMemo(() => [...new Set(ocorrencias.map(o => o.tipo).filter(Boolean))].sort((a, b) => a.localeCompare(b, "pt-BR", { sensitivity: "base" })), [ocorrencias]);
+  const cargosDisponiveis = useMemo(() => [...new Set(funcionarios.map(f => f.cargo).filter(Boolean))].sort((a, b) => a.localeCompare(b, "pt-BR", { sensitivity: "base" })), [funcionarios]);
+
+  const sugestoesFuncionario = useMemo(() => {
+    const termo = normalizarBusca(buscaFuncionario.trim());
+    if (!termo) return [];
+    return funcionarios
+      .filter(f => normalizarBusca(`${f.nome || ""} ${f.matricula || ""}`).includes(termo))
+      .slice(0, 8);
+  }, [buscaFuncionario, funcionarios]);
+
+  function toggleStatus(s) {
+    setStatusSelecionados(prev => {
+      const next = new Set(prev);
+      if (next.has(s)) next.delete(s); else next.add(s);
+      return next;
+    });
+  }
+
+  const ocorrenciasFiltradas = useMemo(() => {
+    return ocorrencias.filter(o => {
+      const func = resolverFuncionarioDaOcorrencia(funcionarios, o);
+      if (!func) return false;
+      if (dataDe && o.data < dataDe) return false;
+      if (dataAte && o.data > dataAte) return false;
+      if (statusSelecionados.size > 0 && !statusSelecionados.has(o.status)) return false;
+      if (filtroTipo !== "Todos" && o.tipo !== filtroTipo) return false;
+      if (filtroCargo !== "Todos" && func.cargo !== filtroCargo) return false;
+      if (funcionarioSelecionado && func.id !== funcionarioSelecionado.id) return false;
+      return true;
+    }).sort((a, b) => (a.data || "").localeCompare(b.data || ""));
+  }, [ocorrencias, funcionarios, dataDe, dataAte, statusSelecionados, filtroTipo, filtroCargo, funcionarioSelecionado]);
+
+  function exportar() {
+    const rows = ocorrenciasFiltradas.map(o => {
+      const func = resolverFuncionarioDaOcorrencia(funcionarios, o);
+      return {
+        "Data": fmtDate(o.data),
+        "Funcionário": func?.nome || "—",
+        "Matrícula": func?.matricula || "—",
+        "Setor": func?.setor || "—",
+        "Cargo": func?.cargo || "—",
+        "Tipo": o.tipo,
+        "Status": o.status,
+        "Observação": o.observacaoAdmin || "",
+        "Resposta do colaborador": o.resposta || "",
+        "Criado em": fmtDateHora(o.criadoEm),
+        "Atualizado em": fmtDateHora(o.atualizadoEm)
+      };
+    });
+    const ws = XLSX.utils.json_to_sheet(rows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Ocorrências");
+    const sufixoPeriodo = dataDe || dataAte ? `${dataDe || "inicio"}_a_${dataAte || "hoje"}` : "geral";
+    XLSX.writeFile(wb, `relatorio_ponto_${sufixoPeriodo}.xlsx`);
+    onClose();
+  }
+
+  const campoStyle = { width: "100%", padding: "9px 12px", borderRadius: 10, border: "1px solid var(--cinza-200)", fontSize: 13, background: "var(--cor-branco)", color: "var(--cinza-900)", outline: "none", boxSizing: "border-box" };
+  const labelStyle = { fontSize: 11, fontWeight: 700, color: "var(--cinza-400)", textTransform: "uppercase", letterSpacing: ".05em", display: "block", marginBottom: 6 };
+  const STATUS_LISTA = ["Pendente", "Corrigido", "Verificado", "Rejeitado"];
+
+  return /*#__PURE__*/React.createElement(Modal, {
+    title: "📥 Exportar relatório",
+    onClose: onClose,
+    maxWidth: 560
+  }, /*#__PURE__*/React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 18 } },
+
+    /*# Período #*/
+    /*#__PURE__*/React.createElement("div", null,
+      /*#__PURE__*/React.createElement("label", { style: labelStyle }, "Período"),
+      /*#__PURE__*/React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 } },
+        /*#__PURE__*/React.createElement(SeletorData, { value: dataDe, onChange: setDataDe, placeholder: "De…" }),
+        /*#__PURE__*/React.createElement(SeletorData, { value: dataAte, onChange: setDataAte, placeholder: "Até…" })
+      ),
+      (dataDe || dataAte) && /*#__PURE__*/React.createElement("button", {
+        onClick: () => { setDataDe(""); setDataAte(""); },
+        style: { marginTop: 6, background: "none", border: "none", color: "var(--cinza-400)", fontSize: 11.5, fontWeight: 600, cursor: "pointer", padding: 0 }
+      }, "✕ Limpar período (exporta tudo)")
+    ),
+
+    /*# Status — multi-select via chips #*/
+    /*#__PURE__*/React.createElement("div", null,
+      /*#__PURE__*/React.createElement("label", { style: labelStyle }, "Status ", /*#__PURE__*/React.createElement("span", { style: { fontWeight: 400, textTransform: "none", letterSpacing: 0 } }, statusSelecionados.size === 0 ? "(todos)" : "")),
+      /*#__PURE__*/React.createElement("div", { style: { display: "flex", gap: 8, flexWrap: "wrap" } },
+        STATUS_LISTA.map(s => {
+          const ativo = statusSelecionados.has(s);
+          return /*#__PURE__*/React.createElement("button", {
+            key: s,
+            onClick: () => toggleStatus(s),
+            style: {
+              padding: "7px 14px", borderRadius: 20, fontSize: 12, fontWeight: 700, cursor: "pointer", border: "none",
+              background: ativo ? "var(--indigo-500)" : "var(--cinza-100)",
+              color: ativo ? "var(--cor-branco)" : "var(--cinza-600)"
+            }
+          }, s);
+        })
+      )
+    ),
+
+    /*# Tipo + Cargo lado a lado #*/
+    /*#__PURE__*/React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 } },
+      /*#__PURE__*/React.createElement("div", null,
+        /*#__PURE__*/React.createElement("label", { style: labelStyle }, "Tipo de ocorrência"),
+        /*#__PURE__*/React.createElement("select", {
+          value: filtroTipo, onChange: e => setFiltroTipo(e.target.value),
+          style: { ...campoStyle, cursor: "pointer" }
+        }, ["Todos", ...tiposDisponiveis].map(t => /*#__PURE__*/React.createElement("option", { key: t }, t)))
+      ),
+      /*#__PURE__*/React.createElement("div", null,
+        /*#__PURE__*/React.createElement("label", { style: labelStyle }, "Cargo"),
+        /*#__PURE__*/React.createElement("select", {
+          value: filtroCargo, onChange: e => setFiltroCargo(e.target.value),
+          style: { ...campoStyle, cursor: "pointer" }
+        }, ["Todos", ...cargosDisponiveis].map(c => /*#__PURE__*/React.createElement("option", { key: c }, c)))
+      )
+    ),
+
+    /*# Funcionário específico — busca com autocomplete #*/
+    /*#__PURE__*/React.createElement("div", { style: { position: "relative" } },
+      /*#__PURE__*/React.createElement("label", { style: labelStyle }, "Funcionário específico ", /*#__PURE__*/React.createElement("span", { style: { fontWeight: 400, textTransform: "none", letterSpacing: 0, color: "var(--cinza-300)" } }, "(opcional)")),
+      funcionarioSelecionado
+        ? /*#__PURE__*/React.createElement("div", {
+            style: { display: "flex", alignItems: "center", gap: 8, background: "var(--marca-50)", border: "1px solid var(--marca-200)", borderRadius: 10, padding: "8px 12px" }
+          },
+            /*#__PURE__*/React.createElement(Avatar, { nome: funcionarioSelecionado.nome, id: funcionarioSelecionado.id, size: 24 }),
+            /*#__PURE__*/React.createElement("span", { style: { flex: 1, fontSize: 13, fontWeight: 600, color: "var(--cinza-900)" } }, funcionarioSelecionado.nome),
+            /*#__PURE__*/React.createElement("button", {
+              onClick: () => { setFuncionarioSelecionado(null); setBuscaFuncionario(""); },
+              style: { background: "none", border: "none", color: "var(--cinza-400)", cursor: "pointer", fontSize: 14, padding: 0 }
+            }, "✕")
+          )
+        : /*#__PURE__*/React.createElement(React.Fragment, null,
+            /*#__PURE__*/React.createElement("input", {
+              value: buscaFuncionario,
+              onChange: e => { setBuscaFuncionario(e.target.value); setMostrarSugestoes(true); },
+              onFocus: () => setMostrarSugestoes(true),
+              onBlur: () => setTimeout(() => setMostrarSugestoes(false), 150),
+              placeholder: "Digite o nome ou matrícula…",
+              style: campoStyle
+            }),
+            mostrarSugestoes && sugestoesFuncionario.length > 0 && /*#__PURE__*/React.createElement("div", {
+              style: {
+                position: "absolute", top: "100%", left: 0, right: 0, marginTop: 4, zIndex: 20,
+                background: "var(--cor-branco)", border: "1px solid var(--cinza-200)", borderRadius: 10,
+                boxShadow: "0 8px 24px var(--sombra-media)", maxHeight: 220, overflow: "auto"
+              }
+            }, sugestoesFuncionario.map(f => /*#__PURE__*/React.createElement("button", {
+              key: f.id,
+              onMouseDown: () => { setFuncionarioSelecionado(f); setMostrarSugestoes(false); },
+              style: {
+                width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "8px 12px",
+                background: "none", border: "none", cursor: "pointer", textAlign: "left"
+              }
+            }, /*#__PURE__*/React.createElement(Avatar, { nome: f.nome, id: f.id, size: 22 }),
+               /*#__PURE__*/React.createElement("div", null,
+                 /*#__PURE__*/React.createElement("div", { style: { fontSize: 12.5, fontWeight: 600, color: "var(--cinza-900)" } }, f.nome),
+                 /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, color: "var(--cinza-400)" } }, f.matricula, " · ", f.setor)
+               )
+            )))
+          )
+    ),
+
+    /*# Prévia da contagem #*/
+    /*#__PURE__*/React.createElement("div", {
+      style: { background: "var(--cinza-50)", borderRadius: 10, padding: "10px 14px", fontSize: 13, color: "var(--cinza-600)" }
+    }, /*#__PURE__*/React.createElement("strong", { style: { color: "var(--cinza-900)" } }, ocorrenciasFiltradas.length), " ocorrência", ocorrenciasFiltradas.length !== 1 ? "s" : "", " será", ocorrenciasFiltradas.length !== 1 ? "ão" : "", " exportada", ocorrenciasFiltradas.length !== 1 ? "s" : "", " com esses filtros."),
+
+    /*# Botões #*/
+    /*#__PURE__*/React.createElement("div", { style: { display: "flex", gap: 10, justifyContent: "flex-end" } },
+      /*#__PURE__*/React.createElement("button", {
+        onClick: onClose,
+        style: { padding: "10px 20px", borderRadius: 10, border: "1px solid var(--cinza-200)", background: "var(--cor-branco)", fontSize: 13, cursor: "pointer", fontWeight: 600, color: "var(--cinza-500)" }
+      }, "Cancelar"),
+      /*#__PURE__*/React.createElement("button", {
+        onClick: exportar,
+        disabled: ocorrenciasFiltradas.length === 0,
+        style: {
+          padding: "10px 20px", borderRadius: 10, border: "none", fontSize: 13, fontWeight: 700,
+          background: ocorrenciasFiltradas.length === 0 ? "var(--cinza-300)" : "var(--verde-600)",
+          color: "var(--cor-branco)", cursor: ocorrenciasFiltradas.length === 0 ? "not-allowed" : "pointer",
+          display: "flex", alignItems: "center", gap: 8
+        }
+      }, "📥 Exportar XLSX")
+    )
+  ));
+}
+
 
 
 // ─── MURAL DE RECADOS ─────────────────────────────────────────────────────────
@@ -15386,11 +15502,11 @@ function App() {
         // Usa a base já recortada por gerência/diretoria (ocorrenciasRelatorio/
         // funcionariosRelatorio, mesmo recorte que o Dashboard usa) em vez de
         // ocorrenciasFiltradas/funcionariosExibidos — mantém o escopo
-        // hierárquico do usuário (gerente só vê sua equipe, etc.) também no
-        // modo Tabela, que agora concentra a busca/exportação geral de
-        // ocorrências (antes era a aba "Pendências" do Painel de Acessos,
-        // que via o sistema inteiro sem esse recorte — decisão deliberada
-        // de alinhar com o resto do app).
+        // hierárquico do usuário (gerente só vê sua equipe, etc.) na tela
+        // de Relatórios, que agora é uma lista única com todas as
+        // pendências do time, ações inline (verificar/rejeitar/excluir) e
+        // um modal de exportação com filtros próprios (ver
+        // ModalExportarRelatorio).
         ocorrencias: ocorrenciasRelatorio,
         setOcorrencias: setOcorrencias,
         funcionarios: funcionariosRelatorio,
