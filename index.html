@@ -5977,8 +5977,10 @@ function SeletorEscopoRelatorio({
       left: 0,
       zIndex: 20,
       minWidth: 280,
-      maxHeight: 320,
+      maxWidth: "min(90vw, 780px)",
+      maxHeight: 360,
       overflowY: "auto",
+      overflowX: "auto",
       background: "var(--cor-branco, #fff)",
       border: "1px solid var(--cinza-200, #e5e7eb)",
       borderRadius: 12,
@@ -6008,11 +6010,13 @@ function SeletorEscopoRelatorio({
     }
   }, "Limpar")), gruposPorDiretoria.length === 0 ? /*#__PURE__*/React.createElement("div", {
     style: { fontSize: 13, color: "var(--cinza-500)", padding: 8 }
-  }, "Nenhuma gerência disponível.") : gruposPorDiretoria.map(grupo => {
+  }, "Nenhuma gerência disponível.") : /*#__PURE__*/React.createElement("div", {
+    style: { display: "flex", flexDirection: "row", gap: 16, alignItems: "flex-start" }
+  }, gruposPorDiretoria.map(grupo => {
     const chaveGrupo = grupo.diretoria ? grupo.diretoria.id : "__sem_diretoria__";
     return /*#__PURE__*/React.createElement("div", {
       key: chaveGrupo,
-      style: { marginBottom: 8 }
+      style: { minWidth: 160, flex: "0 0 auto" }
     }, /*#__PURE__*/React.createElement("div", {
       style: {
         fontSize: 11,
@@ -6038,7 +6042,7 @@ function SeletorEscopoRelatorio({
       checked: selecionadas.has(g.id),
       onChange: () => toggleGerencia(g.id)
     }), /*#__PURE__*/React.createElement("span", null, g.nome))));
-  })));
+  }))));
 }
 function Dashboard({
   ocorrencias,
