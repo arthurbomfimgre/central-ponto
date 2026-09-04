@@ -7757,14 +7757,27 @@ function ModalImportarPontoDP({ funcionarios, ocorrencias, setOcorrencias, addNo
     }));
 
     setOcorrencias(prev => [...prev, ...novas]);
+    // Uma notificação por colaborador (não por pendência): quem recebeu
+    // várias pendências na mesma importação via uma única notificação
+    // agrupada, em vez de uma para cada data — evita "spam" no sino do
+    // Portal quando o DP manda várias pendências da mesma pessoa de uma vez.
+    const porFuncionario = new Map();
     novas.forEach(oc => {
+      if (!porFuncionario.has(oc.funcionario_id)) porFuncionario.set(oc.funcionario_id, []);
+      porFuncionario.get(oc.funcionario_id).push(oc);
+    });
+    porFuncionario.forEach((ocsDoFunc, funcionarioId) => {
+      const qtd = ocsDoFunc.length;
+      const body = qtd === 1
+        ? `Você recebeu uma nova pendência do dia (${fmtDate(ocsDoFunc[0].data)}). Especifique o motivo no card.`
+        : `Você recebeu ${qtd} novas pendências do dia. Especifique o motivo de cada uma no card.`;
       addNotif({
         id: Date.now() + Math.random(),
         icon: "📋",
-        title: "Nova pendência",
-        body: `Você recebeu uma nova pendência do dia (${fmtDate(oc.data)}). Especifique o motivo no card.`,
+        title: qtd === 1 ? "Nova pendência" : "Novas pendências",
+        body,
         ts: agora,
-        paraFunc: oc.funcionario_id
+        paraFunc: funcionarioId
       });
     });
     setResultado({ criadas: novas.length });
