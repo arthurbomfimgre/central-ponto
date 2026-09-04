@@ -6057,6 +6057,7 @@ function Dashboard({
   seletorEscopo
 }) {
   const [modalCriar, setModalCriar] = useState(false);
+  const [modalImportarPonto, setModalImportarPonto] = useState(false);
   // ocorrencias já chega filtrada pelo mês selecionado globalmente (via App)
   const ocorrenciasMes = ocorrencias;
   const ativos = funcionarios.filter(f => f.ativo).length;
@@ -6168,7 +6169,28 @@ function Dashboard({
       cursor: "pointer",
       boxShadow: "0 4px 12px var(--sombra-indigo-media)"
     }
-  }, "➕ Pendência do dia"))), seletorEscopo || null, /*#__PURE__*/React.createElement("div", {
+  }, "➕ Pendência do dia"), /*#__PURE__*/React.createElement("button", {
+    onClick: () => setModalImportarPonto(true),
+    style: {
+      display: "flex",
+      alignItems: "center",
+      gap: 8,
+      background: "var(--cor-branco)",
+      color: "var(--indigo-500)",
+      border: "1px solid var(--indigo-500)",
+      borderRadius: 12,
+      padding: "11px 20px",
+      fontSize: 13,
+      fontWeight: 700,
+      cursor: "pointer"
+    }
+  }, "📥 Importar ponto (DP)"))), modalImportarPonto && /*#__PURE__*/React.createElement(ModalImportarPontoDP, {
+    funcionarios: funcionarios,
+    ocorrencias: ocorrencias,
+    setOcorrencias: setOcorrencias,
+    addNotif: addNotif,
+    onClose: () => setModalImportarPonto(false)
+  }), seletorEscopo || null, /*#__PURE__*/React.createElement("div", {
     style: {
       display: "grid",
       gridTemplateColumns: "repeat(auto-fit,minmax(155px,1fr))",
@@ -7564,6 +7586,280 @@ function lerArquivoExcel(file) {
     reader.onerror = () => reject(new Error("Não foi possível ler o arquivo."));
     reader.readAsBinaryString(file);
   });
+}
+
+// ─── IMPORTADOR DE PENDÊNCIAS DE PONTO (planilha do DP) ───────────────────────
+// Lê a planilha "RELATÓRIO DE PENDÊNCIAS DE PONTO" que o DP envia
+// periodicamente (formato observado: cabeçalho de relatório nas 3 primeiras
+// linhas, depois colunas Nome/Empregador/Centro de Custo/Supervisor/Período
+// de Apuração/Data/Tipo de Pendência/Ajuste Realizado). Cada linha vira uma
+// pendência "Pendência do dia" (mesmo tipo genérico criado manualmente pelo
+// admin — TIPO_PENDENTE_ESPECIFICACAO), do jeito que criarPendencia() já faz,
+// para que o colaborador especifique o motivo real no Portal. O matching de
+// funcionário é por nome (normalizado: maiúsculo, sem acento), comparando
+// contra nome_completo/nomeCompleto/nome de cada funcionário exibido — a
+// planilha do DP não traz matrícula.
+const COLUNAS_IMPORT_PONTO = {
+  nome: "Nome",
+  data: "Data",
+  tipo: "Tipo de Pendência",
+  periodo: "Período de Apuração"
+};
+
+function normalizarNomeParaMatch(v) {
+  return String(v ?? "")
+    .trim()
+    .toUpperCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ");
+}
+
+// Acha o cabeçalho real dentro da planilha do DP: as primeiras linhas são
+// um cabeçalho de relatório (título, legenda de cores) sem colunas fixas,
+// então usamos `header: 1` (linhas cruas) e procuramos a linha que contém
+// "Nome" na primeira célula.
+function lerPlanilhaPontoDP(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = e => {
+      try {
+        const wb = XLSX.read(e.target.result, { type: "binary" });
+        const aba = wb.SheetNames[0];
+        const linhasCruas = XLSX.utils.sheet_to_json(wb.Sheets[aba], { header: 1, defval: "" });
+        const idxCabecalho = linhasCruas.findIndex(l => String(l[0] ?? "").trim() === "Nome");
+        if (idxCabecalho === -1) {
+          reject(new Error("Não encontrei a linha de cabeçalho (\"Nome\", \"Data\", \"Tipo de Pendência\"...) nesta planilha. Confirme se é o relatório de pendências de ponto do DP."));
+          return;
+        }
+        const cabecalho = linhasCruas[idxCabecalho].map(c => String(c ?? "").trim());
+        const linhas = linhasCruas.slice(idxCabecalho + 1)
+          .filter(l => l.some(c => String(c ?? "").trim() !== ""))
+          .map(l => {
+            const obj = {};
+            cabecalho.forEach((chave, i) => { obj[chave] = l[i]; });
+            return obj;
+          });
+        resolve(linhas);
+      } catch (err) {
+        reject(err);
+      }
+    };
+    reader.onerror = () => reject(new Error("Não foi possível ler o arquivo."));
+    reader.readAsBinaryString(file);
+  });
+}
+
+// Converte "DD/MM" (coluna Data) + "DD/MM/AAAA a DD/MM/AAAA" (coluna Período
+// de Apuração, usada só para saber o ano) em "AAAA-MM-DD", formato usado
+// internamente por todo o app (ver fmtDate). Se não conseguir extrair o ano
+// do período, usa o ano corrente como fallback.
+function dataPontoParaISO(dataBruta, periodoBruto) {
+  const dataStr = String(dataBruta ?? "").trim();
+  const m = dataStr.match(/^(\d{1,2})\/(\d{1,2})$/);
+  if (!m) return null;
+  const [, dia, mes] = m;
+  const periodoStr = String(periodoBruto ?? "");
+  const anoMatch = periodoStr.match(/\/(\d{4})/);
+  const ano = anoMatch ? anoMatch[1] : String(new Date().getFullYear());
+  return `${ano}-${mes.padStart(2, "0")}-${dia.padStart(2, "0")}`;
+}
+
+// Monta o "plano" de importação: para cada linha da planilha, tenta casar
+// o funcionário pelo nome e verifica se já existe pendência igual (mesmo
+// funcionário + mesma data + mesmo tipo original do DP guardado em
+// observacaoAdmin) para não duplicar em reimportações do mesmo período.
+function montarPlanoImportacaoPonto(linhas, funcionarios, ocorrenciasExistentes) {
+  const porNome = new Map();
+  funcionarios.forEach(f => {
+    const chave = normalizarNomeParaMatch(f.nome_completo || f.nomeCompleto || f.nome);
+    if (chave && !porNome.has(chave)) porNome.set(chave, f);
+  });
+
+  const jaImportadas = new Set(
+    ocorrenciasExistentes
+      .filter(o => o.tipo === TIPO_PENDENTE_ESPECIFICACAO && o.origemImportacaoPonto)
+      .map(o => `${o.funcionario_id}|${o.data}|${o.origemImportacaoPonto}`)
+  );
+
+  const prontas = [];
+  const semCorrespondencia = [];
+  const duplicadas = [];
+  const semData = [];
+
+  linhas.forEach(linha => {
+    const nomeBruto = String(linha[COLUNAS_IMPORT_PONTO.nome] ?? "").trim();
+    const tipoPendenciaDP = String(linha[COLUNAS_IMPORT_PONTO.tipo] ?? "").trim();
+    if (!nomeBruto) return;
+
+    const dataISO = dataPontoParaISO(linha[COLUNAS_IMPORT_PONTO.data], linha[COLUNAS_IMPORT_PONTO.periodo]);
+    if (!dataISO) { semData.push({ nome: nomeBruto, dataBruta: linha[COLUNAS_IMPORT_PONTO.data] }); return; }
+
+    const func = porNome.get(normalizarNomeParaMatch(nomeBruto));
+    if (!func) { semCorrespondencia.push({ nome: nomeBruto, data: dataISO, tipoPendenciaDP }); return; }
+
+    const marcador = `${func.id}|${dataISO}|${tipoPendenciaDP}`;
+    if (jaImportadas.has(marcador)) { duplicadas.push({ nome: nomeBruto, data: dataISO, tipoPendenciaDP }); return; }
+
+    prontas.push({ func, dataISO, tipoPendenciaDP, marcador });
+  });
+
+  return { prontas, semCorrespondencia, duplicadas, semData };
+}
+
+function ModalImportarPontoDP({ funcionarios, ocorrencias, setOcorrencias, addNotif, onClose }) {
+  const [arquivo, setArquivo] = useState(null);
+  const [processando, setProcessando] = useState(false);
+  const [erro, setErro] = useState("");
+  const [plano, setPlano] = useState(null); // resultado de montarPlanoImportacaoPonto
+  const [resultado, setResultado] = useState(null); // { criadas }
+
+  async function selecionarArquivo(file) {
+    setArquivo(file);
+    setErro("");
+    setPlano(null);
+    setResultado(null);
+    if (!file) return;
+    setProcessando(true);
+    try {
+      const linhas = await lerPlanilhaPontoDP(file);
+      const p = montarPlanoImportacaoPonto(linhas, funcionarios, ocorrencias);
+      setPlano(p);
+    } catch (err) {
+      setErro(extrairMensagemErro(err));
+    } finally {
+      setProcessando(false);
+    }
+  }
+
+  function confirmarImportacao() {
+    if (!plano || plano.prontas.length === 0) return;
+    setProcessando(true);
+    const agora = agoraISO();
+    const novas = plano.prontas.map((item, i) => ({
+      id: Date.now() + i,
+      funcionario_id: item.func.id,
+      origemFuncionario: item.func.origemComercial ? "comercial" : "administrativo",
+      tipo: TIPO_PENDENTE_ESPECIFICACAO,
+      data: item.dataISO,
+      status: "Pendente",
+      resposta: "",
+      easymobEnviado: false,
+      observacaoAdmin: `Importado da planilha de ponto do DP: ${item.tipoPendenciaDP}`,
+      // Guarda o tipo original do DP + marcador de origem: usado só para
+      // não duplicar a mesma pendência se a mesma planilha (ou uma
+      // sobreposta) for reimportada depois.
+      origemImportacaoPonto: item.tipoPendenciaDP,
+      criadoEm: agora,
+      atualizadoEm: agora,
+      novo: false,
+      novoParaFunc: true
+    }));
+
+    setOcorrencias(prev => [...prev, ...novas]);
+    novas.forEach(oc => {
+      addNotif({
+        id: Date.now() + Math.random(),
+        icon: "📋",
+        title: "Nova pendência",
+        body: `Você recebeu uma nova pendência do dia (${fmtDate(oc.data)}). Especifique o motivo no card.`,
+        ts: agora,
+        paraFunc: oc.funcionario_id
+      });
+    });
+    setResultado({ criadas: novas.length });
+    setPlano(null);
+    setArquivo(null);
+    setProcessando(false);
+  }
+
+  return /*#__PURE__*/React.createElement(Modal, {
+    title: "📥 Importar pendências de ponto (DP)",
+    onClose: onClose,
+    maxWidth: 560
+  },
+    /*#__PURE__*/React.createElement("p", {
+      style: { fontSize: 13, color: "var(--cinza-500)", marginBottom: 18 }
+    }, "Importe o relatório de pendências de ponto enviado pelo DP. Cada linha vira uma pendência do dia, que chega automaticamente no Portal de cada colaborador para ele especificar o motivo."),
+
+    !plano && !resultado && /*#__PURE__*/React.createElement("label", {
+      style: {
+        display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+        gap: 8, border: "2px dashed var(--cinza-200)", borderRadius: 12, padding: "28px 16px",
+        cursor: "pointer", textAlign: "center"
+      }
+    },
+      /*#__PURE__*/React.createElement("span", { style: { fontSize: 26 } }, "📄"),
+      /*#__PURE__*/React.createElement("span", { style: { fontSize: 13, fontWeight: 600, color: "var(--cinza-700)" } },
+        arquivo ? arquivo.name : "Clique para selecionar a planilha (.xlsx) do DP"),
+      /*#__PURE__*/React.createElement("span", { style: { fontSize: 11, color: "var(--cinza-400)" } },
+        "Relatório de Pendências de Ponto — colunas Nome, Data, Tipo de Pendência"),
+      /*#__PURE__*/React.createElement("input", {
+        type: "file",
+        accept: ".xlsx,.xls",
+        style: { display: "none" },
+        onChange: e => selecionarArquivo(e.target.files?.[0] || null)
+      })
+    ),
+
+    processando && /*#__PURE__*/React.createElement("p", {
+      style: { fontSize: 12, color: "var(--cinza-400)", marginTop: 14, textAlign: "center" }
+    }, "Processando…"),
+
+    erro && /*#__PURE__*/React.createElement("div", {
+      style: {
+        marginTop: 16, background: "var(--vermelho-100)", color: "var(--vermelho-800)",
+        borderRadius: 10, padding: "10px 14px", fontSize: 13, fontWeight: 600
+      }
+    }, "⚠️ ", erro),
+
+    plano && !processando && /*#__PURE__*/React.createElement("div", { style: { marginTop: 18 } },
+      /*#__PURE__*/React.createElement("p", { style: { fontSize: 13, color: "var(--cinza-700)", marginBottom: 10 } },
+        /*#__PURE__*/React.createElement("strong", null, plano.prontas.length), " pendência(s) pronta(s) para criar."),
+
+      plano.semCorrespondencia.length > 0 && /*#__PURE__*/React.createElement("div", {
+        style: { background: "var(--amber-100)", color: "var(--amber-700)", borderRadius: 10, padding: "10px 14px", fontSize: 12, marginBottom: 8 }
+      }, "🟡 ", plano.semCorrespondencia.length, " linha(s) com nome não encontrado no cadastro (não serão importadas): ",
+        plano.semCorrespondencia.slice(0, 5).map(l => l.nome).join(", "),
+        plano.semCorrespondencia.length > 5 ? "…" : ""
+      ),
+
+      plano.duplicadas.length > 0 && /*#__PURE__*/React.createElement("div", {
+        style: { background: "var(--cinza-50)", color: "var(--cinza-600)", borderRadius: 10, padding: "10px 14px", fontSize: 12, marginBottom: 8 }
+      }, "⏭️ ", plano.duplicadas.length, " linha(s) já haviam sido importadas antes e foram ignoradas (sem duplicar)."),
+
+      plano.semData.length > 0 && /*#__PURE__*/React.createElement("div", {
+        style: { background: "var(--vermelho-100)", color: "var(--vermelho-800)", borderRadius: 10, padding: "10px 14px", fontSize: 12, marginBottom: 8 }
+      }, "⚠️ ", plano.semData.length, " linha(s) com data em formato inesperado, ignoradas."),
+
+      /*#__PURE__*/React.createElement("div", { style: { display: "flex", gap: 10, marginTop: 12 } },
+        /*#__PURE__*/React.createElement("button", {
+          onClick: confirmarImportacao,
+          disabled: plano.prontas.length === 0,
+          style: {
+            background: "var(--marca-gradiente)", color: "var(--cor-branco)", border: "none",
+            borderRadius: 10, padding: "10px 20px", fontSize: 13, fontWeight: 700,
+            cursor: plano.prontas.length === 0 ? "not-allowed" : "pointer",
+            opacity: plano.prontas.length === 0 ? 0.5 : 1
+          }
+        }, "Confirmar e enviar aos colaboradores"),
+        /*#__PURE__*/React.createElement("button", {
+          onClick: () => { setPlano(null); setArquivo(null); },
+          style: {
+            background: "var(--cinza-100)", color: "var(--cinza-600)", border: "none",
+            borderRadius: 10, padding: "10px 20px", fontSize: 13, fontWeight: 600, cursor: "pointer"
+          }
+        }, "Cancelar")
+      )
+    ),
+
+    resultado && /*#__PURE__*/React.createElement("div", {
+      style: {
+        marginTop: 16, background: "var(--verde-100)", color: "var(--verde-800)",
+        borderRadius: 10, padding: "12px 16px", fontSize: 13, fontWeight: 600
+      }
+    }, "✓ ", resultado.criadas, " pendência(s) criada(s) e enviada(s) aos respectivos colaboradores no Portal.")
+  );
 }
 
 function ModalImportarExcel({ funcionarios, setFuncionarios, onClose }) {
