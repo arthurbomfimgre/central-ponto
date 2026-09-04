@@ -10518,6 +10518,11 @@ function PainelOcorrencias({
   const [filtroTipo, setFiltroTipo] = useState("Todos");
   const [buscaTexto, setBuscaTexto] = useState("");
   const [modalExportar, setModalExportar] = useState(false);
+  const [modalExcluirTodas, setModalExcluirTodas] = useState(false);
+  // `ocorrencias` já chega recortada pelo mês selecionado globalmente (ver
+  // comentário em App: ocorrenciasRelatorio) — é a base usada tanto para
+  // exibir a lista quanto para "Excluir todas do mês".
+  const ocorrenciasDoMes = ocorrencias;
   // Sem sessaoPronta/contaTesteAtivaAgora, a carga inicial e o polling de
   // useSharedState nunca disparavam — o print do EasyMob ficava gravado no
   // Supabase mas nunca era buscado para exibição aqui.
@@ -10629,6 +10634,15 @@ function PainelOcorrencias({
     setModal(null);
     setObs("");
   }
+  // Exclui todas as pendências do mês atualmente selecionado (mesmo recorte
+  // que a tela já exibe, via ocorrenciasDoMes/prop `ocorrencias`) — não mexe
+  // em pendências de outros meses. Ação destrutiva, por isso passa por
+  // modalExcluirTodas (confirmação) antes de rodar.
+  function excluirTodasDoMes() {
+    const idsDoMes = new Set(ocorrenciasDoMes.map(o => o.id));
+    setOcorrencias(prev => prev.filter(o => !idsDoMes.has(o.id)));
+    setModalExcluirTodas(false);
+  }
 
   // ── Cabeçalho: título, seletor de mês, botão de exportar ─────────────────
   const cabecalho = /*#__PURE__*/React.createElement("div", {
@@ -10649,7 +10663,16 @@ function PainelOcorrencias({
       border: "none", borderRadius: 12, padding: "11px 20px", fontSize: 13, fontWeight: 700, cursor: "pointer",
       boxShadow: "0 4px 12px var(--sombra-verde)"
     }
-  }, "📥 Exportar")));
+  }, "📥 Exportar"), isAdmin && /*#__PURE__*/React.createElement("button", {
+    onClick: () => setModalExcluirTodas(true),
+    disabled: ocorrenciasDoMes.length === 0,
+    style: {
+      display: "flex", alignItems: "center", gap: 8, background: "var(--cor-branco)", color: "var(--vermelho-600)",
+      border: "1px solid var(--vermelho-600)", borderRadius: 12, padding: "11px 20px", fontSize: 13, fontWeight: 700,
+      cursor: ocorrenciasDoMes.length === 0 ? "not-allowed" : "pointer",
+      opacity: ocorrenciasDoMes.length === 0 ? 0.5 : 1
+    }
+  }, "🗑️ Excluir todas do mês")));
 
   // ── Filtros: status (pills com contador) + tipo + busca ──────────────────
   const filtros = /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
@@ -10815,7 +10838,36 @@ function PainelOcorrencias({
       funcionarios: funcionarios,
       gerencias: gerenciasComercial || [],
       onClose: () => setModalExportar(false)
-    })
+    }),
+    modalExcluirTodas && /*#__PURE__*/React.createElement(Modal, {
+      title: "🗑️ Excluir todas as pendências do mês",
+      onClose: () => setModalExcluirTodas(false),
+      maxWidth: 440
+    },
+      /*#__PURE__*/React.createElement("p", {
+        style: { fontSize: 13, color: "var(--cinza-700)", marginBottom: 20 }
+      },
+        "Isso vai excluir definitivamente ",
+        /*#__PURE__*/React.createElement("strong", null, ocorrenciasDoMes.length),
+        " pendência(s) do mês selecionado, de todos os status (pendente, corrigida, verificada e rejeitada). Essa ação não pode ser desfeita."
+      ),
+      /*#__PURE__*/React.createElement("div", { style: { display: "flex", gap: 10 } },
+        /*#__PURE__*/React.createElement("button", {
+          onClick: excluirTodasDoMes,
+          style: {
+            background: "var(--vermelho-600)", color: "var(--cor-branco)", border: "none",
+            borderRadius: 10, padding: "10px 20px", fontSize: 13, fontWeight: 700, cursor: "pointer"
+          }
+        }, "🗑 Excluir todas definitivamente"),
+        /*#__PURE__*/React.createElement("button", {
+          onClick: () => setModalExcluirTodas(false),
+          style: {
+            background: "var(--cinza-100)", color: "var(--cinza-600)", border: "none",
+            borderRadius: 10, padding: "10px 20px", fontSize: 13, fontWeight: 600, cursor: "pointer"
+          }
+        }, "Cancelar")
+      )
+    )
   );
 }
 
@@ -15989,7 +16041,7 @@ function App() {
     icon: "👥"
   }, {
     id: "relatorios",
-    label: "Relatórios",
+    label: "Situação",
     icon: "📈",
     badge: pendentesNovos
   },
