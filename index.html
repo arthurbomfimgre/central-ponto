@@ -10663,7 +10663,13 @@ function PainelOcorrencias({
       border: "none", borderRadius: 12, padding: "11px 20px", fontSize: 13, fontWeight: 700, cursor: "pointer",
       boxShadow: "0 4px 12px var(--sombra-verde)"
     }
-  }, "📥 Exportar"), isAdmin && /*#__PURE__*/React.createElement("button", {
+  }, "📥 Exportar"),
+  // `isAdmin` aqui vem de `usuario?.role === "admin"` (ver App), que é
+  // exclusivo do admin_geral — diferente de `isGestor`/`temAcessoGestao`
+  // (gerente/diretor/superintendente), que têm acesso de VISÃO à tela de
+  // Situação mas não devem ver este botão. Ação irreversível e em massa,
+  // por isso fica restrita só ao admin_geral, de propósito.
+  isAdmin && /*#__PURE__*/React.createElement("button", {
     onClick: () => setModalExcluirTodas(true),
     disabled: ocorrenciasDoMes.length === 0,
     style: {
