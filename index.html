@@ -4455,6 +4455,58 @@ function useValorAdiado(valor, ms = 220) {
   return adiado;
 }
 
+// ─── SKELETON DE CARREGAMENTO ────────────────────────────────────────────────
+// Antes disso, "carregando" virava só um texto solto ("Carregando…") — a tela
+// pulava inteira quando os dados chegavam. Um esqueleto com o formato
+// aproximado do conteúdo final deixa a espera menos abrupta.
+function Esqueleto({ linhas = 3, altura = 14, gap = 10, largura }) {
+  return /*#__PURE__*/React.createElement("div", {
+    style: { display: "flex", flexDirection: "column", gap }
+  },
+    /*#__PURE__*/React.createElement("style", null,
+      `@keyframes pulsarEsqueleto{0%,100%{opacity:.55}50%{opacity:1}}`
+    ),
+    Array.from({ length: linhas }).map((_, i) => /*#__PURE__*/React.createElement("div", {
+      key: i,
+      style: {
+        height: altura,
+        width: largura || (i === linhas - 1 ? "60%" : "100%"),
+        borderRadius: 8,
+        background: "var(--cinza-100)",
+        animation: "pulsarEsqueleto 1.3s ease-in-out infinite",
+        animationDelay: `${i * 0.08}s`
+      }
+    }))
+  );
+}
+
+// Variante em formato de linha de lista (avatar + duas barras), para telas
+// que carregam pessoas — árvore de hierarquia, listas de funcionários.
+function EsqueletoLinhas({ quantidade = 6 }) {
+  return /*#__PURE__*/React.createElement("div", {
+    style: { display: "flex", flexDirection: "column", gap: 4 }
+  },
+    /*#__PURE__*/React.createElement("style", null,
+      `@keyframes pulsarEsqueleto{0%,100%{opacity:.55}50%{opacity:1}}`
+    ),
+    Array.from({ length: quantidade }).map((_, i) => /*#__PURE__*/React.createElement("div", {
+      key: i,
+      style: {
+        display: "flex", alignItems: "center", gap: 10, padding: "8px 10px",
+        animation: "pulsarEsqueleto 1.3s ease-in-out infinite", animationDelay: `${i * 0.06}s`
+      }
+    },
+      /*#__PURE__*/React.createElement("div", {
+        style: { width: 28, height: 28, borderRadius: "50%", background: "var(--cinza-100)", flexShrink: 0 }
+      }),
+      /*#__PURE__*/React.createElement("div", { style: { flex: 1, display: "flex", flexDirection: "column", gap: 6 } },
+        /*#__PURE__*/React.createElement("div", { style: { height: 11, width: "45%", borderRadius: 6, background: "var(--cinza-100)" } }),
+        /*#__PURE__*/React.createElement("div", { style: { height: 9, width: "25%", borderRadius: 6, background: "var(--cinza-100)" } })
+      )
+    ))
+  );
+}
+
 function Badge({
   status
 }) {
@@ -13891,8 +13943,8 @@ function NoRaizAdministrativo({ busca, aberta, onToggle, estadoAberto, onToggleC
 
   if (carregando) {
     return /*#__PURE__*/React.createElement("div", {
-      style: { background: "var(--cor-branco)", borderRadius: 16, boxShadow: "0 1px 3px var(--sombra-leve)", padding: 20, fontSize: 13, color: "var(--cinza-400)" }
-    }, "Carregando estrutura administrativa…");
+      style: { background: "var(--cor-branco)", borderRadius: 16, boxShadow: "0 1px 3px var(--sombra-leve)", padding: 20 }
+    }, /*#__PURE__*/React.createElement(EsqueletoLinhas, { quantidade: 4 }));
   }
   if (erro) {
     return /*#__PURE__*/React.createElement("div", {
@@ -14955,7 +15007,9 @@ function ModalLogAcessos({ onClose }) {
       )
     ),
 
-    carregando && /*#__PURE__*/React.createElement("div", { style: { padding: 24, textAlign: "center", color: "var(--cinza-400)", fontSize: 13 } }, "Carregando…"),
+    carregando && /*#__PURE__*/React.createElement("div", { style: { padding: 20 } },
+      /*#__PURE__*/React.createElement(Esqueleto, { linhas: 4, altura: 32 })
+    ),
     erro && /*#__PURE__*/React.createElement("div", { style: { background: "var(--vermelho-100)", color: "var(--vermelho-600)", borderRadius: 12, padding: "10px 14px", fontSize: 13 } }, "Não foi possível carregar o log: ", erro),
 
     !carregando && !erro && itensFiltrados.length === 0 && /*#__PURE__*/React.createElement("div", {
@@ -15155,7 +15209,9 @@ function PainelPermissoes() {
   const grupos = [...new Set(PERMISSOES_CATALOGO.map(p => p.grupo))];
 
   if (carregando) {
-    return /*#__PURE__*/React.createElement("div", { style: { padding: 24, textAlign: "center", color: "var(--cinza-400)", fontSize: 13 } }, "Carregando permissões…");
+    return /*#__PURE__*/React.createElement("div", {
+      style: { padding: 24 }
+    }, /*#__PURE__*/React.createElement(Esqueleto, { linhas: 5, altura: 16 }));
   }
 
   return /*#__PURE__*/React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 18 } },
@@ -15614,8 +15670,10 @@ function ArvoreHierarquia({ pode = () => true, ocorrencias = [], funcionariosUni
 
   if (carregando) {
     return /*#__PURE__*/React.createElement("div", {
-      style: { padding: 40, textAlign: "center", color: "var(--cinza-400)", fontSize: 13 }
-    }, "Carregando estrutura comercial…");
+      style: { padding: "24px 28px", maxWidth: 980, margin: "0 auto" }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: { background: "var(--cor-branco)", borderRadius: 16, boxShadow: "0 1px 3px var(--sombra-leve)", padding: 20 }
+    }, /*#__PURE__*/React.createElement(EsqueletoLinhas, { quantidade: 8 })));
   }
   if (erro) {
     return /*#__PURE__*/React.createElement("div", {
