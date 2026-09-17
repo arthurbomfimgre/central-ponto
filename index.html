@@ -4428,6 +4428,21 @@ function tipoIcon(tipo) {
 }
 
 // ─── COMPONENTES BASE ─────────────────────────────────────────────────────────
+// ─── DEBOUNCE ────────────────────────────────────────────────────────────────
+// Campos de busca filtram listas de 600+ pessoas e re-renderizam árvores
+// inteiras. Sem isso, cada tecla digitada dispara o filtro completo — o que
+// trava visivelmente a digitação em celular. O input continua respondendo na
+// hora (valor imediato); só o FILTRO espera o usuário parar de digitar.
+function useValorAdiado(valor, ms = 220) {
+  const [adiado, setAdiado] = useState(valor);
+  useEffect(() => {
+    if (valor === adiado) return;
+    const t = setTimeout(() => setAdiado(valor), ms);
+    return () => clearTimeout(t);
+  }, [valor, ms]);
+  return adiado;
+}
+
 function Badge({
   status
 }) {
@@ -4843,12 +4858,44 @@ function KpiCard({
     }
   }, sub));
 }
+// Contador global de modais abertos: garante que o overflow do body só volta
+// ao normal quando o ÚLTIMO modal empilhado fechar (perfil abre modal dentro
+// de modal em vários fluxos do painel de acessos).
+const _pilhaModais = [];
 function Modal({
   title,
   onClose,
   children,
   maxWidth = 600
 }) {
+  const tituloId = useRef(`modal-titulo-${Math.random().toString(36).slice(2, 9)}`).current;
+  const caixaRef = useRef(null);
+
+  // Esc fecha o modal + trava o scroll do fundo enquanto ele está aberto.
+  useEffect(() => {
+    // Só o modal do topo da pilha responde ao Esc — sem isso, um modal
+    // aberto dentro de outro (perfil → confirmação) fecharia os dois de uma
+    // tecla só.
+    const aoTeclar = e => {
+      if (e.key !== "Escape") return;
+      if (_pilhaModais[_pilhaModais.length - 1] !== tituloId) return;
+      if (typeof onClose === "function") onClose();
+    };
+    document.addEventListener("keydown", aoTeclar);
+    _pilhaModais.push(tituloId);
+    const overflowAnterior = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    // Move o foco para dentro do modal ao abrir (sem isso o teclado continua
+    // navegando a página de trás).
+    if (caixaRef.current) caixaRef.current.focus();
+    return () => {
+      document.removeEventListener("keydown", aoTeclar);
+      const i = _pilhaModais.lastIndexOf(tituloId);
+      if (i >= 0) _pilhaModais.splice(i, 1);
+      if (_pilhaModais.length === 0) document.body.style.overflow = overflowAnterior || "";
+    };
+  }, [onClose, tituloId]);
+
   return /*#__PURE__*/React.createElement("div", {
     style: {
       position: "fixed",
@@ -4862,7 +4909,13 @@ function Modal({
     },
     onClick: onClose
   }, /*#__PURE__*/React.createElement("div", {
+    role: "dialog",
+    "aria-modal": "true",
+    "aria-labelledby": tituloId,
+    tabIndex: -1,
+    ref: caixaRef,
     style: {
+      outline: "none",
       background: "var(--cor-branco)",
       borderRadius: 20,
       width: "100%",
@@ -4885,6 +4938,7 @@ function Modal({
       zIndex: 1
     }
   }, /*#__PURE__*/React.createElement("span", {
+    id: tituloId,
     style: {
       fontWeight: 700,
       fontSize: 17,
@@ -4892,6 +4946,9 @@ function Modal({
     }
   }, title), /*#__PURE__*/React.createElement("button", {
     onClick: onClose,
+    type: "button",
+    "aria-label": "Fechar",
+    title: "Fechar (Esc)",
     style: {
       background: "var(--cinza-50)",
       border: "none",
@@ -4916,7 +4973,12 @@ function Toast({
   onDismiss
 }) {
   if (!toasts.length) return null;
+  // Só os 3 mais recentes aparecem — sem isso, uma sequência rápida de ações
+  // empilhava avisos até cobrir a tela inteira no celular.
+  const visiveis = toasts.slice(-3);
   return /*#__PURE__*/React.createElement("div", {
+    role: "status",
+    "aria-live": "polite",
     style: {
       position: "fixed",
       bottom: 24,
@@ -4924,9 +4986,10 @@ function Toast({
       zIndex: 2000,
       display: "flex",
       flexDirection: "column",
-      gap: 10
+      gap: 10,
+      maxWidth: "calc(100vw - 48px)"
     }
-  }, /*#__PURE__*/React.createElement("style", null, `@keyframes slideIn{from{transform:translateX(110%);opacity:0}to{transform:translateX(0);opacity:1}}`), toasts.map(t => /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("style", null, `@keyframes slideIn{from{transform:translateX(110%);opacity:0}to{transform:translateX(0);opacity:1}}`), visiveis.map(t => /*#__PURE__*/React.createElement("div", {
     key: t.id,
     style: {
       background: "var(--cinza-900)",
@@ -4964,6 +5027,9 @@ function Toast({
     }
   }, t.body)), /*#__PURE__*/React.createElement("button", {
     onClick: () => onDismiss(t.id),
+    type: "button",
+    "aria-label": "Dispensar aviso",
+    title: "Dispensar",
     style: {
       background: "none",
       border: "none",
@@ -6684,6 +6750,8 @@ function ListaFuncionarios({
   diretoriasComercial = []
 }) {
   const [busca, setBusca] = useState("");
+  // Só o filtro espera a digitação parar — o campo em si continua imediato.
+  const buscaAdiada = useValorAdiado(busca);
   const [cargoFiltro, setCargoFiltro] = useState("Todos");
   // Filtro de vínculo: Administrativo = tabela `funcionarios_administrativo`,
   // Comercial = tabela `funcionarios_comercial` (f.origemComercial true).
@@ -6711,7 +6779,7 @@ function ListaFuncionarios({
   // refletia mais a seleção atual).
   useEffect(() => {
     setEstadoAberto({});
-  }, [busca, cargoFiltro, vinculoFiltro]);
+  }, [buscaAdiada, cargoFiltro, vinculoFiltro]);
   // Diretor e superintendente têm acesso de visão à hierarquia, mas não
   // podem criar, editar ou excluir funcionários — só admin_geral e gerente
   // (dentro da própria equipe) podem.
@@ -6760,14 +6828,21 @@ function ListaFuncionarios({
     // parecendo "filtro não funciona"). String(...) normaliza antes.
     const nomeBusca = String(f.nome ?? "").toLowerCase();
     const matriculaBusca = String(f.matricula ?? "").toLowerCase();
-    const buscaNorm = busca.toLowerCase();
+    const buscaNorm = buscaAdiada.toLowerCase();
     const ok1 = nomeBusca.includes(buscaNorm) || matriculaBusca.includes(buscaNorm);
     const ok2 = cargoFiltro === "Todos" || f.cargo === cargoFiltro;
     const ok3 = vinculoFiltro === "Todos" || (vinculoFiltro === "Comercial") === !!f.origemComercial;
     return ok1 && ok2 && ok3;
   }).sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR", {
     sensitivity: "base"
-  })), [busca, cargoFiltro, vinculoFiltro, funcionarios]);
+  })), [buscaAdiada, cargoFiltro, vinculoFiltro, funcionarios]);
+  // Paginação incremental: com ~620 funcionários, renderizar a tabela inteira
+  // de uma vez trava a tela no celular a cada re-render. Mostra 50 e vai
+  // ampliando sob demanda; qualquer mudança de filtro volta ao início.
+  const POR_PAGINA = 50;
+  const [visiveis, setVisiveis] = useState(POR_PAGINA);
+  useEffect(() => { setVisiveis(POR_PAGINA); }, [buscaAdiada, cargoFiltro, vinculoFiltro]);
+  const listaVisivel = useMemo(() => lista.slice(0, visiveis), [lista, visiveis]);
   // Agrupa `lista` (já filtrada por busca/setor/situação) em árvore
   // Diretoria → Gerência para a visão expansível de superintendente/diretor.
   // Superintendente vê todas as diretorias da própria superintendência;
@@ -7074,12 +7149,12 @@ function ListaFuncionarios({
       textTransform: "uppercase",
       whiteSpace: "nowrap"
     }
-  }, h)))), /*#__PURE__*/React.createElement("tbody", null, lista.map((f, i) => {
+  }, h)))), /*#__PURE__*/React.createElement("tbody", null, listaVisivel.map((f, i) => {
     const al = getAlert(contagens[f.id].esquecimentos);
     return /*#__PURE__*/React.createElement("tr", {
       key: f.id,
       style: {
-        borderBottom: i < lista.length - 1 ? "1px solid var(--cinza-50)" : "none"
+        borderBottom: i < listaVisivel.length - 1 ? "1px solid var(--cinza-50)" : "none"
       },
       onMouseEnter: e => e.currentTarget.style.background = "var(--cinza-50)",
       onMouseLeave: e => e.currentTarget.style.background = "transparent"
@@ -7210,7 +7285,43 @@ function ListaFuncionarios({
         cursor: "pointer"
       }
     }, "Excluir"))));
-  }))), !usaVisaoArvore && lista.length === 0 && /*#__PURE__*/React.createElement("div", {
+  }))), !usaVisaoArvore && lista.length > 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: "14px 16px",
+      borderTop: "1px solid var(--cinza-100)",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: 12,
+      flexWrap: "wrap"
+    }
+  },
+    /*#__PURE__*/React.createElement("span", {
+      style: { fontSize: 12, color: "var(--cinza-400)" }
+    }, `Mostrando ${listaVisivel.length} de ${lista.length} funcionário${lista.length === 1 ? "" : "s"}`),
+    listaVisivel.length < lista.length && /*#__PURE__*/React.createElement("div", {
+      style: { display: "flex", gap: 8, flexWrap: "wrap" }
+    },
+      /*#__PURE__*/React.createElement("button", {
+        type: "button",
+        onClick: () => setVisiveis(v => v + POR_PAGINA),
+        style: {
+          padding: "8px 18px", borderRadius: 10, border: "1px solid var(--cinza-200)",
+          background: "var(--cor-branco)", fontSize: 12.5, fontWeight: 600,
+          color: "var(--cinza-700)", cursor: "pointer"
+        }
+      }, `Carregar mais ${Math.min(POR_PAGINA, lista.length - listaVisivel.length)}`),
+      /*#__PURE__*/React.createElement("button", {
+        type: "button",
+        onClick: () => setVisiveis(lista.length),
+        style: {
+          padding: "8px 18px", borderRadius: 10, border: "none",
+          background: "var(--cinza-50)", fontSize: 12.5, fontWeight: 600,
+          color: "var(--cinza-500)", cursor: "pointer"
+        }
+      }, "Mostrar todos")
+    )
+  ), !usaVisaoArvore && lista.length === 0 && /*#__PURE__*/React.createElement("div", {
     style: {
       padding: 40,
       textAlign: "center",
@@ -9483,13 +9594,17 @@ function ModalImportarHierarquia({ onClose, onConcluido }) {
           /*#__PURE__*/React.createElement("ul", { style: { listStyle: "none", fontSize: 12.5, color: "var(--cinza-600)", paddingLeft: 0, display: "flex", flexDirection: "column", gap: 4 } },
             plano.diretoriasNovas.map((d, i) => {
               const rejeitada = diretoriasRejeitadas.has(d.chave);
-              return /*#__PURE__*/React.createElement("li", { key: i, style: { display: "flex", alignItems: "center", gap: 8, opacity: rejeitada ? 0.5 : 1 } },
-                /*#__PURE__*/React.createElement("input", {
-                  type: "checkbox", checked: !rejeitada,
-                  onChange: () => alternarDiretoria(d.chave)
-                }),
-                /*#__PURE__*/React.createElement("span", { style: rejeitada ? { textDecoration: "line-through" } : null },
-                  d.nome, d.responsavel_nome ? ` — ${d.responsavel_nome}` : "")
+              // <label> envolvendo o campo: sem isso o checkbox não tinha
+              // rótulo nenhum associado (texto era só um <span> irmão), e o
+              // clique no texto também não marcava a caixa.
+              return /*#__PURE__*/React.createElement("li", { key: i, style: { opacity: rejeitada ? 0.5 : 1 } },
+                /*#__PURE__*/React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer" } },
+                  /*#__PURE__*/React.createElement("input", {
+                    type: "checkbox", checked: !rejeitada,
+                    onChange: () => alternarDiretoria(d.chave)
+                  }),
+                  /*#__PURE__*/React.createElement("span", { style: rejeitada ? { textDecoration: "line-through" } : null },
+                    d.nome, d.responsavel_nome ? ` — ${d.responsavel_nome}` : ""))
               );
             }))
         ),
@@ -9503,14 +9618,15 @@ function ModalImportarHierarquia({ onClose, onConcluido }) {
               // criada de qualquer forma — mostra desabilitada, não editável.
               const dirRejeitada = plano.diretoriasNovas.some(d => diretoriasRejeitadas.has(d.chave) && d.nome.toUpperCase() === g.diretoriaNomeRef.toUpperCase());
               const rejeitada = dirRejeitada || gerenciasRejeitadas.has(g.chave);
-              return /*#__PURE__*/React.createElement("li", { key: i, style: { display: "flex", alignItems: "center", gap: 8, opacity: rejeitada ? 0.5 : 1 } },
-                /*#__PURE__*/React.createElement("input", {
-                  type: "checkbox", checked: !rejeitada, disabled: dirRejeitada,
-                  onChange: () => alternarGerencia(g.chave)
-                }),
-                /*#__PURE__*/React.createElement("span", { style: rejeitada ? { textDecoration: "line-through" } : null },
-                  g.nome, " (", g.diretoriaNomeRef, ")", g.responsavel_nome ? ` — ${g.responsavel_nome}` : "",
-                  dirRejeitada ? " — diretoria não será criada" : "")
+              return /*#__PURE__*/React.createElement("li", { key: i, style: { opacity: rejeitada ? 0.5 : 1 } },
+                /*#__PURE__*/React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: dirRejeitada ? "default" : "pointer" } },
+                  /*#__PURE__*/React.createElement("input", {
+                    type: "checkbox", checked: !rejeitada, disabled: dirRejeitada,
+                    onChange: () => alternarGerencia(g.chave)
+                  }),
+                  /*#__PURE__*/React.createElement("span", { style: rejeitada ? { textDecoration: "line-through" } : null },
+                    g.nome, " (", g.diretoriaNomeRef, ")", g.responsavel_nome ? ` — ${g.responsavel_nome}` : "",
+                    dirRejeitada ? " — diretoria não será criada" : ""))
               );
             }))
         ),
@@ -9956,7 +10072,10 @@ function PerfilFuncionario({
       background: "var(--cor-branco)",
       border: "1px solid var(--cinza-100)",
       borderRadius: 16,
-      overflow: "hidden",
+      // "auto" em vez de "hidden": em telas estreitas a tabela de 7 colunas
+      // era cortada sem possibilidade de rolar (mesmo padrão já usado em
+      // ListaFuncionarios e PainelOcorrencias).
+      overflow: "auto",
       boxShadow: "0 1px 3px var(--sombra-leve)"
     }
   }, /*#__PURE__*/React.createElement("div", {
@@ -9967,7 +10086,9 @@ function PerfilFuncionario({
       alignItems: "center",
       justifyContent: "space-between",
       flexWrap: "wrap",
-      gap: 10
+      gap: 10,
+      minWidth: 700,
+      boxSizing: "border-box"
     }
   }, /*#__PURE__*/React.createElement("h3", {
     style: {
@@ -10005,6 +10126,7 @@ function PerfilFuncionario({
   }, "Nenhuma ocorrência nesse filtro.") : /*#__PURE__*/React.createElement("table", {
     style: {
       width: "100%",
+      minWidth: 700,
       borderCollapse: "collapse"
     }
   }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", {
@@ -10517,6 +10639,7 @@ function PainelOcorrencias({
   const [filtroStatus, setFiltroStatus] = useState("Todos");
   const [filtroTipo, setFiltroTipo] = useState("Todos");
   const [buscaTexto, setBuscaTexto] = useState("");
+  const buscaTextoAdiada = useValorAdiado(buscaTexto);
   const [modalExportar, setModalExportar] = useState(false);
   const [modalExcluirTodas, setModalExcluirTodas] = useState(false);
   // `ocorrencias` já chega recortada pelo mês selecionado globalmente (ver
@@ -10536,7 +10659,7 @@ function PainelOcorrencias({
   // Única lista agora — antes havia dois modos (Fila/Tabela) com bases
   // ligeiramente diferentes; foram unificados numa tabela só, com os
   // botões de ação (verificar/rejeitar/excluir) direto na linha.
-  const buscaNorm = normalizarBusca(buscaTexto.trim());
+  const buscaNorm = normalizarBusca(buscaTextoAdiada.trim());
   const ocorrenciasFiltradas = ocorrencias.filter(o => {
     const func = resolverFuncionarioDaOcorrencia(funcionarios, o);
     if (!func) return false;
@@ -11426,13 +11549,16 @@ function ProcessosPonto({ usuario, setView, ocorrencias = [], funcionarios = [],
                 display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0
               }
             }, "‹"),
-            /*#__PURE__*/React.createElement("div", {
+            /*#__PURE__*/React.createElement("button", {
               key: pendenciaAtual?.id,
+              type: "button",
               onClick: () => setView(ehGestor ? "relatorios" : "portal"),
+              "aria-label": ehGestor ? "Abrir relatórios de pendências" : "Abrir minhas pendências",
               style: {
                 flex: 1, display: "flex", alignItems: "center", gap: 14, padding: "12px 14px",
                 borderRadius: 12, background: "var(--cinza-50)", cursor: "pointer",
-                animation: "slideIn .3s ease", minWidth: 0
+                animation: "slideIn .3s ease", minWidth: 0,
+                border: "none", font: "inherit", color: "inherit", textAlign: "left"
               }
             },
               /*#__PURE__*/React.createElement("div", {
@@ -13429,8 +13555,13 @@ function LinhaPessoa({ pessoa, nivel, destaque, inativo }) {
   // ver ehAtivo em montarArvore). Quando não é passado explicitamente,
   // cai para o schema administrativo (`ativo` boolean).
   const estaInativo = inativo !== undefined ? inativo : pessoa.ativo === false;
-  return /*#__PURE__*/React.createElement("div", {
+  // Quando é clicável vira <button> de verdade (com reset de estilo) em vez de
+  // <div onClick>: é o ponto de entrada para abrir QUALQUER perfil na árvore,
+  // e como <div> era inalcançável por teclado e por leitor de tela.
+  return /*#__PURE__*/React.createElement(clicavel ? "button" : "div", {
     onClick: clicavel ? () => onSelecionar(pessoa) : undefined,
+    type: clicavel ? "button" : undefined,
+    "aria-label": clicavel ? `Abrir perfil de ${nome}` : undefined,
     style: {
       display: "flex",
       alignItems: "center",
@@ -13439,7 +13570,12 @@ function LinhaPessoa({ pessoa, nivel, destaque, inativo }) {
       borderRadius: 10,
       opacity: estaInativo ? 0.55 : 1,
       background: destaque ? "var(--marca-50)" : "transparent",
-      cursor: clicavel ? "pointer" : "default"
+      cursor: clicavel ? "pointer" : "default",
+      width: "100%",
+      textAlign: "left",
+      border: "none",
+      font: "inherit",
+      color: "inherit"
     }
   }, /*#__PURE__*/React.createElement(Avatar, { nome: nome, id: pessoa.id, size: 28 }),
     /*#__PURE__*/React.createElement("div", { style: { minWidth: 0, flex: 1 } },
@@ -14111,6 +14247,11 @@ function ModalPerfilComercial({ pessoa, onClose, onAtualizado, nomeExibicao: nom
     gerencia_id: pessoa.gerencia_id ?? null
   });
 
+  // Confirmação de revogar/reativar acesso. Antes era window.confirm(), que
+  // quebra o visual do app, ignora o tema escuro e, no celular, aparece
+  // descolado do contexto da ação.
+  const [confirmAcesso, setConfirmAcesso] = useState(null); // "revogar" | "reativar" | null
+
   // Listas ordenadas por nome, para os seletores de hierarquia abaixo.
   const superintendenciasOrdenadas = useMemo(
     () => [...(superintendencias || [])].sort((a, b) => (a.nome || "").localeCompare(b.nome || "", "pt-BR", { sensitivity: "base" })),
@@ -14165,7 +14306,7 @@ function ModalPerfilComercial({ pessoa, onClose, onAtualizado, nomeExibicao: nom
 
   const temLogin = !!pessoa.auth_user_id;
 
-  async function salvar() {
+  async function salvar(jaConfirmado = false) {
     if (!podeEditarPerfil) {
       setErroSalvar("Você não tem permissão para editar perfil.");
       return;
@@ -14200,13 +14341,11 @@ function ModalPerfilComercial({ pessoa, onClose, onAtualizado, nomeExibicao: nom
     // em Salvar sem o admin confirmar que está ciente do efeito colateral.
     const vaiRevogar = editando.situacao === "INATIVO" && temLogin && !acessoRevogado;
     const vaiReativar = editando.situacao === "ATIVO" && temLogin && acessoRevogado;
-    if (vaiRevogar) {
-      const confirmado = window.confirm(`Ao salvar, o acesso de ${nomeParaTitulo} ao sistema também será revogado. Confirma?`);
-      if (!confirmado) return;
-    } else if (vaiReativar) {
-      const confirmado = window.confirm(`Ao salvar, o acesso de ${nomeParaTitulo} ao sistema também será reativado. Confirma?`);
-      if (!confirmado) return;
+    if (!jaConfirmado && (vaiRevogar || vaiReativar)) {
+      setConfirmAcesso(vaiRevogar ? "revogar" : "reativar");
+      return;
     }
+    setConfirmAcesso(null);
 
     setSalvando(true);
     setErroSalvar("");
@@ -14479,7 +14618,7 @@ function ModalPerfilComercial({ pessoa, onClose, onAtualizado, nomeExibicao: nom
         o wrapper acima já bloqueia a interação com os campos. #*/
     podeEditarPerfil && /*#__PURE__*/React.createElement("div", { style: { display: "flex", justifyContent: "flex-end" } },
       /*#__PURE__*/React.createElement("button", {
-        onClick: salvar,
+        onClick: () => salvar(false),
         disabled: salvando,
         style: {
           padding: "10px 20px", borderRadius: 10, border: "none",
@@ -14551,6 +14690,62 @@ function ModalPerfilComercial({ pessoa, onClose, onAtualizado, nomeExibicao: nom
               cursor: "pointer"
             }
           }, "📋 Copiar")
+        )
+      )
+    ),
+
+    /*# Confirmação de efeito colateral no acesso (substitui window.confirm) #*/
+    confirmAcesso && /*#__PURE__*/React.createElement(Modal, {
+      title: confirmAcesso === "revogar" ? "🔒 Revogar acesso ao salvar" : "🔓 Reativar acesso ao salvar",
+      onClose: () => setConfirmAcesso(null),
+      maxWidth: 460
+    },
+      /*#__PURE__*/React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 18 } },
+        /*#__PURE__*/React.createElement("div", {
+          style: {
+            background: confirmAcesso === "revogar" ? "var(--vermelho-100)" : "var(--verde-100)",
+            border: `1px solid ${confirmAcesso === "revogar" ? "var(--vermelho-300)" : "var(--verde-300)"}`,
+            borderRadius: 12, padding: "14px 16px", fontSize: 13, lineHeight: 1.6,
+            color: confirmAcesso === "revogar" ? "var(--vermelho-800)" : "var(--verde-800)"
+          }
+        },
+          confirmAcesso === "revogar"
+            ? /*#__PURE__*/React.createElement(React.Fragment, null,
+                /*#__PURE__*/React.createElement("strong", null, `O login de ${nomeParaTitulo} será revogado.`),
+                /*#__PURE__*/React.createElement("br", null),
+                "A pessoa deixa de conseguir entrar no sistema imediatamente. O cadastro e o histórico de ocorrências continuam preservados, e o acesso pode ser reativado depois."
+              )
+            : /*#__PURE__*/React.createElement(React.Fragment, null,
+                /*#__PURE__*/React.createElement("strong", null, `O login de ${nomeParaTitulo} será reativado.`),
+                /*#__PURE__*/React.createElement("br", null),
+                "A pessoa volta a conseguir entrar no sistema com a senha que já tinha. Se ela não lembrar, use “Resetar senha” depois de salvar."
+              )
+        ),
+        /*#__PURE__*/React.createElement("div", { style: { display: "flex", gap: 10, justifyContent: "flex-end", flexWrap: "wrap" } },
+          /*#__PURE__*/React.createElement("button", {
+            type: "button",
+            onClick: () => setConfirmAcesso(null),
+            style: {
+              padding: "10px 20px", borderRadius: 10, border: "1px solid var(--cinza-200)",
+              background: "var(--cor-branco)", fontSize: 13, cursor: "pointer",
+              fontWeight: 600, color: "var(--cinza-500)"
+            }
+          }, "Cancelar"),
+          /*#__PURE__*/React.createElement("button", {
+            type: "button",
+            onClick: () => salvar(true),
+            disabled: salvando,
+            style: {
+              padding: "10px 20px", borderRadius: 10, border: "none",
+              background: salvando
+                ? "var(--cinza-300)"
+                : (confirmAcesso === "revogar" ? "var(--vermelho-600)" : "var(--verde-700)"),
+              color: "var(--cor-branco)", fontSize: 13,
+              cursor: salvando ? "default" : "pointer", fontWeight: 700
+            }
+          }, salvando
+            ? "Salvando…"
+            : (confirmAcesso === "revogar" ? "Salvar e revogar acesso" : "Salvar e reativar acesso"))
         )
       )
     )
@@ -14668,6 +14863,7 @@ function ModalLogAcessos({ onClose }) {
   const [erro, setErro] = useState("");
   const [itens, setItens] = useState([]);
   const [busca, setBusca] = useState("");
+  const buscaAdiada = useValorAdiado(busca);
   const [filtroAcao, setFiltroAcao] = useState("");
 
   useEffect(() => {
@@ -14692,14 +14888,14 @@ function ModalLogAcessos({ onClose }) {
   }, []);
 
   const itensFiltrados = useMemo(() => {
-    const buscaNorm = busca.trim().toLowerCase();
+    const buscaNorm = buscaAdiada.trim().toLowerCase();
     return itens.filter(item => {
       if (filtroAcao && item.acao !== filtroAcao) return false;
       if (!buscaNorm) return true;
       const alvo = `${item.funcionario_nome || ""} ${item.funcionario_matricula || ""} ${item.ator_email || ""}`.toLowerCase();
       return alvo.includes(buscaNorm);
     });
-  }, [itens, busca, filtroAcao]);
+  }, [itens, buscaAdiada, filtroAcao]);
 
   const campoStyle = { padding: "9px 12px", borderRadius: 10, border: "1px solid var(--cinza-200)", fontSize: 12.5, outline: "none", background: "var(--cor-branco)", color: "var(--cinza-900)" };
 
@@ -15094,10 +15290,10 @@ function PainelPermissoes() {
           style: { fontSize: 13, color: "var(--cinza-400)", transform: matrizAberta ? "rotate(180deg)" : "none", transition: "transform .15s" }
         }, "▾")
       ),
-      matrizAberta && /*#__PURE__*/React.createElement("div", { style: { borderTop: "1px solid var(--cinza-100)" } },
+      matrizAberta && /*#__PURE__*/React.createElement("div", { style: { borderTop: "1px solid var(--cinza-100)", overflowX: "auto" } },
         /*#__PURE__*/React.createElement("div", { style: { padding: "12px 18px 0", fontSize: 12.5, color: "var(--cinza-400)", lineHeight: 1.5 } },
           /*#__PURE__*/React.createElement("strong", null, "admin_geral"), " sempre tem acesso total e não aparece aqui — isso evita que uma configuração errada tranque o próprio administrador para fora do Painel de Acessos."),
-        /*#__PURE__*/React.createElement("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: 12.5, marginTop: 12 } },
+        /*#__PURE__*/React.createElement("table", { style: { width: "100%", minWidth: 560, borderCollapse: "collapse", fontSize: 12.5, marginTop: 12 } },
           /*#__PURE__*/React.createElement("thead", null,
             /*#__PURE__*/React.createElement("tr", { style: { background: "var(--cinza-50)" } },
               /*#__PURE__*/React.createElement("th", { style: { textAlign: "left", padding: "10px 16px", fontWeight: 700, color: "var(--cinza-700)" } }, "Permissão"),
@@ -15157,6 +15353,8 @@ function ArvoreHierarquia({ pode = () => true, ocorrencias = [], funcionariosUni
   const { carregando: carregandoAdmin, funcionarios: funcionariosAdmin, atualizarFuncionarioLocal: atualizarFuncionarioLocalAdmin } = useArvoreAdministrativaData();
   const [aba, setAba] = useState("estrutura"); // "estrutura" | "permissoes"
   const [busca, setBusca] = useState("");
+  // Filtrar a árvore inteira (600+ pessoas) a cada tecla travava a digitação.
+  const buscaAdiada = useValorAdiado(busca);
   const [aberto, setAberto] = useState({});
   const toggle = chave => setAberto(prev => ({ ...prev, [chave]: !prev[chave] }));
   const [criandoUsuarios, setCriandoUsuarios] = useState(false);
@@ -15272,7 +15470,7 @@ function ArvoreHierarquia({ pode = () => true, ocorrencias = [], funcionariosUni
     () => montarArvore({ superintendencias, diretorias, gerencias, funcionarios, nomesExibicao }),
     [superintendencias, diretorias, gerencias, funcionarios, nomesExibicao]
   );
-  const arvore = useMemo(() => filtrarArvorePorBusca(arvoreCompleta, busca, nomesExibicao), [arvoreCompleta, busca, nomesExibicao]);
+  const arvore = useMemo(() => filtrarArvorePorBusca(arvoreCompleta, buscaAdiada, nomesExibicao), [arvoreCompleta, buscaAdiada, nomesExibicao]);
 
   // Expande automaticamente todos os níveis quando há uma busca ativa, para
   // que o resultado filtrado apareça já visível em vez de escondido em nós
@@ -15280,7 +15478,7 @@ function ArvoreHierarquia({ pode = () => true, ocorrencias = [], funcionariosUni
   // busca que só bate do lado administrativo ficaria escondida atrás do
   // nó-raiz ainda colapsado.
   useEffect(() => {
-    if (!busca.trim()) return;
+    if (!buscaAdiada.trim()) return;
     const novo = { adm: true };
     for (const s of arvore) {
       novo[`s_${s.id}`] = true;
@@ -15290,7 +15488,7 @@ function ArvoreHierarquia({ pode = () => true, ocorrencias = [], funcionariosUni
       }
     }
     setAberto(prev => ({ ...prev, ...novo }));
-  }, [busca, arvore]);
+  }, [buscaAdiada, arvore]);
 
   const totais = useMemo(() => ({
     superintendencias: superintendencias.length,
@@ -15695,7 +15893,7 @@ function ArvoreHierarquia({ pode = () => true, ocorrencias = [], funcionariosUni
         // `s_<id>` usadas pelas superintendências.
         /*#__PURE__*/React.createElement(React.Fragment, null,
           /*#__PURE__*/React.createElement(NoRaizAdministrativo, {
-            busca,
+            busca: buscaAdiada,
             aberta: !!aberto.adm,
             onToggle: () => toggle("adm"),
             estadoAberto: aberto,
@@ -15707,7 +15905,7 @@ function ArvoreHierarquia({ pode = () => true, ocorrencias = [], funcionariosUni
             })
           }),
           arvore.length === 0
-            ? (busca.trim() ? /*#__PURE__*/React.createElement("div", { style: { padding: 40, textAlign: "center", color: "var(--cinza-300)", fontSize: 13 } }, "Nenhum resultado para essa busca.") : null)
+            ? (buscaAdiada.trim() ? /*#__PURE__*/React.createElement("div", { style: { padding: 40, textAlign: "center", color: "var(--cinza-300)", fontSize: 13 } }, "Nenhum resultado para essa busca.") : null)
             : arvore.map(s => /*#__PURE__*/React.createElement(NoSuperintendencia, {
                 key: s.id,
                 superintendencia: s,
@@ -15740,6 +15938,118 @@ function ArvoreHierarquia({ pode = () => true, ocorrencias = [], funcionariosUni
     })
   );
 }
+// ─── LIMITE DE ERRO ──────────────────────────────────────────────────────────
+// Sem isso, qualquer erro de render (um campo undefined vindo de um registro
+// importado torto, por exemplo) deixava a tela inteira em branco — e como o
+// app é um HTML único no GitHub Pages, o usuário não via nem mensagem nem
+// caminho de saída. Agora o erro fica contido na view, com opção de tentar de
+// novo ou voltar para o início.
+class LimiteDeErro extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { erro: null };
+  }
+  static getDerivedStateFromError(erro) {
+    return { erro };
+  }
+  componentDidCatch(erro, info) {
+    console.error("[Central de Ponto] erro de render:", erro, info?.componentStack);
+  }
+  componentDidUpdate(propsAnteriores) {
+    // Ao trocar de tela, limpa o erro para a próxima view renderizar normal.
+    if (this.state.erro && propsAnteriores.chave !== this.props.chave) {
+      this.setState({ erro: null });
+    }
+  }
+  render() {
+    if (!this.state.erro) return this.props.children;
+    return /*#__PURE__*/React.createElement("div", {
+      style: {
+        margin: 24,
+        padding: "32px 28px",
+        background: "var(--cor-branco)",
+        border: "1px solid var(--vermelho-300)",
+        borderRadius: 16,
+        maxWidth: 620
+      }
+    },
+      /*#__PURE__*/React.createElement("div", { style: { fontSize: 28, marginBottom: 10 } }, "⚠️"),
+      /*#__PURE__*/React.createElement("h2", {
+        style: { margin: "0 0 8px", fontSize: 17, fontWeight: 700, color: "var(--cinza-900)" }
+      }, "Algo deu errado nesta tela"),
+      /*#__PURE__*/React.createElement("p", {
+        style: { margin: "0 0 18px", fontSize: 13, color: "var(--cinza-500)", lineHeight: 1.6 }
+      }, "O restante do sistema continua funcionando. Você pode tentar carregar esta tela de novo ou voltar ao início. Se o erro se repetir, avise a equipe do GRE com o horário e o que você estava fazendo."),
+      /*#__PURE__*/React.createElement("pre", {
+        style: {
+          background: "var(--cinza-50)", border: "1px solid var(--cinza-100)", borderRadius: 10,
+          padding: "10px 12px", fontSize: 11, color: "var(--cinza-500)",
+          whiteSpace: "pre-wrap", wordBreak: "break-word", marginBottom: 18
+        }
+      }, String(this.state.erro?.message || this.state.erro)),
+      /*#__PURE__*/React.createElement("div", { style: { display: "flex", gap: 10, flexWrap: "wrap" } },
+        /*#__PURE__*/React.createElement("button", {
+          type: "button",
+          onClick: () => this.setState({ erro: null }),
+          style: {
+            padding: "10px 20px", borderRadius: 10, border: "none", background: "var(--indigo-500)",
+            color: "var(--cor-branco)", fontSize: 13, fontWeight: 700, cursor: "pointer"
+          }
+        }, "Tentar novamente"),
+        /*#__PURE__*/React.createElement("button", {
+          type: "button",
+          onClick: () => {
+            this.setState({ erro: null });
+            if (typeof this.props.onVoltarInicio === "function") this.props.onVoltarInicio();
+          },
+          style: {
+            padding: "10px 20px", borderRadius: 10, border: "1px solid var(--cinza-200)",
+            background: "var(--cor-branco)", fontSize: 13, fontWeight: 600,
+            color: "var(--cinza-500)", cursor: "pointer"
+          }
+        }, "Voltar ao início"),
+        /*#__PURE__*/React.createElement("button", {
+          type: "button",
+          onClick: () => location.reload(),
+          style: {
+            padding: "10px 20px", borderRadius: 10, border: "1px solid var(--cinza-200)",
+            background: "var(--cor-branco)", fontSize: 13, fontWeight: 600,
+            color: "var(--cinza-500)", cursor: "pointer"
+          }
+        }, "Recarregar a página")
+      )
+    );
+  }
+}
+
+// ─── AVISO DE CONEXÃO ────────────────────────────────────────────────────────
+// Com o polling de 3s escrevendo no Supabase, uma queda de rede fazia as ações
+// "parecerem" salvas sem terem sido. A faixa deixa isso explícito.
+function AvisoSemConexao() {
+  const [offline, setOffline] = useState(() => typeof navigator !== "undefined" && navigator.onLine === false);
+  useEffect(() => {
+    const caiu = () => setOffline(true);
+    const voltou = () => setOffline(false);
+    window.addEventListener("offline", caiu);
+    window.addEventListener("online", voltou);
+    return () => {
+      window.removeEventListener("offline", caiu);
+      window.removeEventListener("online", voltou);
+    };
+  }, []);
+  if (!offline) return null;
+  return /*#__PURE__*/React.createElement("div", {
+    role: "status",
+    "aria-live": "assertive",
+    style: {
+      position: "fixed", top: 0, left: 0, right: 0, zIndex: 3000,
+      background: "var(--vermelho-600)", color: "var(--cor-branco)",
+      padding: "10px 16px", fontSize: 12.5, fontWeight: 600, textAlign: "center",
+      boxShadow: "0 2px 10px var(--sombra-media)"
+    }
+  }, "Sem conexão com a internet — o que você fizer agora pode não ser salvo. Aguarde a conexão voltar antes de continuar.");
+}
+
 function App() {
   const [theme, toggleTheme] = useTheme();
   const [usuario, setUsuario] = useState(null);
@@ -16415,7 +16725,10 @@ function App() {
     style: {
       padding: temAcessoGestao ? "32px 36px" : "24px"
     }
-  }, renderView(), !temAcessoGestao && /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement(LimiteDeErro, {
+    chave: view,
+    onVoltarInicio: () => setView("mural")
+  }, renderView()), !temAcessoGestao && /*#__PURE__*/React.createElement("div", {
     style: {
       marginTop: 32,
       paddingTop: 16,
@@ -16427,7 +16740,7 @@ function App() {
   }, "Tecnologia GRE · Desenvolvido por Arthur Bomfim"))), /*#__PURE__*/React.createElement(Toast, {
     toasts: toasts,
     onDismiss: id => setToasts(p => p.filter(t => t.id !== id))
-  }));
+  }), /*#__PURE__*/React.createElement(AvisoSemConexao, null));
 }
 
 
