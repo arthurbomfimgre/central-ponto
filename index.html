@@ -16050,8 +16050,25 @@ function AvisoSemConexao() {
   }, "Sem conexão com a internet — o que você fizer agora pode não ser salvo. Aguarde a conexão voltar antes de continuar.");
 }
 
+// ─── RESPONSIVO ──────────────────────────────────────────────────────────────
+// Único ponto de breakpoint do app inteiro — antes não existia nenhum
+// @media/matchMedia/innerWidth, então a sidebar de gestão simplesmente não
+// cabia em celular.
+function useTelaEstreita(limite = 900) {
+  const [estreita, setEstreita] = useState(() => typeof window !== "undefined" && window.innerWidth < limite);
+  useEffect(() => {
+    const mq = window.matchMedia(`(max-width:${limite}px)`);
+    const h = e => setEstreita(e.matches);
+    mq.addEventListener("change", h);
+    return () => mq.removeEventListener("change", h);
+  }, [limite]);
+  return estreita;
+}
+
 function App() {
   const [theme, toggleTheme] = useTheme();
+  const telaEstreita = useTelaEstreita();
+  const [menuMobileAberto, setMenuMobileAberto] = useState(false);
   const [usuario, setUsuario] = useState(null);
   const [verificandoSessao, setVerificandoSessao] = useState(true);
   // Quando o usuário clica no link de "redefinir senha" recebido por e-mail,
@@ -16508,7 +16525,40 @@ function App() {
       fontFamily: "-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif",
       display: "flex"
     }
-  }, temAcessoGestao && /*#__PURE__*/React.createElement("div", {
+  },
+    // Cabeçalho fixo só em mobile, com o botão que abre o drawer — sem ele
+    // não haveria como acessar a navegação numa tela estreita.
+    temAcessoGestao && telaEstreita && /*#__PURE__*/React.createElement("div", {
+      style: {
+        position: "fixed", top: 0, left: 0, right: 0, zIndex: 200,
+        height: 56, background: "var(--cor-branco)", borderBottom: "1px solid var(--cinza-100)",
+        display: "flex", alignItems: "center", justifyContent: "space-between",
+        padding: "0 12px", boxSizing: "border-box"
+      }
+    },
+      /*#__PURE__*/React.createElement("button", {
+        type: "button",
+        onClick: () => setMenuMobileAberto(true),
+        "aria-label": "Abrir menu",
+        "aria-expanded": menuMobileAberto,
+        style: {
+          width: 40, height: 40, borderRadius: 10, border: "1px solid var(--cinza-100)",
+          background: "var(--cor-branco)", fontSize: 18, cursor: "pointer",
+          display: "flex", alignItems: "center", justifyContent: "center"
+        }
+      }, "☰"),
+      /*#__PURE__*/React.createElement(Logo, { height: 22 }),
+      /*#__PURE__*/React.createElement(Avatar, { nome: usuario.nome, id: 1, size: 30 })
+    ),
+    // Overlay escuro atrás do drawer — clicar nele fecha, igual ao Modal.
+    temAcessoGestao && telaEstreita && menuMobileAberto && /*#__PURE__*/React.createElement("div", {
+      onClick: () => setMenuMobileAberto(false),
+      style: { position: "fixed", inset: 0, background: "var(--overlay-modal)", zIndex: 300 }
+    }),
+  temAcessoGestao && /*#__PURE__*/React.createElement("div", {
+    role: telaEstreita ? "dialog" : undefined,
+    "aria-modal": telaEstreita ? "true" : undefined,
+    "aria-label": telaEstreita ? "Menu de navegação" : undefined,
     style: {
       width: 220,
       background: "var(--cor-branco)",
@@ -16517,11 +16567,16 @@ function App() {
       display: "flex",
       flexDirection: "column",
       gap: 4,
-      position: "sticky",
+      position: telaEstreita ? "fixed" : "sticky",
       top: 0,
+      left: 0,
       height: "100vh",
       boxSizing: "border-box",
-      flexShrink: 0
+      flexShrink: 0,
+      zIndex: 301,
+      transition: "transform .2s ease",
+      transform: telaEstreita ? (menuMobileAberto ? "translateX(0)" : "translateX(-100%)") : "none",
+      boxShadow: telaEstreita && menuMobileAberto ? "0 0 32px var(--sombra-media)" : "none"
     }
   }, /*#__PURE__*/React.createElement("div", {
     style: {
@@ -16535,7 +16590,7 @@ function App() {
     height: 26
   })), NAV_ADMIN.map(n => /*#__PURE__*/React.createElement("button", {
     key: n.id,
-    onClick: () => setView(n.id),
+    onClick: () => { setView(n.id); setMenuMobileAberto(false); },
     style: {
       display: "flex",
       alignItems: "center",
@@ -16630,7 +16685,8 @@ function App() {
   }, "Tecnologia GRE", /*#__PURE__*/React.createElement("br", null), "Desenvolvido por Arthur Bomfim"))), /*#__PURE__*/React.createElement("div", {
     style: {
       flex: 1,
-      minWidth: 0
+      minWidth: 0,
+      paddingTop: temAcessoGestao && telaEstreita ? 56 : 0
     }
   }, !temAcessoGestao && /*#__PURE__*/React.createElement("div", {
     style: {
