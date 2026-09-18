@@ -9150,15 +9150,29 @@ async function aplicarImportacaoAdministrativa(plano, onProgresso) {
   const progresso = onProgresso || (() => {});
   const idPorMatricula = new Map();
 
-  progresso(`Atualizando ${plano.equipes.length} equipe(s)…`);
+  // Equipes: só grava o que mudou (equipe nova ou gerente/diretor/superintendente
+  // diferente do banco). Reimportar a mesma planilha não escreve nada.
+  // Dado auxiliar: se falhar, avisa e segue, sem derrubar a importação dos funcionários.
+  const avisosEquipes = [];
+  progresso(`Conferindo ${plano.equipes.length} equipe(s)…`);
+  const { data: equipesBanco, error: erroLeituraEquipes } = await supa.from("equipes_administrativo").select("*");
+  const equipesNoBanco = new Map((erroLeituraEquipes ? [] : (equipesBanco || [])).map(e => [e.equipe_id, e]));
   for (const eq of plano.equipes) {
+    const atual = equipesNoBanco.get(eq.equipeId);
+    const igual = atual &&
+      (atual.gerente_nome || null) === (eq.gerenteNome || null) &&
+      (atual.diretor_nome || null) === (eq.diretorNome || null) &&
+      (atual.superintendente_nome || null) === (eq.superintendenteNome || null);
+    if (igual) continue;
     const { error } = await supa.from("equipes_administrativo").upsert({
       equipe_id: eq.equipeId, gerente_nome: eq.gerenteNome,
       diretor_nome: eq.diretorNome, superintendente_nome: eq.superintendenteNome,
       atualizado_em: new Date().toISOString()
     }, { onConflict: "equipe_id" });
-    if (error) throw new Error(`Falha ao gravar equipe "${eq.equipeId}": ${extrairMensagemErro(error)}`);
+    if (error) avisosEquipes.push(`Equipe "${eq.equipeId}": ${extrairMensagemErro(error)}`);
   }
+  if (avisosEquipes.length) console.warn("[importação administrativo] equipes não gravadas:", avisosEquipes);
+  plano.avisosEquipes = avisosEquipes;
 
   progresso(`Criando ${plano.funcionariosNovos.length} funcionário(s) novo(s)…`);
   for (const novo of plano.funcionariosNovos) {
