@@ -8956,242 +8956,190 @@ async function aplicarImportacaoHierarquia(plano, banco, onProgresso) {
 // mesma equipe só porque o arquivo trocou de nome entre importações.
 
 const MAPA_COLUNAS_IMPORT_ADMIN = {
-  matricula: "Matricula",
-  nome: "Colaborador",
-  cargo: "Cargo",
-  setor: "Area",
-  situacao: "Situacao",
-  supervisor: "Supervisor",
-  supervisao: "Supervisao",
-  email: "e-mail Profissional"
+  matricula: "Matricula", nome: "Colaborador", cargo: "Cargo", setor: "Area",
+  situacao: "Situacao", supervisor: "Supervisor", supervisao: "Supervisao",
+  email: "e-mail Profissional",
+  equipe: "Gerencia", gerente: "Gerente", diretor: "Diretor(a)", superintendente: "Superintendente"
 };
-
-// Extrai o nome da equipe a partir do nome do arquivo: remove a extensão,
-// troca separadores comuns (_, -, .) por espaço, colapsa espaços e
-// maiuscula — "gre1.xlsx" -> "GRE1", "equipe_financeiro.xlsx" -> "EQUIPE
-// FINANCEIRO".
-function nomeEquipeDoArquivo(nomeArquivo) {
-  const semExtensao = String(nomeArquivo || "").replace(/\.[^.]+$/, "");
-  const espacado = semExtensao.replace(/[_\-.]+/g, " ").trim();
-  return (espacado || "EQUIPE SEM NOME").toUpperCase();
-}
 
 function classificarCargoAdmin(cargoBruto) {
   const cargo = String(cargoBruto || "").trim().toUpperCase();
-  if (cargo.includes("GERENTE")) return "gerente";
+  if (cargo.includes("GERENTE") || cargo.includes("DIRETOR")) return "gerente";
   if (cargo.includes("COORDENADOR")) return "coordenador";
   return "membro";
 }
 
-// Compara um nome "curto" (ex.: coluna Supervisor, que às vezes vem
-// abreviado, tipo "FELIPE ALBACETE") contra um nome completo (ex.: "FELIPE
-// ROSA ALBACETE RAMOS" do cadastro do coordenador). Considera correspondência
-// quando todas as palavras do nome curto aparecem, na mesma ordem relativa,
-// dentro do nome completo — não exige que sejam vizinhas, já que sobrenomes
-// do meio (ROSA, DE ALMEIDA) costumam ser omitidos na planilha.
-function nomeCurtoCasaComCompleto(nomeCurtoBruto, nomeCompletoBruto) {
-  const normalizar = s => String(s || "").trim().toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-  const curto = normalizar(nomeCurtoBruto).split(/\s+/).filter(Boolean);
-  const completo = normalizar(nomeCompletoBruto).split(/\s+/).filter(Boolean);
-  if (curto.length === 0 || completo.length === 0) return false;
+const EQUIPE_DIRETORIA = "DIRETORIA";
+const _norm = s => String(s || "").trim().toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+const _vazio = v => { const t = String(v ?? "").trim(); return t === "" || t === "-" ? null : t; };
+
+function nomeCurtoCasaComCompleto(curtoBruto, completoBruto) {
+  const curto = _norm(curtoBruto).split(/\s+/).filter(Boolean);
+  const completo = _norm(completoBruto).split(/\s+/).filter(Boolean);
+  if (!curto.length || !completo.length) return false;
   let cursor = 0;
-  for (const palavra of curto) {
-    const idx = completo.indexOf(palavra, cursor);
-    if (idx === -1) return false;
-    cursor = idx + 1;
+  for (const p of curto) {
+    let i = -1;
+    for (let j = cursor; j < completo.length; j++) {
+      // palavra inteira OU prefixo (>=4 letras): "GLEICI" casa com "GLEICIELE"
+      if (completo[j] === p || (p.length >= 4 && completo[j].startsWith(p))) { i = j; break; }
+    }
+    if (i === -1) return false;
+    cursor = i + 1;
   }
   return true;
 }
 
-// Decide a equipe de destino: (1) se algum funcionário já cadastrado tem
-// equipe_id igual ao nome derivado do arquivo, usa essa equipe direto; (2)
-// senão, compara a lista de matrículas da planilha contra as equipes já
-// existentes — se uma equipe existente compartilha uma fração alta de
-// matrículas com a planilha nova, assume que é a mesma equipe (arquivo só
-// mudou de nome) e devolve o nome JÁ CADASTRADO dessa equipe, em vez do
-// nome novo do arquivo; (3) senão, é equipe nova mesmo, usa o nome do
-// arquivo.
-// Limiar de 50%: decisão prática para equilibrar entre reconhecer a mesma
-// equipe reimportada (normalmente quase 100% de sobreposição) e não
-// fundir por engano duas equipes pequenas e coincidentes por acaso.
-const LIMIAR_SIMILARIDADE_EQUIPE = 0.5;
-function resolverNomeEquipe(nomeArquivo, matriculasDaPlanilha, funcionariosExistentes) {
-  const nomeCandidato = nomeEquipeDoArquivo(nomeArquivo);
-  const equipesExistentes = new Map(); // nome equipe -> Set de matrículas
-  for (const f of funcionariosExistentes) {
-    if (!f.equipe_id) continue;
-    if (!equipesExistentes.has(f.equipe_id)) equipesExistentes.set(f.equipe_id, new Set());
-    equipesExistentes.get(f.equipe_id).add(String(f.matricula || "").trim());
-  }
-  if (equipesExistentes.has(nomeCandidato)) {
-    return { nomeEquipe: nomeCandidato, equipeReconhecida: true, equipeNova: false };
-  }
-  let melhorNome = null;
-  let melhorTaxa = 0;
-  for (const [nomeEquipe, matriculasEquipe] of equipesExistentes) {
-    let emComum = 0;
-    for (const m of matriculasDaPlanilha) if (matriculasEquipe.has(m)) emComum++;
-    const taxa = matriculasEquipe.size > 0 ? emComum / matriculasEquipe.size : 0;
-    if (taxa > melhorTaxa) {
-      melhorTaxa = taxa;
-      melhorNome = nomeEquipe;
-    }
-  }
-  if (melhorNome && melhorTaxa >= LIMIAR_SIMILARIDADE_EQUIPE) {
-    return { nomeEquipe: melhorNome, equipeReconhecida: true, equipeNova: false, taxaSimilaridade: melhorTaxa, nomeArquivoOriginal: nomeCandidato };
-  }
-  return { nomeEquipe: nomeCandidato, equipeReconhecida: false, equipeNova: true };
-}
-
-// Monta o plano de sincronização a partir das linhas cruas do Excel + nome
-// do arquivo + funcionários já existentes no administrativo (todos, ativos
-// e inativos — mesmo motivo do importador comercial: o diff de inativação
-// não pode reprocessar quem já está inativo). Não faz nenhuma chamada de
-// rede.
-function analisarImportacaoAdministrativa(linhasExcel, nomeArquivo, funcionariosExistentesTodos) {
+function analisarImportacaoAdministrativa(linhasExcel, nomeArquivo, funcionariosExistentesTodos, normalizarTexto = normalizarTextoHierarquia) {
+  const M = MAPA_COLUNAS_IMPORT_ADMIN;
   const erros = [];
   const linhasValidas = [];
 
   linhasExcel.forEach((linha, idx) => {
     const numeroLinha = idx + 2;
-    const matricula = normalizarTextoHierarquia(linha[MAPA_COLUNAS_IMPORT_ADMIN.matricula]);
-    const nomeCompleto = normalizarTextoHierarquia(linha[MAPA_COLUNAS_IMPORT_ADMIN.nome]);
+    const matricula = normalizarTexto(linha[M.matricula]);
+    const nomeCompleto = normalizarTexto(linha[M.nome]);
     if (!matricula || !nomeCompleto) {
       erros.push({ linha: numeroLinha, motivo: "Matrícula ou nome do colaborador ausente." });
       return;
     }
-    const cargoBruto = normalizarTextoHierarquia(linha[MAPA_COLUNAS_IMPORT_ADMIN.cargo]);
+    let equipe = _vazio(normalizarTexto(linha[M.equipe]));
+    // Diretor global: cargo DIRETOR ADMINISTRATIVO sem Gerencia -> equipe DIRETORIA
+    if (!equipe && /DIRETOR/.test(String(normalizarTexto(linha[M.cargo])).toUpperCase())
+        && !_vazio(normalizarTexto(linha[M.gerente]))) equipe = EQUIPE_DIRETORIA;
+    if (!equipe) {
+      erros.push({ linha: numeroLinha, matricula, nome: nomeCompleto.toUpperCase(), motivo: "Coluna Gerencia (equipe) vazia." });
+      return;
+    }
+    const cargo = normalizarTexto(linha[M.cargo]);
     linhasValidas.push({
-      numeroLinha,
-      matricula,
+      numeroLinha, matricula,
       nomeCompleto: nomeCompleto.toUpperCase(),
-      cargo: cargoBruto || null,
-      papel: classificarCargoAdmin(cargoBruto),
-      setor: normalizarTextoHierarquia(linha[MAPA_COLUNAS_IMPORT_ADMIN.setor]) || null,
-      situacao: (normalizarTextoHierarquia(linha[MAPA_COLUNAS_IMPORT_ADMIN.situacao]).toUpperCase() || "ATIVO"),
-      supervisorNome: normalizarTextoHierarquia(linha[MAPA_COLUNAS_IMPORT_ADMIN.supervisor]) || null,
-      supervisaoNome: normalizarTextoHierarquia(linha[MAPA_COLUNAS_IMPORT_ADMIN.supervisao]).toUpperCase() || null,
-      email: normalizarTextoHierarquia(linha[MAPA_COLUNAS_IMPORT_ADMIN.email]).toLowerCase() || null
+      cargo: cargo || null,
+      papel: classificarCargoAdmin(cargo),
+      setor: normalizarTexto(linha[M.setor]) || null,
+      situacao: (normalizarTexto(linha[M.situacao]).toUpperCase() || "ATIVO"),
+      supervisorNome: _vazio(normalizarTexto(linha[M.supervisor])),
+      supervisaoNome: (_vazio(normalizarTexto(linha[M.supervisao])) || "").toUpperCase() || null,
+      email: normalizarTexto(linha[M.email]).toLowerCase() || null,
+      equipeId: equipe.toUpperCase(),
+      gerenteNome: (_vazio(normalizarTexto(linha[M.gerente])) || "").toUpperCase() || null,
+      diretorNome: (_vazio(normalizarTexto(linha[M.diretor])) || "").toUpperCase() || null,
+      superintendenteNome: (_vazio(normalizarTexto(linha[M.superintendente])) || "").toUpperCase() || null
     });
   });
 
-  const matriculasDaPlanilha = new Set(linhasValidas.map(l => l.matricula));
-  const { nomeEquipe, equipeReconhecida, equipeNova, taxaSimilaridade, nomeArquivoOriginal } =
-    resolverNomeEquipe(nomeArquivo, matriculasDaPlanilha, funcionariosExistentesTodos);
-
-  // Gerente da equipe: só faz sentido haver um; se a planilha trouxer mais
-  // de um, o primeiro encontrado vira o gerente e os demais viram erro (não
-  // silenciosamente ignorados) — situação anômala que merece revisão manual.
-  const gerentesNaPlanilha = linhasValidas.filter(l => l.papel === "gerente");
-  if (gerentesNaPlanilha.length > 1) {
-    for (const g of gerentesNaPlanilha.slice(1)) {
-      erros.push({ linha: g.numeroLinha, matricula: g.matricula, nome: g.nomeCompleto, motivo: `Cargo indica gerente, mas já há um gerente identificado nesta planilha (${gerentesNaPlanilha[0].nomeCompleto}). Revise manualmente.` });
-    }
-  }
-  const gerente = gerentesNaPlanilha[0] || null;
-  const coordenadoresNaPlanilha = linhasValidas.filter(l => l.papel === "coordenador");
-
-  // Resolve, para cada membro comum, qual coordenador (da própria
-  // planilha) corresponde ao nome da coluna Supervisor.
-  function resolverCoordenadorDaLinha(l) {
-    if (!l.supervisorNome) return null;
-    const achado = coordenadoresNaPlanilha.find(c => nomeCurtoCasaComCompleto(l.supervisorNome, c.nomeCompleto));
-    return achado || null;
+  // ── Agrupa por equipe ──
+  const equipesMap = new Map();
+  for (const l of linhasValidas) {
+    if (!equipesMap.has(l.equipeId)) equipesMap.set(l.equipeId, []);
+    equipesMap.get(l.equipeId).push(l);
   }
 
+  // ── Cabeça da equipe: coordenador cujo nome casa com a coluna Gerente ──
+  // (Camila/Gleici/Bianca). Em GRE o gerente de cargo (Abraão) é a cabeça.
+  const cabecaPorEquipe = new Map();   // equipeId -> linha
+  const coordenadorPorEquipe = new Map(); // equipeId -> linha a quem membros/coords respondem
   const semCoordenadorResolvido = [];
-  linhasValidas.forEach(l => {
-    if (l.papel !== "membro") return;
-    const coord = resolverCoordenadorDaLinha(l);
-    if (!coord && l.supervisorNome) semCoordenadorResolvido.push({ linha: l.numeroLinha, matricula: l.matricula, nome: l.nomeCompleto, supervisorBuscado: l.supervisorNome });
-  });
 
-  // Casamento com o banco: por matrícula, com fallback por e-mail — mesmo
-  // padrão do importador comercial.
-  const funcPorMatricula = new Map(funcionariosExistentesTodos.map(f => [String(f.matricula || "").trim(), f]));
-  const funcPorEmail = new Map(funcionariosExistentesTodos.filter(f => f.email).map(f => [f.email.trim().toLowerCase(), f]));
+  const equipes = [];
+  for (const [equipeId, membros] of equipesMap) {
+    const gerenteNome = membros.map(m => m.gerenteNome).find(Boolean) || null;
+    const diretorNome = membros.map(m => m.diretorNome).find(Boolean) || null;
+    const superNome = membros.map(m => m.superintendenteNome).find(Boolean) || null;
+
+    const casaGerente = m => gerenteNome && nomeCurtoCasaComCompleto(gerenteNome, m.nomeCompleto);
+    // cabeça = pessoa da equipe cujo nome casa com o gerente da equipe
+    const cabeca = membros.find(casaGerente) || null;
+    if (cabeca) cabecaPorEquipe.set(equipeId, cabeca);
+
+    // "coordenador da equipe" = quem recebe os membros sem Supervisor.
+    // GRE: gerente é a cabeça e há vários coordenadores -> sem coordenador padrão.
+    // DP/FACILITIES/GENTE E GESTAO: a coordenadora (cabeça) é o coordenador.
+    let coordPadrao = null;
+    if (cabeca && cabeca.papel === "coordenador") coordPadrao = cabeca;
+    if (coordPadrao) coordenadorPorEquipe.set(equipeId, coordPadrao);
+
+    equipes.push({ equipeId, gerenteNome, diretorNome, superintendenteNome: superNome, total: membros.length,
+                   cabeca: cabeca ? cabeca.nomeCompleto : null });
+  }
+
+  const coordenadoresDaEquipe = eq => (equipesMap.get(eq) || []).filter(l => l.papel === "coordenador");
+
+  function resolverCoordenador(l) {
+    if (l.papel === "gerente") return null;                          // gerente/diretor: sem coordenador
+    const cabeca = cabecaPorEquipe.get(l.equipeId);
+    if (cabeca && cabeca.matricula === l.matricula) return null;      // cabeça da equipe: sem coordenador
+    if (l.papel === "membro" && l.supervisorNome) {
+      const achado = coordenadoresDaEquipe(l.equipeId).find(c => nomeCurtoCasaComCompleto(l.supervisorNome, c.nomeCompleto));
+      if (achado) return achado.matricula;
+      semCoordenadorResolvido.push({ linha: l.numeroLinha, matricula: l.matricula, nome: l.nomeCompleto, supervisorBuscado: l.supervisorNome });
+    }
+    // membro sem Supervisor (ou não casou): cai no coordenador padrão da equipe
+    const padrao = coordenadorPorEquipe.get(l.equipeId);
+    if (padrao && padrao.matricula !== l.matricula) return padrao.matricula;
+    // coordenador de GRE: responde ao gerente (cabeça)
+    if (l.papel === "coordenador" && cabeca) return cabeca.matricula;
+    return null;
+  }
+
+  // ── Casamento com o banco ──
+  const porMat = new Map(funcionariosExistentesTodos.map(f => [String(f.matricula || "").trim(), f]));
+  const porEmail = new Map(funcionariosExistentesTodos.filter(f => f.email).map(f => [f.email.trim().toLowerCase(), f]));
 
   const funcionariosNovos = [];
-  const funcionariosAtualizados = []; // { id, matriculaAnterior, nome, campos }
+  const funcionariosAtualizados = [];
 
-  // Referência auxiliar por matrícula -> linha, usada depois de resolver
-  // coordenador_id (que precisa do id real de quem já existe, ou marca
-  // "pendente" para gente nova, resolvido no segundo passe após a criação).
-  linhasValidas.forEach(l => {
-    let existente = funcPorMatricula.get(l.matricula);
-    if (!existente && l.email) existente = funcPorEmail.get(l.email);
+  for (const l of linhasValidas) {
+    let existente = porMat.get(l.matricula);
+    if (!existente && l.email) existente = porEmail.get(l.email);
 
-    const coordDaLinha = l.papel === "membro" ? resolverCoordenadorDaLinha(l) : null;
-
-    // Campos alinhados ao schema real de funcionarios_administrativo (ver
-    // FUNCIONARIOS_BASE): nome (não nome_completo), ativo boolean (não
-    // situacao/string) — funcionarios_administrativo não tem coluna
-    // "situacao" nem "cargo_origem", diferente de funcionarios_comercial.
     const camposBase = {
-      matricula: l.matricula,
-      nome: l.nomeCompleto,
-      cargo: l.cargo,
-      setor: l.setor,
-      email: l.email,
+      matricula: l.matricula, nome: l.nomeCompleto, cargo: l.cargo, setor: l.setor, email: l.email,
       ativo: l.situacao !== "INATIVO",
-      equipe_id: nomeEquipe,
-      // subequipe_id: só membro comum tem; gerente e coordenador não.
+      equipe_id: l.equipeId,
+      papel: l.papel,
+      // (b) subequipe: só entra se a planilha trouxe valor; "-" nunca apaga o que existe
       subequipe_id: l.papel === "membro" ? l.supervisaoNome : null,
-      // _coordenadorMatricula: resolvido para id real no passo de aplicação
-      // (depois que todo mundo já foi criado/atualizado no banco).
-      _coordenadorMatricula: l.papel === "membro" && coordDaLinha ? coordDaLinha.matricula
-        : (l.papel === "coordenador" && gerente ? gerente.matricula : null)
+      _coordenadorMatricula: resolverCoordenador(l)
     };
-    const camposPreenchidos = {};
-    Object.entries(camposBase).forEach(([k, v]) => {
-      if (k === "_coordenadorMatricula") { camposPreenchidos[k] = v; return; }
-      if (k === "ativo") { camposPreenchidos[k] = v; return; } // boolean: nunca cai no filtro de "" abaixo
-      if (v !== null && v !== "") camposPreenchidos[k] = v;
-    });
+    const campos = {};
+    for (const [k, v] of Object.entries(camposBase)) {
+      if (k === "_coordenadorMatricula" || k === "ativo") { campos[k] = v; continue; }
+      if (v !== null && v !== "") campos[k] = v;
+    }
 
     if (existente) {
       funcionariosAtualizados.push({
-        id: existente.id,
-        matriculaAnterior: existente.matricula,
-        nome: l.nomeCompleto,
-        campos: existente.ativo === false ? { ...camposPreenchidos, ativo: true } : camposPreenchidos
+        id: existente.id, matriculaAnterior: existente.matricula, nome: l.nomeCompleto,
+        campos: existente.ativo === false ? { ...campos, ativo: true } : campos
       });
     } else {
-      funcionariosNovos.push({
-        ...camposBase,
-        esquecimentos: 0, atestados: 0, faltas: 0, banco_horas: 0,
-        erros_registro: 0, abonos: 0, integracoes: 0
-      });
+      funcionariosNovos.push({ ...camposBase, acesso_revogado: false,
+        esquecimentos: 0, atestados: 0, faltas: 0, banco_horas: 0, erros_registro: 0, abonos: 0, integracoes: 0 });
     }
-  });
+  }
 
-  // Quem sumiu da planilha desta equipe (existia ativo, matrícula não
-  // apareceu desta vez) — só compara dentro do escopo da própria equipe,
-  // nunca do administrativo inteiro, para não inativar gente de outra
-  // equipe por engano.
-  const matriculasNaPlanilhaSet = matriculasDaPlanilha;
-  const funcionariosInativados = funcionariosExistentesTodos.filter(f =>
-    f.equipe_id === nomeEquipe &&
-    f.ativo !== false &&
-    !matriculasNaPlanilhaSet.has(String(f.matricula || "").trim())
+  // ── (a) Quem sumiu: NÃO inativa. Só lista para o usuário decidir. ──
+  // Escopo: equipes que aparecem na planilha (subir só uma equipe não mexe nas outras).
+  const equipesNaPlanilha = new Set(equipesMap.keys());
+  const matNaPlanilha = new Set(linhasValidas.map(l => l.matricula));
+  const naoVieramNaPlanilha = funcionariosExistentesTodos.filter(f =>
+    equipesNaPlanilha.has(f.equipe_id) && f.ativo !== false &&
+    !matNaPlanilha.has(String(f.matricula || "").trim())
   );
 
   return {
-    erros,
-    semCoordenadorResolvido,
-    totalLinhasPlanilha: linhasExcel.length,
-    nomeEquipe,
-    equipeReconhecida,
-    equipeNova,
-    taxaSimilaridade,
-    nomeArquivoOriginal,
-    gerente,
-    coordenadoresNaPlanilha,
-    funcionariosNovos,
-    funcionariosAtualizados,
-    funcionariosInativados
+    erros, semCoordenadorResolvido, totalLinhasPlanilha: linhasExcel.length,
+    equipes, funcionariosNovos, funcionariosAtualizados, naoVieramNaPlanilha,
+    // compat com o modal atual
+    nomeEquipe: equipes.map(e => e.equipeId).join(", "),
+    equipeReconhecida: false, equipeNova: false,
+    gerente: null, coordenadoresNaPlanilha: linhasValidas.filter(l => l.papel === "coordenador"),
+    funcionariosInativados: []   // sempre vazio: inativação agora é decisão manual
   };
 }
+
 
 // Aplica o plano no Supabase. Ordem: (1) cria/atualiza todo mundo primeiro
 // SEM coordenador_id (esse campo depende de ids que só existem depois da
@@ -9201,6 +9149,16 @@ function analisarImportacaoAdministrativa(linhasExcel, nomeArquivo, funcionarios
 async function aplicarImportacaoAdministrativa(plano, onProgresso) {
   const progresso = onProgresso || (() => {});
   const idPorMatricula = new Map();
+
+  progresso(`Atualizando ${plano.equipes.length} equipe(s)…`);
+  for (const eq of plano.equipes) {
+    const { error } = await supa.from("equipes_administrativo").upsert({
+      equipe_id: eq.equipeId, gerente_nome: eq.gerenteNome,
+      diretor_nome: eq.diretorNome, superintendente_nome: eq.superintendenteNome,
+      atualizado_em: new Date().toISOString()
+    }, { onConflict: "equipe_id" });
+    if (error) throw new Error(`Falha ao gravar equipe "${eq.equipeId}": ${extrairMensagemErro(error)}`);
+  }
 
   progresso(`Criando ${plano.funcionariosNovos.length} funcionário(s) novo(s)…`);
   for (const novo of plano.funcionariosNovos) {
@@ -9377,27 +9335,25 @@ function ModalImportarEquipeAdministrativa({ onClose, onConcluido }) {
         /*#__PURE__*/React.createElement("strong", null, plano.totalLinhasPlanilha), " linha(s) na planilha."),
 
       /*#__PURE__*/React.createElement("div", {
-        style: {
-          background: plano.equipeReconhecida ? "var(--azul-50)" : "var(--roxo-50)",
-          border: `1px solid ${plano.equipeReconhecida ? "var(--azul-200)" : "var(--roxo-100)"}`,
-          borderRadius: 12, padding: "12px 16px", fontSize: 13
-        }
+        style: { background: "var(--azul-50)", border: "1px solid var(--azul-200)", borderRadius: 12, padding: "12px 16px", fontSize: 13, display: "flex", flexDirection: "column", gap: 6 }
       },
-        /*#__PURE__*/React.createElement("strong", null, "Equipe: "), plano.nomeEquipe,
-        plano.equipeReconhecida && plano.taxaSimilaridade !== undefined && /*#__PURE__*/React.createElement("span", { style: { display: "block", marginTop: 4, fontSize: 12, color: "var(--cinza-500)" } },
-          `Reconhecida automaticamente por similaridade (${Math.round(plano.taxaSimilaridade * 100)}% das matrículas já cadastradas nesta equipe apareceram na planilha "${plano.nomeArquivoOriginal}").`),
-        plano.equipeNova && /*#__PURE__*/React.createElement("span", { style: { display: "block", marginTop: 4, fontSize: 12, color: "var(--cinza-500)" } },
-          "Nenhuma equipe existente foi reconhecida — será criada como nova."),
-        plano.gerente && /*#__PURE__*/React.createElement("span", { style: { display: "block", marginTop: 6, fontSize: 12.5 } }, "👑 Gerente: ", plano.gerente.nomeCompleto),
-        plano.coordenadoresNaPlanilha.length > 0 && /*#__PURE__*/React.createElement("span", { style: { display: "block", marginTop: 2, fontSize: 12.5 } },
-          "🧭 Coordenador(es): ", plano.coordenadoresNaPlanilha.map(c => c.nomeCompleto).join(", "))
+        plano.equipes.map(eq => /*#__PURE__*/React.createElement("span", { key: eq.equipeId, style: { display: "block" } },
+          /*#__PURE__*/React.createElement("strong", null, eq.equipeId), ` — ${eq.total} pessoa(s)`,
+          eq.gerenteNome && /*#__PURE__*/React.createElement("span", { style: { display: "block", fontSize: 12, color: "var(--cinza-500)" } }, "👑 Gerente: ", eq.gerenteNome)))
       ),
 
       /*#__PURE__*/React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 } },
         linhaResumo("Funcionários novos", plano.funcionariosNovos.length, "verde"),
         linhaResumo("Funcionários atualizados", plano.funcionariosAtualizados.length, "azul"),
-        linhaResumo("Funcionários inativados", plano.funcionariosInativados.length, "amber"),
+        linhaResumo("Não vieram na planilha (nada será inativado)", plano.naoVieramNaPlanilha.length, "amber"),
         linhaResumo("Linhas com erro (ignoradas)", plano.erros.length, "vermelho")
+      ),
+
+      plano.naoVieramNaPlanilha.length > 0 && /*#__PURE__*/React.createElement("div", null,
+        /*#__PURE__*/React.createElement("p", { style: { fontSize: 12.5, fontWeight: 700, color: "var(--amber-700)", marginBottom: 6 } },
+          "ℹ️ Estão ativos no banco mas não vieram nesta planilha. Continuam ativos; inative manualmente se for o caso:"),
+        /*#__PURE__*/React.createElement("ul", { style: { fontSize: 12, color: "var(--amber-700)", paddingLeft: 18, display: "flex", flexDirection: "column", gap: 2, maxHeight: 140, overflow: "auto" } },
+          plano.naoVieramNaPlanilha.map((f, i) => /*#__PURE__*/React.createElement("li", { key: i }, f.nome, " (mat. ", f.matricula, ", ", f.equipe_id, f.subequipe_id ? " / " + f.subequipe_id : "", ")")))
       ),
 
       plano.semCoordenadorResolvido.length > 0 && /*#__PURE__*/React.createElement("div", null,
