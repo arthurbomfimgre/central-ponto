@@ -4012,6 +4012,7 @@ const NIVEL_LABEL_FALLBACK_CARGO = {
   // Níveis administrativos namespaced (ver PAPEL_ADMINISTRATIVO_PARA_NIVEL) —
   // usados como fallback de cargo quando o funcionário administrativo não
   // tem `cargo` preenchido na planilha de origem.
+  admin_diretor: "Diretor",
   admin_gerente: "Gerente",
   admin_coordenador: "Coordenador",
   admin_membro: "Membro"
@@ -4083,7 +4084,7 @@ function ehAdminFuncionario(func) {
 // não feito aqui — esta mudança só garante que as chaves existem e não
 // colidem, na raiz.
 const NIVEIS_CONFIGURAVEIS = ["vendedor", "gerente", "diretor", "superintendente"];
-const NIVEIS_CONFIGURAVEIS_ADMINISTRATIVO = ["admin_membro", "admin_coordenador", "admin_gerente"];
+const NIVEIS_CONFIGURAVEIS_ADMINISTRATIVO = ["admin_membro", "admin_coordenador", "admin_gerente", "admin_diretor"];
 const PERMISSOES_CATALOGO = [
   { chave: "ver_dashboard", label: "Ver Dashboard", grupo: "Abas" },
   { chave: "ver_funcionarios", label: "Ver Funcionários", grupo: "Abas" },
@@ -4256,6 +4257,7 @@ function usePermissoes(usuario, sessaoPronta = true) {
 // filtrarPorEscopoGestor, isGestor, etc. — e continuam corretas porque
 // "admin_gerente" nunca bate com o literal "gerente").
 const PAPEL_ADMINISTRATIVO_PARA_NIVEL = {
+  diretor: "admin_diretor",
   gerente: "admin_gerente",
   coordenador: "admin_coordenador",
   membro: "admin_membro"
@@ -8964,12 +8966,18 @@ const MAPA_COLUNAS_IMPORT_ADMIN = {
 
 function classificarCargoAdmin(cargoBruto) {
   const cargo = String(cargoBruto || "").trim().toUpperCase();
-  if (cargo.includes("GERENTE") || cargo.includes("DIRETOR")) return "gerente";
+  // DIRETOR antes de GERENTE: "DIRETOR ADMINISTRATIVO" (Christian) e
+  // "DIRETOR DE TREINAMENTO" (Cynthia) viram papel 'diretor'.
+  if (cargo.includes("DIRETOR")) return "diretor";
+  if (cargo.includes("GERENTE")) return "gerente";
   if (cargo.includes("COORDENADOR")) return "coordenador";
   return "membro";
 }
 
 const EQUIPE_DIRETORIA = "DIRETORIA";
+// Trava da inativação automática: se mais que este % dos ativos de uma equipe
+// não vier na planilha, a inativação dessa equipe exige confirmação explícita.
+const LIMITE_PERCENTUAL_INATIVACAO_ADMIN = 10;
 const _norm = s => String(s || "").trim().toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 const _vazio = v => { const t = String(v ?? "").trim(); return t === "" || t === "-" ? null : t; };
 
@@ -9067,7 +9075,7 @@ function analisarImportacaoAdministrativa(linhasExcel, nomeArquivo, funcionarios
   const coordenadoresDaEquipe = eq => (equipesMap.get(eq) || []).filter(l => l.papel === "coordenador");
 
   function resolverCoordenador(l) {
-    if (l.papel === "gerente") return null;                          // gerente/diretor: sem coordenador
+    if (l.papel === "gerente" || l.papel === "diretor") return null; // gerente/diretor: sem coordenador
     const cabeca = cabecaPorEquipe.get(l.equipeId);
     if (cabeca && cabeca.matricula === l.matricula) return null;      // cabeça da equipe: sem coordenador
     if (l.papel === "membro" && l.supervisorNome) {
@@ -9129,14 +9137,37 @@ function analisarImportacaoAdministrativa(linhasExcel, nomeArquivo, funcionarios
     !matNaPlanilha.has(String(f.matricula || "").trim())
   );
 
+  // ── Trava de segurança (percentual por equipe) ──
+  const ativosPorEquipe = new Map();
+  for (const f of funcionariosExistentesTodos) {
+    if (f.ativo === false || !equipesNaPlanilha.has(f.equipe_id)) continue;
+    ativosPorEquipe.set(f.equipe_id, (ativosPorEquipe.get(f.equipe_id) || 0) + 1);
+  }
+  const ausentesPorEquipe = new Map();
+  for (const f of naoVieramNaPlanilha) {
+    if (!ausentesPorEquipe.has(f.equipe_id)) ausentesPorEquipe.set(f.equipe_id, []);
+    ausentesPorEquipe.get(f.equipe_id).push(f);
+  }
+  const travasInativacao = [];
+  const candidatosInativacao = [];
+  for (const [equipeId, ausentes] of ausentesPorEquipe) {
+    const totalAtivos = ativosPorEquipe.get(equipeId) || ausentes.length;
+    const percentual = (ausentes.length / totalAtivos) * 100;
+    const travada = percentual > LIMITE_PERCENTUAL_INATIVACAO_ADMIN;
+    if (travada) travasInativacao.push({ equipeId, ausentes: ausentes.length, totalAtivos, percentual });
+    for (const f of ausentes) candidatosInativacao.push({ ...f, _equipeTravada: travada });
+  }
+
   return {
     erros, semCoordenadorResolvido, totalLinhasPlanilha: linhasExcel.length,
     equipes, funcionariosNovos, funcionariosAtualizados, naoVieramNaPlanilha,
+    candidatosInativacao, travasInativacao,
+    limitePercentualInativacao: LIMITE_PERCENTUAL_INATIVACAO_ADMIN,
     // compat com o modal atual
     nomeEquipe: equipes.map(e => e.equipeId).join(", "),
     equipeReconhecida: false, equipeNova: false,
     gerente: null, coordenadoresNaPlanilha: linhasValidas.filter(l => l.papel === "coordenador"),
-    funcionariosInativados: []   // sempre vazio: inativação agora é decisão manual
+    funcionariosInativados: []   // preenchido pelo modal ao confirmar (marcados e não travados)
   };
 }
 
@@ -9238,10 +9269,14 @@ function ModalImportarEquipeAdministrativa({ onClose, onConcluido }) {
   const [etapaAtual, setEtapaAtual] = useState("");
   const [erro, setErro] = useState("");
   const [concluido, setConcluido] = useState(null);
+  const [marcadosInativar, setMarcadosInativar] = useState(new Set());
+  const [equipesLiberadas, setEquipesLiberadas] = useState(new Set());
 
   async function selecionarArquivo(file) {
     setArquivo(file);
     setPlano(null);
+    setMarcadosInativar(new Set());
+    setEquipesLiberadas(new Set());
     setErro("");
     setConcluido(null);
     if (!file) return;
@@ -9255,6 +9290,7 @@ function ModalImportarEquipeAdministrativa({ onClose, onConcluido }) {
       if (funcRes.error) throw funcRes.error;
       const resultado = analisarImportacaoAdministrativa(linhas, file.name, funcRes.data || []);
       setPlano(resultado);
+      setMarcadosInativar(new Set(resultado.candidatosInativacao.filter(f => !f._equipeTravada).map(f => f.id)));
     } catch (err) {
       setErro(extrairMensagemErro(err));
     } finally {
@@ -9265,6 +9301,9 @@ function ModalImportarEquipeAdministrativa({ onClose, onConcluido }) {
 
   async function confirmarImportacao() {
     if (!plano) return;
+    const travadas = new Set(plano.travasInativacao.map(t => t.equipeId));
+    plano.funcionariosInativados = plano.candidatosInativacao.filter(f =>
+      marcadosInativar.has(f.id) && (!travadas.has(f.equipe_id) || equipesLiberadas.has(f.equipe_id)));
     setAplicando(true);
     setErro("");
     try {
@@ -9320,7 +9359,7 @@ function ModalImportarEquipeAdministrativa({ onClose, onConcluido }) {
   },
     !plano && !concluido && /*#__PURE__*/React.createElement(React.Fragment, null,
       /*#__PURE__*/React.createElement("p", { style: { fontSize: 13, color: "var(--cinza-500)", marginBottom: 18 } },
-        "Selecione a planilha do administrativo (modelo Matricula/Colaborador/Cargo/Area/Situacao/Supervisor/Supervisao). O nome do arquivo vira o nome da equipe — se um nome parecido já existir, o sistema tenta reconhecer automaticamente pela sobreposição de matrículas."),
+        "Selecione a planilha do administrativo (modelo Matricula/Colaborador/Cargo/Area/Situacao/Supervisor/Supervisao). A equipe de cada pessoa vem da coluna Gerencia. Quem não vier na planilha é inativado automaticamente, com trava de segurança: se faltar mais de 10% dos ativos de uma equipe, a inativação dela só acontece após sua confirmação."),
       /*#__PURE__*/React.createElement("label", {
         style: {
           display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
@@ -9359,15 +9398,48 @@ function ModalImportarEquipeAdministrativa({ onClose, onConcluido }) {
       /*#__PURE__*/React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 } },
         linhaResumo("Funcionários novos", plano.funcionariosNovos.length, "verde"),
         linhaResumo("Funcionários atualizados", plano.funcionariosAtualizados.length, "azul"),
-        linhaResumo("Não vieram na planilha (nada será inativado)", plano.naoVieramNaPlanilha.length, "amber"),
+        linhaResumo("Serão inativados (não vieram)", plano.candidatosInativacao.filter(f => marcadosInativar.has(f.id) && (!plano.travasInativacao.some(t => t.equipeId === f.equipe_id) || equipesLiberadas.has(f.equipe_id))).length, "amber"),
         linhaResumo("Linhas com erro (ignoradas)", plano.erros.length, "vermelho")
       ),
 
-      plano.naoVieramNaPlanilha.length > 0 && /*#__PURE__*/React.createElement("div", null,
+      plano.travasInativacao.map(t => /*#__PURE__*/React.createElement("div", {
+        key: t.equipeId,
+        style: { background: "var(--vermelho-100)", color: "var(--vermelho-800)", borderRadius: 12, padding: "10px 14px", fontSize: 12.5, fontWeight: 600, display: "flex", flexDirection: "column", gap: 6 }
+      },
+        /*#__PURE__*/React.createElement("span", null, "🛑 Trava de segurança — ", t.equipeId, ": ", t.ausentes, " de ", t.totalAtivos, " ativos não vieram (", Math.round(t.percentual), "%, limite ", plano.limitePercentualInativacao, "%). Planilha parcial ou errada? Nada desta equipe será inativado a menos que você libere."),
+        /*#__PURE__*/React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 8, fontWeight: 700, cursor: "pointer" } },
+          /*#__PURE__*/React.createElement("input", {
+            type: "checkbox", checked: equipesLiberadas.has(t.equipeId),
+            onChange: e => {
+              const novo = new Set(equipesLiberadas);
+              e.target.checked ? novo.add(t.equipeId) : novo.delete(t.equipeId);
+              setEquipesLiberadas(novo);
+              const m = new Set(marcadosInativar);
+              plano.candidatosInativacao.filter(f => f.equipe_id === t.equipeId).forEach(f => e.target.checked ? m.add(f.id) : m.delete(f.id));
+              setMarcadosInativar(m);
+            }
+          }),
+          "Confirmo que a planilha está completa: liberar a inativação de ", t.equipeId)
+      )),
+
+      plano.candidatosInativacao.length > 0 && /*#__PURE__*/React.createElement("div", null,
         /*#__PURE__*/React.createElement("p", { style: { fontSize: 12.5, fontWeight: 700, color: "var(--amber-700)", marginBottom: 6 } },
-          "ℹ️ Estão ativos no banco mas não vieram nesta planilha. Continuam ativos; inative manualmente se for o caso:"),
-        /*#__PURE__*/React.createElement("ul", { style: { fontSize: 12, color: "var(--amber-700)", paddingLeft: 18, display: "flex", flexDirection: "column", gap: 2, maxHeight: 140, overflow: "auto" } },
-          plano.naoVieramNaPlanilha.map((f, i) => /*#__PURE__*/React.createElement("li", { key: i }, f.nome, " (mat. ", f.matricula, ", ", f.equipe_id, f.subequipe_id ? " / " + f.subequipe_id : "", ")")))
+          "ℹ️ Ativos no banco que não vieram nesta planilha. Os marcados serão inativados ao confirmar (desmarque quem ficou de fora por engano):"),
+        /*#__PURE__*/React.createElement("ul", { style: { fontSize: 12, color: "var(--amber-700)", paddingLeft: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 3, maxHeight: 160, overflow: "auto" } },
+          plano.candidatosInativacao.map(f => {
+            const bloqueado = f._equipeTravada && !equipesLiberadas.has(f.equipe_id);
+            return /*#__PURE__*/React.createElement("li", { key: f.id },
+              /*#__PURE__*/React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 8, opacity: bloqueado ? 0.5 : 1, cursor: bloqueado ? "not-allowed" : "pointer" } },
+                /*#__PURE__*/React.createElement("input", {
+                  type: "checkbox", disabled: bloqueado, checked: marcadosInativar.has(f.id),
+                  onChange: e => {
+                    const m = new Set(marcadosInativar);
+                    e.target.checked ? m.add(f.id) : m.delete(f.id);
+                    setMarcadosInativar(m);
+                  }
+                }),
+                f.nome, " (mat. ", f.matricula, ", ", f.equipe_id, f.subequipe_id ? " / " + f.subequipe_id : "", ")", bloqueado ? " — bloqueado pela trava" : ""))
+          }))
       ),
 
       plano.semCoordenadorResolvido.length > 0 && /*#__PURE__*/React.createElement("div", null,
