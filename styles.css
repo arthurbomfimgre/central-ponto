@@ -104,6 +104,38 @@
      separação visual real entre o fundo e os cards brancos por cima (sem
      isso, os dois ficavam quase indistinguíveis e a tela parecia "lavada"). */
   --fundo-pagina: #eef1f6;
+
+  /* ─── TOKENS SEMÂNTICOS ─────────────────────────────────────────────────
+     Aliases sobre as variáveis existentes, para dar nome ao PAPEL de cada
+     cor (o que ela representa) em vez do valor (o que ela é). Não mudam
+     nada visualmente — --cor-branco/--cinza-* continuam existindo e sendo
+     usados nos pontos já escritos. Estes tokens são para uso em código
+     novo daqui pra frente; a migração dos ~900 usos existentes é
+     incremental e separada. */
+  --superficie:      var(--cor-branco); /* fundo de cards, modais, dropdowns — "elevado" sobre a página */
+  --superficie-2:     var(--cinza-50);   /* um nível abaixo da superfície: agrupadores, nós de árvore, hover sutil */
+  --borda:            var(--cinza-100);  /* borda padrão de cartões e inputs */
+  --texto:            var(--cinza-900);  /* texto principal */
+  --texto-fraco:       var(--cinza-400);  /* texto secundário/legendas */
+
+  /* Branco literal — para texto/ícones sobre fundo de marca fixo (banner
+     hero, botões com --marca-gradiente) que NÃO deve responder ao tema
+     escuro. Diferente de --superficie, que no escuro deixa de ser branco. */
+  --branco-fixo: #fff;
+
+  /* Tokens do card de subequipe (NoSubequipe) — substituem os 8 hex fixos
+     que existiam ali como paliativo para um bug de contraste no tema
+     escuro (texto escuro herdado de --cinza-900 sobre fundo escuro fixo).
+     Aqui a cor certa é definida por tema, então o componente não precisa
+     mais hardcodar nada. */
+  --subequipe-fundo:        var(--cinza-50);
+  --subequipe-fundo-alerta: var(--amarelo-50);
+  --subequipe-borda:        var(--cinza-200);
+  --subequipe-borda-alerta: var(--amarelo-100);
+  --subequipe-texto:        var(--cinza-700);
+  --subequipe-texto-alerta: var(--amarelo-700);
+  --subequipe-badge-fundo:  var(--cinza-100);
+  --subequipe-badge-texto:  var(--cinza-500);
 }
 
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -238,6 +270,30 @@
   --amarelo-100: #3d320a;
   --amarelo-700: #fde047;
   --amarelo-800: #fef08a;
+
+  /* ─── TOKENS SEMÂNTICOS — redefinição para o tema escuro ───────────────
+     Mesmos nomes do :root, apontando para os valores já recalibrados
+     acima nesta seção. --branco-fixo NÃO é redefinido de propósito: ele
+     existe para ficar branco nos dois temas (texto sobre --marca-gradiente
+     e botões de marca fixos continuam precisando de contraste garantido). */
+  --superficie:  var(--cor-branco);
+  --superficie-2: var(--cinza-50);
+  --borda:        var(--cinza-100);
+  --texto:        var(--cinza-900);
+  --texto-fraco:   var(--cinza-400);
+
+  /* NoSubequipe — no tema claro original usava amarelo-50/100/700 direto;
+     no escuro, --amarelo-50/100 já são fundos escurecidos com texto claro
+     (--amarelo-700), então os mesmos aliases resolvem certo nos dois
+     temas sem repetir a paleta aqui. */
+  --subequipe-fundo:        var(--cinza-50);
+  --subequipe-fundo-alerta: var(--amarelo-50);
+  --subequipe-borda:        var(--cinza-200);
+  --subequipe-borda-alerta: var(--amarelo-100);
+  --subequipe-texto:        var(--cinza-700);
+  --subequipe-texto-alerta: var(--amarelo-700);
+  --subequipe-badge-fundo:  var(--cinza-100);
+  --subequipe-badge-texto:  var(--cinza-500);
 }
 
 [data-theme="dark"] body {
