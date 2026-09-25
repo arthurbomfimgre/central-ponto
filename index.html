@@ -71,6 +71,86 @@ const {
 } = React;
 // XLSX disponível globalmente via CDN (window.XLSX)
 
+// ─── SISTEMA DE DESIGN (T / S) ──────────────────────────────────────────────
+// T = tokens de valor bruto (números). S = estilos prontos (objetos de
+// style) montados a partir de T + das variáveis CSS de styles.css.
+//
+// Construído a partir do levantamento real do arquivo, não de uma escala
+// "ideal" inventada — cada valor abaixo é o que já domina o uso hoje:
+//   fonte 13 (226×), 12 (123×), 11 (82×), 15 (67×), 18 (19×), 24 (14×)
+//   raio  12 (204×), 20 (51×), 8 (35×), 16 (35×)
+//   peso  700 (182×), 600 (145×), 800 (15×), 500 (9×), 400 (8×)
+// Os poucos valores fora da escala (fontSize 12.5/11.5/10.5, borderRadius
+// 3/6/24) ficam de fora de propósito: são proporcionais ao próprio elemento
+// (ex. barra de progresso, skeleton) e forçá-los pra escala quebraria a
+// proporção visual local sem ganho real de consistência.
+//
+// Migração: T/S nasce aqui para uso em CÓDIGO NOVO e em componentes
+// migrados deliberadamente — não substitui de uma vez os ~1000 estilos
+// inline já escritos, que continuam funcionando exatamente como estão.
+const T = {
+  fonte: { xs: 11, sm: 12, md: 13, lg: 15, xl: 18, xxl: 24 },
+  raio:  { sm: 8, md: 12, lg: 16, pill: 20 },
+  peso:  { normal: 400, media: 500, forte: 600, forte2: 700, extra: 800 },
+  espaco: { 1: 2, 2: 4, 3: 6, 4: 8, 5: 10, 6: 12, 7: 14, 8: 16, 9: 20 },
+};
+
+// S: estilos compostos prontos para os padrões mais repetidos (cartão,
+// botões, input, rótulo). Usam var(--x) de styles.css, então respeitam o
+// tema escuro automaticamente — nunca hex direto aqui.
+const S = {
+  cartao: {
+    background: "var(--superficie)",
+    borderRadius: T.raio.md,
+    border: "1px solid var(--borda)",
+    padding: T.espaco[6]
+  },
+  botaoPrim: {
+    background: "var(--marca-gradiente)",
+    color: "var(--branco-fixo)",
+    border: "none",
+    borderRadius: T.raio.sm,
+    padding: `${T.espaco[5]}px ${T.espaco[8]}px`,
+    fontSize: T.fonte.md,
+    fontWeight: T.peso.forte2,
+    cursor: "pointer"
+  },
+  botaoSec: {
+    background: "var(--marca-50)",
+    color: "var(--indigo-500)",
+    border: "none",
+    borderRadius: T.raio.sm,
+    padding: `${T.espaco[4]}px ${T.espaco[6]}px`,
+    fontSize: T.fonte.sm,
+    fontWeight: T.peso.forte,
+    cursor: "pointer"
+  },
+  botaoPerigo: {
+    background: "var(--vermelho-100)",
+    color: "var(--vermelho-600)",
+    border: "none",
+    borderRadius: T.raio.sm,
+    padding: `${T.espaco[4]}px ${T.espaco[6]}px`,
+    fontSize: T.fonte.sm,
+    fontWeight: T.peso.forte,
+    cursor: "pointer"
+  },
+  input: {
+    width: "100%",
+    padding: `${T.espaco[5]}px ${T.espaco[6]}px`,
+    borderRadius: T.raio.sm,
+    border: "1px solid var(--cinza-200)",
+    fontSize: T.fonte.md,
+    color: "var(--texto)",
+    background: "var(--superficie)"
+  },
+  rotulo: {
+    fontSize: T.fonte.sm,
+    fontWeight: T.peso.forte,
+    color: "var(--texto-fraco)"
+  }
+};
+
 // ─── SUPABASE — banco de dados compartilhado entre dispositivos ───────────────
 const SUPA_URL  = "https://vteziaryedaycjorirod.supabase.co";
 const SUPA_KEY  = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ0ZXppYXJ5ZWRheWNqb3Jpcm9kIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2MzYwNjQsImV4cCI6MjA5NzIxMjA2NH0.swYa6kwbsWUeWI58M6G5sEJ_G7KL6SsV01EOe1CWb3c";
@@ -9332,7 +9412,7 @@ function MuralRecados({
     fixado: false
   }))));
 }
-function RecadoCard({
+const RecadoCard = React.memo(function RecadoCard({
   r,
   usuario,
   isAdmin,
@@ -9523,7 +9603,7 @@ function RecadoCard({
       }
     }, counts[e]));
   })))));
-}
+});
 
 // ─── PORTAL DO FUNCIONÁRIO ────────────────────────────────────────────────────
 function PortalFuncionario({
@@ -10795,7 +10875,7 @@ function nomeExibicao(pessoaOuId, mapaOuNull) {
   const nomeBruto = typeof pessoaOuId === "object" ? (pessoaOuId.nome_completo || pessoaOuId.nome) : "";
   return (mapa && mapa.get(id)) || nomeBruto || "";
 }
-function LinhaPessoa({ pessoa, nivel, destaque, inativo }) {
+const LinhaPessoa = React.memo(function LinhaPessoa({ pessoa, nivel, destaque, inativo }) {
   const cor = NIVEL_COR[nivel];
   const onSelecionar = React.useContext(ContextoSelecaoPessoa);
   const mapaNomes = React.useContext(ContextoNomesExibicao);
@@ -10815,9 +10895,9 @@ function LinhaPessoa({ pessoa, nivel, destaque, inativo }) {
     style: {
       display: "flex",
       alignItems: "center",
-      gap: 10,
-      padding: "8px 10px",
-      borderRadius: 12,
+      gap: T.espaco[5],
+      padding: `${T.espaco[4]}px ${T.espaco[5]}px`,
+      borderRadius: T.raio.md,
       opacity: estaInativo ? 0.55 : 1,
       background: destaque ? "var(--marca-50)" : "transparent",
       cursor: clicavel ? "pointer" : "default",
@@ -10830,40 +10910,40 @@ function LinhaPessoa({ pessoa, nivel, destaque, inativo }) {
   }, /*#__PURE__*/React.createElement(Avatar, { nome: nome, id: pessoa.id, size: 28 }),
     /*#__PURE__*/React.createElement("div", { style: { minWidth: 0, flex: 1 } },
       /*#__PURE__*/React.createElement("div", {
-        style: { fontSize: 13, fontWeight: 600, color: "var(--cinza-900)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }
+        style: { fontSize: T.fonte.md, fontWeight: T.peso.forte, color: "var(--texto)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }
       }, nome),
       // funcionarios_comercial usa `cargo_origem`; funcionarios_administrativo
       // usa `cargo`.
-      /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, color: "var(--cinza-400)" } }, pessoa.cargo_origem || pessoa.cargo || "")
+      /*#__PURE__*/React.createElement("div", { style: { fontSize: T.fonte.xs, color: "var(--texto-fraco)" } }, pessoa.cargo_origem || pessoa.cargo || "")
     ),
     estaInativo && /*#__PURE__*/React.createElement("span", {
       style: {
-        fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 20,
+        fontSize: T.fonte.xs, fontWeight: T.peso.forte2, padding: `${T.espaco[1]}px ${T.espaco[4]}px`, borderRadius: T.raio.pill,
         background: "var(--cinza-200)", color: "var(--cinza-600)", flexShrink: 0
       }
     }, "Inativo"),
     pessoa.vinculo && /*#__PURE__*/React.createElement("span", {
       style: {
-        fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 20,
+        fontSize: T.fonte.xs, fontWeight: T.peso.forte2, padding: `${T.espaco[1]}px ${T.espaco[4]}px`, borderRadius: T.raio.pill,
         background: "var(--cinza-100)", color: "var(--cinza-500)", flexShrink: 0
       }
     }, pessoa.vinculo),
     /*#__PURE__*/React.createElement("span", {
       style: {
-        fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 20,
+        fontSize: T.fonte.xs, fontWeight: T.peso.forte2, padding: `${T.espaco[1]}px ${T.espaco[4]}px`, borderRadius: T.raio.pill,
         background: cor.bg, color: cor.texto, flexShrink: 0
       }
     }, NIVEL_LABEL[nivel]),
     pessoa.modalidade === "home_office" && /*#__PURE__*/React.createElement("span", {
       title: "Home office",
-      style: { fontSize: 13, flexShrink: 0 }
+      style: { fontSize: T.fonte.md, flexShrink: 0 }
     }, "🏠"),
     pessoa.vinculo_especial && /*#__PURE__*/React.createElement("span", {
       title: `Vínculo especial: ${pessoa.vinculo_especial}`,
-      style: { fontSize: 13, flexShrink: 0 }
+      style: { fontSize: T.fonte.md, flexShrink: 0 }
     }, "⚠️")
   );
-}
+});
 function CardGerencia({ gerencia, aberta, onToggle }) {
   const mapaNomes = React.useContext(ContextoNomesExibicao);
   const nomeGerente = gerencia.gerente ? nomeExibicao(gerencia.gerente, mapaNomes) : null;
@@ -10930,14 +11010,14 @@ function CardGerencia({ gerencia, aberta, onToggle }) {
 function NoSubequipe({ grupo, aberta, onToggle, semSubequipe }) {
   const ativos = grupo.membros.filter(m => m.ativo !== false);
   const inativos = grupo.membros.filter(m => m.ativo === false);
-  // Cores fixas (não dependem de var(--cor-branco)/var(--cinza-*), que no
-  // tema escuro do painel mantêm texto escuro sobre fundo escuro e ficam
-  // ilegíveis) — contraste garantido nos dois temas.
-  const corFundo = semSubequipe ? "#3a2d10" : "#1f2733";
-  const corBorda = semSubequipe ? "#6b5220" : "#3a4453";
-  const corTexto = semSubequipe ? "#f5c451" : "#e8ecf1";
-  const corBadgeFundo = "#2c3644";
-  const corBadgeTexto = "#b7c0cc";
+  // Tokens dedicados (--subequipe-*, definidos em styles.css por tema) —
+  // resolvem certo em claro E escuro, substituindo os hex fixos que
+  // existiam aqui só como paliativo para o bug de contraste no escuro.
+  const corFundo = semSubequipe ? "var(--subequipe-fundo-alerta)" : "var(--subequipe-fundo)";
+  const corBorda = semSubequipe ? "var(--subequipe-borda-alerta)" : "var(--subequipe-borda)";
+  const corTexto = semSubequipe ? "var(--subequipe-texto-alerta)" : "var(--subequipe-texto)";
+  const corBadgeFundo = "var(--subequipe-badge-fundo)";
+  const corBadgeTexto = "var(--subequipe-badge-texto)";
   return /*#__PURE__*/React.createElement("div", {
     style: {
       background: corFundo,
@@ -11169,28 +11249,28 @@ function NoRaizAdministrativo({ busca, aberta, onToggle, estadoAberto, onToggleC
 // superintendente/diretor) — mesmo layout de dado (Avatar, Semáforo, badge
 // de situação, botões Ver perfil/Excluir) já usado na tabela plana, só que
 // como uma linha compacta dentro do nó de gerência expandido.
-function LinhaFuncionarioArvore({ f, contagens, setFuncSelecionado, setView, somenteLeituraGestor, setConfirmExcluir }) {
+const LinhaFuncionarioArvore = React.memo(function LinhaFuncionarioArvore({ f, contagens, setFuncSelecionado, setView, somenteLeituraGestor, setConfirmExcluir }) {
   const al = getAlert(contagens[f.id].esquecimentos);
   return /*#__PURE__*/React.createElement("div", {
     style: {
-      display: "flex", alignItems: "center", gap: 10,
-      padding: "8px 10px", borderRadius: 12
+      display: "flex", alignItems: "center", gap: T.espaco[5],
+      padding: `${T.espaco[4]}px ${T.espaco[5]}px`, borderRadius: T.raio.md
     },
-    onMouseEnter: e => e.currentTarget.style.background = "var(--cinza-50)",
+    onMouseEnter: e => e.currentTarget.style.background = "var(--superficie-2)",
     onMouseLeave: e => e.currentTarget.style.background = "transparent"
   },
     /*#__PURE__*/React.createElement(Avatar, { nome: f.nome, id: f.id, size: 28 }),
     /*#__PURE__*/React.createElement("div", { style: { minWidth: 0, flex: 1 } },
       /*#__PURE__*/React.createElement("div", {
-        style: { fontSize: 13, fontWeight: 600, color: "var(--cinza-900)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }
+        style: { fontSize: T.fonte.md, fontWeight: T.peso.forte, color: "var(--texto)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }
       }, f.nome),
       /*#__PURE__*/React.createElement("div", {
-        style: { fontSize: 11, color: f.ativo ? "var(--verde-600)" : "var(--cinza-400)" }
+        style: { fontSize: T.fonte.xs, color: f.ativo ? "var(--verde-600)" : "var(--texto-fraco)" }
       }, f.ativo ? "● Ativo" : "○ Inativo")
     ),
     /*#__PURE__*/React.createElement(Semaforo, { esq: contagens[f.id].esquecimentos }),
     f.vinculo && /*#__PURE__*/React.createElement("span", {
-      style: { fontSize: 11, fontWeight: 700, color: "var(--cinza-500)", background: "var(--cinza-100)", padding: "2px 8px", borderRadius: 20, flexShrink: 0 }
+      style: { fontSize: T.fonte.xs, fontWeight: T.peso.forte2, color: "var(--cinza-500)", background: "var(--cinza-100)", padding: `${T.espaco[1]}px ${T.espaco[4]}px`, borderRadius: T.raio.pill, flexShrink: 0 }
     }, f.vinculo),
     // Acesso revogado — só existe para gente vinda de funcionarios_comercial
     // (campo acesso_revogado só é gerido lá, via ModalPerfilComercial/
@@ -11199,29 +11279,29 @@ function LinhaFuncionarioArvore({ f, contagens, setFuncSelecionado, setView, som
     // continua exclusivo do admin geral (ver Hierarquia).
     f.acesso_revogado && /*#__PURE__*/React.createElement("span", {
       title: "Login bloqueado no Auth",
-      style: { fontSize: 11, fontWeight: 700, color: "var(--vermelho-600)", background: "var(--vermelho-100)", padding: "2px 8px", borderRadius: 20, flexShrink: 0 }
+      style: { fontSize: T.fonte.xs, fontWeight: T.peso.forte2, color: "var(--vermelho-600)", background: "var(--vermelho-100)", padding: `${T.espaco[1]}px ${T.espaco[4]}px`, borderRadius: T.raio.pill, flexShrink: 0 }
     }, "🔒 Acesso revogado"),
     /*#__PURE__*/React.createElement("span", {
-      style: { fontSize: 11, background: al.bg, color: al.cor, padding: "3px 10px", borderRadius: 20, fontWeight: 600, flexShrink: 0 }
+      style: { fontSize: T.fonte.xs, background: al.bg, color: al.cor, padding: `3px ${T.espaco[5]}px`, borderRadius: T.raio.pill, fontWeight: T.peso.forte, flexShrink: 0 }
     }, al.label),
-    /*#__PURE__*/React.createElement("div", { style: { display: "flex", gap: 6, flexShrink: 0 } },
+    /*#__PURE__*/React.createElement("div", { style: { display: "flex", gap: T.espaco[3], flexShrink: 0 } },
       /*#__PURE__*/React.createElement("button", {
         onClick: () => { setFuncSelecionado(f); setView("perfil"); },
         style: {
           background: "var(--marca-50)", color: "var(--indigo-500)", border: "none",
-          borderRadius: 8, padding: "6px 12px", fontSize: 12, fontWeight: 600, cursor: "pointer"
+          borderRadius: T.raio.sm, padding: `6px ${T.espaco[6]}px`, fontSize: T.fonte.sm, fontWeight: T.peso.forte, cursor: "pointer"
         }
       }, "Ver perfil"),
       !somenteLeituraGestor && /*#__PURE__*/React.createElement("button", {
         onClick: () => setConfirmExcluir(f),
         style: {
           background: "var(--vermelho-100)", color: "var(--vermelho-600)", border: "none",
-          borderRadius: 8, padding: "6px 12px", fontSize: 12, fontWeight: 600, cursor: "pointer"
+          borderRadius: T.raio.sm, padding: `6px ${T.espaco[6]}px`, fontSize: T.fonte.sm, fontWeight: T.peso.forte, cursor: "pointer"
         }
       }, "Excluir")
     )
   );
-}
+});
 // Nó de gerência dentro da árvore de "Funcionários" — mesmo padrão visual
 // de CardGerencia, mas listando os vendedores já filtrados (busca/setor/
 // situação) via LinhaFuncionarioArvore em vez de LinhaPessoa.
