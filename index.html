@@ -10760,6 +10760,7 @@ function PainelOcorrencias({
   const buscaTextoAdiada = useValorAdiado(buscaTexto);
   const [modalExportar, setModalExportar] = useState(false);
   const [modalExcluirTodas, setModalExcluirTodas] = useState(false);
+  const [excluindoTodasDoMes, setExcluindoTodasDoMes] = useState(false);
   // `ocorrencias` já chega recortada pelo mês selecionado globalmente (ver
   // comentário em App: ocorrenciasRelatorio) — é a base usada tanto para
   // exibir a lista quanto para "Excluir todas do mês".
@@ -10879,9 +10880,27 @@ function PainelOcorrencias({
   // que a tela já exibe, via ocorrenciasDoMes/prop `ocorrencias`) — não mexe
   // em pendências de outros meses. Ação destrutiva, por isso passa por
   // modalExcluirTodas (confirmação) antes de rodar.
-  function excluirTodasDoMes() {
+  async function excluirTodasDoMes() {
     const idsDoMes = new Set(ocorrenciasDoMes.map(o => o.id));
-    setOcorrencias(prev => prev.filter(o => !idsDoMes.has(o.id)));
+    setExcluindoTodasDoMes(true);
+    // IMPORTANTE: setOcorrencias (useSharedState) retorna uma Promise com
+    // { ok, erro } — sem aguardar e checar isso, uma falha no Supabase
+    // (rede, exceção no upsert/delete) era engolida em silêncio: a tela
+    // aplicava o filtro localmente (parecia ter dado certo) mas o banco
+    // continuava com os dados antigos, que voltavam no próximo reload ou
+    // no polling de 3s do useSharedState.
+    const resultado = await setOcorrencias(prev => prev.filter(o => !idsDoMes.has(o.id)));
+    setExcluindoTodasDoMes(false);
+    if (!resultado?.ok) {
+      addNotif({
+        id: Date.now(),
+        icon: "⚠️",
+        title: "Falha ao excluir pendências",
+        body: resultado?.erro || "Não foi possível excluir as pendências no servidor. Tente novamente.",
+        ts: agoraISO()
+      });
+      return; // mantém o modal aberto para o usuário tentar de novo
+    }
     setModalExcluirTodas(false);
   }
 
@@ -11111,13 +11130,17 @@ function PainelOcorrencias({
       /*#__PURE__*/React.createElement("div", { style: { display: "flex", gap: 10 } },
         /*#__PURE__*/React.createElement("button", {
           onClick: excluirTodasDoMes,
+          disabled: excluindoTodasDoMes,
           style: {
             background: "var(--vermelho-600)", color: "var(--cor-branco)", border: "none",
-            borderRadius: 12, padding: "10px 20px", fontSize: 13, fontWeight: 700, cursor: "pointer"
+            borderRadius: 12, padding: "10px 20px", fontSize: 13, fontWeight: 700,
+            cursor: excluindoTodasDoMes ? "not-allowed" : "pointer",
+            opacity: excluindoTodasDoMes ? 0.6 : 1
           }
-        }, "🗑 Excluir todas definitivamente"),
+        }, excluindoTodasDoMes ? "Excluindo..." : "🗑 Excluir todas definitivamente"),
         /*#__PURE__*/React.createElement("button", {
           onClick: () => setModalExcluirTodas(false),
+          disabled: excluindoTodasDoMes,
           style: {
             background: "var(--cinza-100)", color: "var(--cinza-600)", border: "none",
             borderRadius: 12, padding: "10px 20px", fontSize: 13, fontWeight: 600, cursor: "pointer"
