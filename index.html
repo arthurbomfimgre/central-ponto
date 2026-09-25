@@ -216,7 +216,16 @@ async function lerSupa(key, fb) {
     // que espera um array com campo `id`, formato incompatível com a tabela.
     if (key === SK_EASYMOB || key === `${SK_EASYMOB}_map`) {
       const { data } = await supa.from(table).select("*");
-      if (!data || data.length === 0) return fb;
+      // CORRIGIDO: `data === null` (erro real de conexão/permissão) é o
+      // único caso que deve cair no fallback `fb`. `data` sendo um array
+      // vazio `[]` é uma resposta VÁLIDA do Postgres (a tabela existe e
+      // simplesmente não tem linhas agora, ex: depois de um "excluir
+      // todos") — antes isso também caía em `fb`, e para tabelas cujo
+      // `fb`/valor inicial é um array de dados de teste hardcoded (ver
+      // `ocorrencias` mais abaixo em useSharedState), isso fazia esses
+      // dados antigos "reaparecerem" na tela toda vez que a tabela real
+      // ficava vazia, mesmo com a exclusão tendo funcionado no banco.
+      if (data === null || data === undefined) return fb;
       // easymob armazena chave/valor simples
       const obj = {};
       data.forEach(r => { obj[r.chave] = r.data; });
@@ -228,7 +237,9 @@ async function lerSupa(key, fb) {
     // que as outras tabelas de useSharedState usam — não há coluna `data`
     // aqui, então lê-se a linha inteira direto.
     const { data } = await supa.from(table).select(key === SK_FUNCS ? "*" : "data");
-    if (!data || data.length === 0) return fb;
+    // CORRIGIDO (mesmo motivo do bloco easymob acima): só usar `fb` quando
+    // `data` vier null/undefined (erro real). Array vazio é sucesso.
+    if (data === null || data === undefined) return fb;
     const result = key === SK_FUNCS ? data : data.map(r => r.data);
     _cache[key] = result;
     salvarLS(key, result);
