@@ -296,9 +296,30 @@ async function salvarSupa(key, val) {
     // Remove ids que não existem mais. `funcionarios_administrativo` usa id
     // UUID (precisa de aspas em cada valor do filtro .in); as demais tabelas
     // usam id inteiro (sem aspas), como já era antes.
+    //
+    // CORREÇÃO (2026-09-25): esse delete não verificava `error` e a função
+    // sempre retornava { ok: true } logo em seguida, incondicionalmente —
+    // então uma falha aqui (ex: sintaxe `not("id","in","()")` inválida
+    // quando `ids` fica vazio, ou qualquer outro erro do Postgres/rede)
+    // era 100% engolida: a UI mostrava sucesso, salvava no localStorage,
+    // mas o servidor mantinha as linhas "excluídas" — só reapareciam ao
+    // limpar o localStorage e reler do banco do zero. Esse é o cenário
+    // exato de "Excluir todas do mês": se o array restante não tiver mais
+    // nenhum id (ids.length === 0), o filtro `not(id,in,())` é inválido;
+    // usar o mesmo delete "apagar tudo" do ramo val.length === 0 acima.
     const ids = val.map(i => i.id);
-    const idsFiltro = key === SK_FUNCS ? ids.map(id => `"${id}"`).join(",") : ids.join(",");
-    await supa.from(table).delete().not("id", "in", "(" + idsFiltro + ")");
+    let errDelete;
+    if (ids.length === 0) {
+      const { error } = key === SK_FUNCS
+        ? await supa.from(table).delete().not("id", "is", null)
+        : await supa.from(table).delete().neq("id", -999999);
+      errDelete = error;
+    } else {
+      const idsFiltro = key === SK_FUNCS ? ids.map(id => `"${id}"`).join(",") : ids.join(",");
+      const { error } = await supa.from(table).delete().not("id", "in", "(" + idsFiltro + ")");
+      errDelete = error;
+    }
+    if (errDelete) return { ok: false, erro: errDelete.message };
     return { ok: true };
   } catch (e) {
     // Falha de rede/inesperada — já salvou no localStorage como fallback,
