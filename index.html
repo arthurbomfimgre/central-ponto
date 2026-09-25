@@ -206,7 +206,20 @@ function comprimirImagem(dataUrl, maxLado = 1280, qualidade = 0.75) {
 }
 
 // Ler do Supabase (retorna array de objetos ou valor easymob)
-async function lerSupa(key, fb) {
+//
+// `filtroFuncionarioId`, quando informado, restringe a leitura da tabela
+// `easymob` às linhas cuja `chave` começa com "<id>_" (o formato usado em
+// todo o app é `${funcionario_id}_${ocorrencia_id}`). Antes, QUALQUER
+// leitura do mapa do EasyMob (inclusive a do Portal do próprio funcionário,
+// que só precisa dos próprios prints) fazia `select("*")` sem filtro algum
+// — baixando os prints (fotos em base64) de TODOS os funcionários para
+// TODOS os dispositivos, repetido a cada poll de 3s. Isso era tanto um
+// problema de performance (payload gigante e desnecessário) quanto de
+// privacidade (o funcionário conseguia, tecnicamente, acessar prints
+// alheios pelo estado do app no navegador). Continua sem filtro nas telas
+// de gestão (admin), que legitimamente precisam ver prints de vários
+// funcionários.
+async function lerSupa(key, fb, filtroFuncionarioId) {
   try {
     const table = KEY_TABLE[key];
     if (!table) return fb;
@@ -215,7 +228,13 @@ async function lerSupa(key, fb) {
     // jeito que SK_EASYMOB (chave/valor simples), senão cai no ramo de baixo
     // que espera um array com campo `id`, formato incompatível com a tabela.
     if (key === SK_EASYMOB || key === `${SK_EASYMOB}_map`) {
-      const { data } = await supa.from(table).select("*");
+      let query = supa.from(table).select("*");
+      if (filtroFuncionarioId !== undefined && filtroFuncionarioId !== null) {
+        // `like` com wildcard no fim: a coluna `chave` é "<func_id>_<oc_id>",
+        // então "<func_id>_%" casa só com as linhas deste funcionário.
+        query = query.like("chave", `${filtroFuncionarioId}_%`);
+      }
+      const { data } = await query;
       // CORRIGIDO: `data === null` (erro real de conexão/permissão) é o
       // único caso que deve cair no fallback `fb`. `data` sendo um array
       // vazio `[]` é uma resposta VÁLIDA do Postgres (a tabela existe e
@@ -354,7 +373,7 @@ async function salvarSupa(key, val) {
 // salvarLS(key) e em _cache[key] — poluindo o cache local mesmo depois de a
 // flag de teste ser ativada. Bloquear a leitura/gravação real até
 // sessaoPronta === true elimina essa corrida por completo.
-function useSharedState(key, initial, sessaoPronta, contaTesteFlag) {
+function useSharedState(key, initial, sessaoPronta, contaTesteFlag, filtroFuncionarioId) {
   // Conta de teste: nunca lê nem grava no Supabase. Todo o estado fica
   // isolado sob uma chave própria no localStorage ("cp_teste_<key>"),
   // começando vazio ([]/{} conforme o tipo do `initial`, nunca os dados
@@ -409,13 +428,13 @@ function useSharedState(key, initial, sessaoPronta, contaTesteFlag) {
   useEffect(() => {
     if (!sessaoPronta) return;
     if (contaTesteAtiva()) return;
-    lerSupa(key, initial).then(val => {
+    lerSupa(key, initial, filtroFuncionarioId).then(val => {
       if (val !== null && val !== undefined) {
         setRaw(val);
         loaded.current = true;
       }
     });
-  }, [key, sessaoPronta, contaTesteFlag]);
+  }, [key, sessaoPronta, contaTesteFlag, filtroFuncionarioId]);
 
   // Polling a cada 3s para sincronizar entre dispositivos — desligado em
   // modo teste e enquanto a sessão ainda não foi verificada
@@ -423,7 +442,7 @@ function useSharedState(key, initial, sessaoPronta, contaTesteFlag) {
     if (!sessaoPronta) return;
     if (contaTesteAtiva()) return;
     const id = setInterval(async () => {
-      const fresh = await lerSupa(key, null);
+      const fresh = await lerSupa(key, null, filtroFuncionarioId);
       if (fresh !== null && fresh !== undefined) {
         setRaw(prev => {
           const ps = JSON.stringify(prev), fs = JSON.stringify(fresh);
@@ -432,7 +451,7 @@ function useSharedState(key, initial, sessaoPronta, contaTesteFlag) {
       }
     }, 3000);
     return () => clearInterval(id);
-  }, [key, sessaoPronta]);
+  }, [key, sessaoPronta, filtroFuncionarioId]);
 
   // Ref sempre sincronizado com o `state` mais recente. Necessário porque
   // `setState` abaixo precisa ler o valor atual de forma síncrona (sem
@@ -9557,7 +9576,10 @@ function PortalFuncionario({
   const [sucesso, setSucesso] = useState(false);
   // Sem sessaoPronta/contaTesteAtivaAgora, a carga inicial e o polling de
   // useSharedState nunca disparavam para este componente.
-  const [easymobMap, setEasymobMap] = useSharedState(`${SK_EASYMOB}_map`, {}, sessaoPronta, contaTesteAtivaAgora);
+  // Filtrado por funcLogado.id: esta é a tela do próprio funcionário, que só
+  // precisa (e só deve ver) os próprios prints do EasyMob — não o mapa
+  // inteiro de todos os funcionários (ver comentário em lerSupa).
+  const [easymobMap, setEasymobMap] = useSharedState(`${SK_EASYMOB}_map`, {}, sessaoPronta, contaTesteAtivaAgora, funcLogado.id);
   const [enviandoEasymob, setEnviandoEasymob] = useState(null); // id da ocorrência em envio
   const [erroEasymob, setErroEasymob] = useState(null);
   const [trocandoTipo, setTrocandoTipo] = useState(null); // id da ocorrência com a grade de tipo reaberta
