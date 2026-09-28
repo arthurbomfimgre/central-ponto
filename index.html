@@ -1661,6 +1661,27 @@ function Esqueleto({ linhas = 3, altura = 14, gap = 10, largura }) {
   );
 }
 
+// ─── ESTADO VAZIO COM AÇÃO ──────────────────────────────────────────────
+// Ícone + frase + (opcional) botão da ação que resolve o vazio. Substitui as
+// mensagens "Nenhum X" em texto puro onde existe um próximo passo óbvio.
+function EstadoVazio({ icone, titulo, texto, acaoLabel, onAcao, padding = "32px 16px" }) {
+  return /*#__PURE__*/React.createElement("div", {
+    style: { textAlign: "center", padding, color: "var(--texto-fraco)", fontSize: 13 }
+  },
+    icone && /*#__PURE__*/React.createElement("div", { "aria-hidden": "true", style: { fontSize: 28, marginBottom: 8 } }, icone),
+    /*#__PURE__*/React.createElement("div", { style: { fontWeight: 600, color: "var(--cinza-700)" } }, titulo),
+    texto && /*#__PURE__*/React.createElement("div", { style: { marginTop: 4, fontSize: 12, lineHeight: 1.5 } }, texto),
+    acaoLabel && onAcao && /*#__PURE__*/React.createElement("button", {
+      type: "button",
+      onClick: onAcao,
+      style: {
+        marginTop: 14, padding: "8px 18px", borderRadius: 12, border: "1px solid var(--cinza-200)",
+        background: "var(--cor-branco)", fontSize: 12.5, fontWeight: 600, color: "var(--marca-500)", cursor: "pointer"
+      }
+    }, acaoLabel)
+  );
+}
+
 // Variante em formato de linha de lista (avatar + duas barras), para telas
 // que carregam pessoas — árvore de hierarquia, listas de funcionários.
 function EsqueletoLinhas({ quantidade = 6 }) {
@@ -3737,14 +3758,7 @@ comparativo: temAnterior ? { atual: excedido, anterior: antExcedido, menorMelhor
       cursor: "pointer",
       fontWeight: 600
     }
-  }, "Ver todas →")), recentes.length === 0 ? /*#__PURE__*/React.createElement("div", {
-    style: {
-      textAlign: "center",
-      padding: "32px 0",
-      color: "var(--texto-fraco)",
-      fontSize: 13
-    }
-  }, "✅ Nenhuma pendência em aberto.") : /*#__PURE__*/React.createElement("div", {
+  }, "Ver todas →")), recentes.length === 0 ? /*#__PURE__*/React.createElement(EstadoVazio, { icone: "✅", titulo: "Nenhuma pendência em aberto", texto: "Tudo em dia neste mês.", acaoLabel: "Registrar pendência do dia", onAcao: () => setModalCriar(true) }) : /*#__PURE__*/React.createElement("div", {
     style: {
       display: "flex",
       flexDirection: "column",
@@ -3855,14 +3869,7 @@ comparativo: temAnterior ? { atual: excedido, anterior: antExcedido, menorMelhor
       tipo: t,
       total: ocorrenciasMes.filter(o => o.tipo === t).length
     })).filter(x => x.total > 0);
-    return totalPorTipoDash.length === 0 ? /*#__PURE__*/React.createElement("div", {
-      style: {
-        textAlign: "center",
-        padding: "24px 0",
-        color: "var(--texto-fraco)",
-        fontSize: 13
-      }
-    }, "Nenhum dado no período.") : /*#__PURE__*/React.createElement("div", {
+    return totalPorTipoDash.length === 0 ? /*#__PURE__*/React.createElement(EstadoVazio, { icone: "📊", titulo: "Nenhum dado no período", texto: "Importe o ponto do mês para ver os indicadores.", acaoLabel: "Importar ponto", onAcao: () => setModalImportarPonto(true), padding: "24px 16px" }) : /*#__PURE__*/React.createElement("div", {
       style: {
         display: "flex",
         flexDirection: "column",
@@ -4423,9 +4430,7 @@ function ListaFuncionarios({
     style: { display: "flex", flexDirection: "column", gap: 10 }
   },
     arvoreFuncionarios.length === 0
-      ? /*#__PURE__*/React.createElement("div", {
-          style: { padding: 40, textAlign: "center", color: "var(--texto-fraco)", fontSize: 13, background: "var(--cor-branco)", borderRadius: 16, border: "1px solid var(--cinza-100)" }
-        }, "Nenhuma diretoria cadastrada.")
+      ? /*#__PURE__*/React.createElement(EstadoVazio, { icone: "🏢", titulo: "Nenhuma diretoria cadastrada", texto: "A hierarquia é criada pela importação da planilha (aba Hierarquia, disponível para administradores).", padding: 40 })
       : arvoreFuncionarios.map(d => /*#__PURE__*/React.createElement(NoDiretoriaFuncionarios, {
           key: d.id,
           diretoria: d,
@@ -7541,14 +7546,7 @@ function PerfilFuncionario({
       background: filtroStatus === s ? "var(--indigo-500)" : "var(--cor-branco)",
       color: filtroStatus === s ? "var(--cor-branco)" : "var(--cinza-500)"
     }
-  }, s)))), ocsFilt.length === 0 ? /*#__PURE__*/React.createElement("div", {
-    style: {
-      padding: 40,
-      textAlign: "center",
-      color: "var(--texto-fraco)",
-      fontSize: 13
-    }
-  }, "Nenhuma ocorrência nesse filtro.") : /*#__PURE__*/React.createElement("table", {
+  }, s)))), ocsFilt.length === 0 ? /*#__PURE__*/React.createElement(EstadoVazio, { icone: "🗂️", titulo: "Nenhuma ocorrência nesse filtro", acaoLabel: filtroStatus !== "Todos" ? "Mostrar todas" : undefined, onAcao: () => setFiltroStatus("Todos"), padding: 40 }) : /*#__PURE__*/React.createElement("table", {
     style: {
       width: "100%",
       minWidth: 700,
@@ -9751,6 +9749,7 @@ function PortalFuncionario({
 }) {
   // Desde a migração de ago/2026, os ids de `funcionarios_administrativo`
   // (UUID) e `funcionarios_comercial` (inteiro) nunca colidem — basta o id.
+  const [verTodasNotifs, setVerTodasNotifs] = useState(false);
   const funcLogado = funcionarios.find(f => f.id === usuarioLogado.funcionario_id) || funcionarios[0];
   // Conta de teste (ou qualquer cenário sem nenhum funcionário cadastrado):
   // não há dono do portal para exibir. Em vez de deixar o restante do
@@ -9798,7 +9797,8 @@ function PortalFuncionario({
 
   // Notificações para este funcionário — com auto-dismiss para verificadas
   const minhasNotifs = notifs.filter(n => n.paraFunc === funcLogado.id);
-  const notifsVisiveis = minhasNotifs.filter(n => !n.dismissed).slice(0, 5);
+  const notifsAtivas = minhasNotifs.filter(n => !n.dismissed);
+  const notifsVisiveis = verTodasNotifs ? notifsAtivas : notifsAtivas.slice(0, 5);
   function dispensarNotif(id) {
     setNotifs(prev => prev.map(n => n.id === id ? {
       ...n,
@@ -10092,7 +10092,11 @@ function PortalFuncionario({
       padding: 0,
       lineHeight: 1
     }
-  }, "✕")))), sucesso && /*#__PURE__*/React.createElement("div", {
+  }, "✕"))), notifsAtivas.length > 5 && /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    onClick: () => setVerTodasNotifs(v => !v),
+    style: { alignSelf: "flex-start", background: "none", border: "none", cursor: "pointer", fontSize: 12.5, fontWeight: 600, color: "var(--marca-500)", padding: "2px 0" }
+  }, verTodasNotifs ? "Mostrar menos" : `Ver todas (${notifsAtivas.length})`)), sucesso && /*#__PURE__*/React.createElement("div", {
     style: {
       background: "var(--verde-100)",
       border: "1px solid var(--verde-200)",
@@ -12591,6 +12595,7 @@ function PainelPermissoes() {
     return pessoa.nivel || nivelPadraoDoLado;
   }
   const [busca, setBusca] = useState("");
+  const buscaAdiada = useValorAdiado(busca);
   const [pessoaExcecao, setPessoaExcecao] = useState(null);
   // Trocar de lado limpa a pessoa selecionada — ela pertence à lista do
   // lado anterior e sumiria da busca, deixando o painel da direita aberto
@@ -12646,7 +12651,7 @@ function PainelPermissoes() {
   // nome_completo, administrativo usa nome (ver normalizarFuncComercial /
   // schema de funcionarios_administrativo).
   const listaPessoasSelecao = useMemo(() => {
-    const termo = busca.trim().toLowerCase();
+    const termo = buscaAdiada.trim().toLowerCase();
     const ativas = dadosPessoas.funcionarios.filter(f =>
       ladoSelecionado === "administrativo" ? (f.ativo !== false) : (f.situacao || "ATIVO").toUpperCase() === "ATIVO"
     );
@@ -12656,7 +12661,7 @@ function PainelPermissoes() {
     return [...filtradas]
       .sort((a, b) => nomeExibicao(a, nomesExibicaoPessoas).localeCompare(nomeExibicao(b, nomesExibicaoPessoas), "pt-BR", { sensitivity: "base" }))
       .slice(0, 60);
-  }, [busca, dadosPessoas.funcionarios, nomesExibicaoPessoas, ladoSelecionado]);
+  }, [buscaAdiada, dadosPessoas.funcionarios, nomesExibicaoPessoas, ladoSelecionado]);
 
   async function toggle(papel, chave, valorAtual) {
     const chaveOp = `${papel}:${chave}`;
