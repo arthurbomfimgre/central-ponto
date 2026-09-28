@@ -116,7 +116,7 @@
   --superficie-2:     var(--cinza-50);   /* um nível abaixo da superfície: agrupadores, nós de árvore, hover sutil */
   --borda:            var(--cinza-100);  /* borda padrão de cartões e inputs */
   --texto:            var(--cinza-900);  /* texto principal */
-  --texto-fraco:       var(--cinza-400);  /* texto secundário/legendas */
+  --texto-fraco:       #64748b;  /* texto secundário/legendas — 4.7:1 sobre branco (WCAG AA) */
 
   /* Branco literal — para texto/ícones sobre fundo de marca fixo (banner
      hero, botões com --marca-gradiente) que NÃO deve responder ao tema
@@ -350,4 +350,16 @@ html {
 
 body, #root {
   transition: background-color .2s ease, color .2s ease;
+}
+
+/* ─── FOCO VISÍVEL (teclado) ───────────────────────────────────────────────
+   !important porque muitos campos têm outline:"none" inline. Só aparece na
+   navegação por teclado (:focus-visible), não no clique do mouse. */
+:focus-visible {
+  outline: 2px solid var(--marca-400) !important;
+  outline-offset: 2px;
+}
+input:focus-visible, select:focus-visible, textarea:focus-visible {
+  outline-offset: 0;
+  box-shadow: 0 0 0 3px var(--marca-transparente);
 }
