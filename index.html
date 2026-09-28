@@ -7039,7 +7039,7 @@ function ModalImportarHierarquia({ onClose, onConcluido }) {
           ["Sem alteração", (planoFiltrado.funcionariosSemAlteracao || []).map(f => f.nome + " — mat. " + f.matricula), "var(--cinza-50)", "var(--cinza-600)"],
           ["Inativados (perdem o acesso)", planoFiltrado.funcionariosInativados.map(f => nomeParaLog(f) + " — mat. " + f.matricula + (f.nivel && f.nivel !== "vendedor" ? " ⚠ " + f.nivel : "")), "var(--amber-50)", "var(--amber-800)"]
         ].filter(([, itens]) => itens.length > 0).map(([titulo, itens, bg, cor]) => /*#__PURE__*/React.createElement("details", {
-          key: titulo, style: { background: bg, borderRadius: 12, padding: "10px 14px", fontSize: 13 }
+          key: titulo, style: { background: bg, color: "var(--texto)", borderRadius: 12, padding: "10px 14px", fontSize: 13 }
         },
           /*#__PURE__*/React.createElement("summary", { style: { fontWeight: 700, color: cor, cursor: "pointer" } }, "Ver ", titulo.toLowerCase(), " (", itens.length, ")"),
           /*#__PURE__*/React.createElement("ul", { style: { paddingLeft: 18, marginTop: 8, display: "flex", flexDirection: "column", gap: 2, maxHeight: 200, overflow: "auto" } },
@@ -7107,7 +7107,7 @@ function ModalImportarHierarquia({ onClose, onConcluido }) {
       // linhas, mas ainda assim consultável na hora sem precisar ir noutra
       // tela.
       concluido.listaNovos?.length > 0 && /*#__PURE__*/React.createElement("details", {
-        style: { background: "var(--verde-50)", borderRadius: 12, padding: "10px 14px", fontSize: 13 }
+        style: { background: "var(--verde-50)", color: "var(--texto)", borderRadius: 12, padding: "10px 14px", fontSize: 13 }
       },
         /*#__PURE__*/React.createElement("summary", { style: { fontWeight: 700, color: "var(--verde-800)", cursor: "pointer" } },
           "Ver ", concluido.listaNovos.length, " funcionário(s) novo(s)"),
@@ -7115,7 +7115,7 @@ function ModalImportarHierarquia({ onClose, onConcluido }) {
           concluido.listaNovos.map((f, i) => /*#__PURE__*/React.createElement("li", { key: i }, f.nome, " — mat. ", f.matricula)))
       ),
       concluido.listaAtualizados?.length > 0 && /*#__PURE__*/React.createElement("details", {
-        style: { background: "var(--azul-50)", borderRadius: 12, padding: "10px 14px", fontSize: 13 }
+        style: { background: "var(--azul-50)", color: "var(--texto)", borderRadius: 12, padding: "10px 14px", fontSize: 13 }
       },
         /*#__PURE__*/React.createElement("summary", { style: { fontWeight: 700, color: "var(--azul-700)", cursor: "pointer" } },
           "Ver ", concluido.listaAtualizados.length, " funcionário(s) atualizado(s)"),
@@ -7123,7 +7123,7 @@ function ModalImportarHierarquia({ onClose, onConcluido }) {
           concluido.listaAtualizados.map((f, i) => /*#__PURE__*/React.createElement("li", { key: i }, f.nome, " — mat. ", f.matricula, f.detalhe ? " — " + f.detalhe : "")))
       ),
       concluido.listaInativados?.length > 0 && /*#__PURE__*/React.createElement("details", {
-        style: { background: "var(--amber-50)", borderRadius: 12, padding: "10px 14px", fontSize: 13 }
+        style: { background: "var(--amber-50)", color: "var(--texto)", borderRadius: 12, padding: "10px 14px", fontSize: 13 }
       },
         /*#__PURE__*/React.createElement("summary", { style: { fontWeight: 700, color: "var(--amber-800)", cursor: "pointer" } },
           "Ver ", concluido.listaInativados.length, " funcionário(s) inativado(s) / acesso revogado"),
@@ -7131,7 +7131,7 @@ function ModalImportarHierarquia({ onClose, onConcluido }) {
           concluido.listaInativados.map((f, i) => /*#__PURE__*/React.createElement("li", { key: i }, f.nome, " — mat. ", f.matricula)))
       ),
       concluido.revogadosRetroativos?.length > 0 && /*#__PURE__*/React.createElement("details", {
-        style: { background: "var(--amber-50)", borderRadius: 12, padding: "10px 14px", fontSize: 13 }
+        style: { background: "var(--amber-50)", color: "var(--texto)", borderRadius: 12, padding: "10px 14px", fontSize: 13 }
       },
         /*#__PURE__*/React.createElement("summary", { style: { fontWeight: 700, color: "var(--amber-800)", cursor: "pointer" } },
           "Ver ", concluido.revogadosRetroativos.length, " funcionário(s) que já estavam inativos e tiveram o acesso revogado agora"),
