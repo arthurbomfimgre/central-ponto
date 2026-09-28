@@ -7035,11 +7035,11 @@ function ModalImportarHierarquia({ onClose, onConcluido }) {
         // que perdem o acesso: conferir aqui evita revogar login por engano.
         [
           ["Novos", planoFiltrado.funcionariosNovos.map(f => nomeParaLog(f) + " — mat. " + f.matricula), "var(--verde-50)", "var(--verde-800)"],
-          ["Atualizados", planoFiltrado.funcionariosAtualizados.map(f => f.nome + " — mat. " + f.matriculaAnterior + " — " + textoMudancas(f.mudancas)), "var(--azul-50)", "var(--azul-700)"],
+          ["Atualizados", planoFiltrado.funcionariosAtualizados.map(f => f.nome + " — mat. " + f.matriculaAnterior + " — " + textoMudancas(f.mudancas)), "var(--azul-50)", "var(--azul-700)", "var(--azul-800)"],
           ["Sem alteração", (planoFiltrado.funcionariosSemAlteracao || []).map(f => f.nome + " — mat. " + f.matricula), "var(--cinza-50)", "var(--cinza-600)"],
           ["Inativados (perdem o acesso)", planoFiltrado.funcionariosInativados.map(f => nomeParaLog(f) + " — mat. " + f.matricula + (f.nivel && f.nivel !== "vendedor" ? " ⚠ " + f.nivel : "")), "var(--amber-50)", "var(--amber-800)"]
-        ].filter(([, itens]) => itens.length > 0).map(([titulo, itens, bg, cor]) => /*#__PURE__*/React.createElement("details", {
-          key: titulo, style: { background: bg, color: "var(--texto)", borderRadius: 12, padding: "10px 14px", fontSize: 13 }
+        ].filter(([, itens]) => itens.length > 0).map(([titulo, itens, bg, cor, corTexto]) => /*#__PURE__*/React.createElement("details", {
+          key: titulo, style: { background: bg, color: corTexto || "var(--texto)", borderRadius: 12, padding: "10px 14px", fontSize: 13 }
         },
           /*#__PURE__*/React.createElement("summary", { style: { fontWeight: 700, color: cor, cursor: "pointer" } }, "Ver ", titulo.toLowerCase(), " (", itens.length, ")"),
           /*#__PURE__*/React.createElement("ul", { style: { paddingLeft: 18, marginTop: 8, display: "flex", flexDirection: "column", gap: 2, maxHeight: 200, overflow: "auto" } },
@@ -7115,7 +7115,7 @@ function ModalImportarHierarquia({ onClose, onConcluido }) {
           concluido.listaNovos.map((f, i) => /*#__PURE__*/React.createElement("li", { key: i }, f.nome, " — mat. ", f.matricula)))
       ),
       concluido.listaAtualizados?.length > 0 && /*#__PURE__*/React.createElement("details", {
-        style: { background: "var(--azul-50)", color: "var(--texto)", borderRadius: 12, padding: "10px 14px", fontSize: 13 }
+        style: { background: "var(--azul-50)", color: "var(--azul-800)", borderRadius: 12, padding: "10px 14px", fontSize: 13 }
       },
         /*#__PURE__*/React.createElement("summary", { style: { fontWeight: 700, color: "var(--azul-700)", cursor: "pointer" } },
           "Ver ", concluido.listaAtualizados.length, " funcionário(s) atualizado(s)"),
