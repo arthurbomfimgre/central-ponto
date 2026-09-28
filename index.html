@@ -355,8 +355,11 @@ async function lerSupa(key, fb, filtroFuncionarioId) {
 // mesmo quando o dado nunca chegava ao banco (ex: print do EasyMob).
 async function salvarSupa(key, val) {
   try {
-    _cache[key] = val;
-    salvarLS(key, val); // cache local imediato
+if (typeof navigator !== "undefined" && navigator.onLine === false) {
+return { ok: false, erro: "Sem conexão com a internet — alteração não foi salva." };
+}
+_cache[key] = val;
+salvarLS(key, val); // cache local imediato
     const table = KEY_TABLE[key];
     if (!table) return { ok: true };
 
@@ -1696,7 +1699,7 @@ function Badge({
       fontSize: 11,
       fontWeight: 600,
       padding: "2px 10px",
-      borderRadius: 20,
+      borderRadius: 16,
       whiteSpace: "nowrap"
     }
   }, status);
@@ -1833,7 +1836,7 @@ function SeletorMes({
       position: "absolute",
       right: 12,
       fontSize: 11,
-      color: "var(--cinza-400)",
+      color: "var(--texto-fraco)",
       pointerEvents: "none"
     }
   }, "▾"));
@@ -2010,7 +2013,7 @@ function SeletorData({
       textAlign: "center",
       fontSize: 11,
       fontWeight: 700,
-      color: "var(--cinza-400)",
+      color: "var(--texto-fraco)",
       padding: "4px 0"
     }
   }, d))), /*#__PURE__*/React.createElement("div", {
@@ -2055,7 +2058,8 @@ function KpiCard({
   value,
   sub,
   accent,
-  icon
+  icon,
+  comparativo // { atual, anterior, menorMelhor }
 }) {
   return /*#__PURE__*/React.createElement("div", {
     style: {
@@ -2077,7 +2081,7 @@ function KpiCard({
   }, /*#__PURE__*/React.createElement("span", {
     style: {
       fontSize: 12,
-      color: "var(--cinza-400)",
+      color: "var(--texto-fraco)",
       fontWeight: 500,
       letterSpacing: ".04em",
       textTransform: "uppercase"
@@ -2096,9 +2100,18 @@ function KpiCard({
   }, value), sub && /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 12,
-      color: "var(--cinza-400)"
-    }
-  }, sub));
+      color: "var(--texto-fraco)"
+}
+}, sub), comparativo && (() => {
+    const { atual, anterior, menorMelhor = true } = comparativo;
+    const dif = atual - anterior;
+    const pct = anterior > 0 ? Math.round(Math.abs(dif) / anterior * 100) : null;
+    const seta = dif === 0 ? "＝" : dif > 0 ? "▲" : "▼";
+    const bom = dif === 0 ? null : (dif < 0) === menorMelhor;
+    const cor = bom === null ? "var(--texto-fraco)" : bom ? "var(--verde-700)" : "var(--vermelho-600)";
+    return /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, fontWeight: 600, color: cor }, title: "Mês anterior: " + anterior },
+      seta + " " + (dif > 0 ? "+" : dif < 0 ? "−" : "") + Math.abs(dif) + (pct !== null && dif !== 0 ? " (" + pct + "%)" : "") + " vs. mês anterior");
+  })());
 }
 // Contador global de modais abertos: garante que o overflow do body só volta
 // ao normal quando o ÚLTIMO modal empilhado fechar (perfil abre modal dentro
@@ -2159,7 +2172,7 @@ function Modal({
     style: {
       outline: "none",
       background: "var(--cor-branco)",
-      borderRadius: 20,
+      borderRadius: 16,
       width: "100%",
       maxWidth,
       maxHeight: "90vh",
@@ -2218,12 +2231,20 @@ function Toast({
   // Só os 3 mais recentes aparecem — sem isso, uma sequência rápida de ações
   // empilhava avisos até cobrir a tela inteira no celular.
   const visiveis = toasts.slice(-3);
-  return /*#__PURE__*/React.createElement("div", {
-    role: "status",
-    "aria-live": "polite",
-    style: {
-      position: "fixed",
-      bottom: 24,
+  const corTipo = tt => {
+const ic = tt.icon || "";
+if (/❌|🔴/.test(ic)) return "var(--vermelho-500)";
+if (/⚠|🟡|⏳/.test(ic)) return "var(--amber-500)";
+if (/✅/.test(ic)) return "var(--verde-600)";
+return "var(--marca-400)";
+};
+return /*#__PURE__*/React.createElement("div", {
+className: "cp-toast-wrap",
+role: "status",
+"aria-live": "polite",
+style: {
+position: "fixed",
+bottom: 24,
       right: 24,
       zIndex: 2000,
       display: "flex",
@@ -2231,13 +2252,14 @@ function Toast({
       gap: 10,
       maxWidth: "calc(100vw - 48px)"
     }
-  }, /*#__PURE__*/React.createElement("style", null, `@keyframes slideIn{from{transform:translateX(110%);opacity:0}to{transform:translateX(0);opacity:1}}`), visiveis.map(t => /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("style", null, `@media (max-width:900px){.cp-toast-wrap{top:12px !important;bottom:auto !important;left:12px !important;right:12px !important;align-items:center}.cp-toast-wrap>div{min-width:0 !important;width:100%}}@keyframes slideIn{from{transform:translateX(110%);opacity:0}to{transform:translateX(0);opacity:1}}`), visiveis.map(t => /*#__PURE__*/React.createElement("div", {
     key: t.id,
     style: {
       background: "var(--cinza-900)",
       color: "var(--cor-branco)",
       borderRadius: 16,
-      padding: "14px 18px",
+borderLeft: "5px solid " + corTipo(t),
+padding: "14px 18px",
       minWidth: 300,
       maxWidth: 400,
       boxShadow: "0 8px 32px var(--sombra-forte)",
@@ -2452,7 +2474,7 @@ function TelaLogin({
   }, "Gestão de ponto e pendências")), /*#__PURE__*/React.createElement("div", {
     style: {
       background: "var(--cor-branco)",
-      borderRadius: 24,
+      borderRadius: 16,
       padding: "36px 36px 32px",
       boxShadow: "0 8px 40px var(--sombra-suave)",
       border: "1px solid var(--cinza-100)"
@@ -2493,8 +2515,11 @@ function TelaLogin({
     onChange: e => setEmailRecuperar(e.target.value),
     onKeyDown: e => e.key === "Enter" && statusRecuperar !== "enviando" && enviarRecuperacao(),
     placeholder: "nome.sobrenome@portovale.com.br",
-    style: inp
-  })), statusRecuperar && statusRecuperar !== "enviando" && /*#__PURE__*/React.createElement("div", {
+autoComplete: "email",
+name: "email",
+"aria-label": "E-mail",
+style: inp
+})), statusRecuperar && statusRecuperar !== "enviando" && /*#__PURE__*/React.createElement("div", {
     style: {
       background: "var(--vermelho-100)",
       border: "1px solid var(--vermelho-300)",
@@ -2550,8 +2575,11 @@ function TelaLogin({
     value: usuario,
     onChange: e => setUsuario(e.target.value),
     onKeyDown: e => e.key === "Enter" && handle(),
-    placeholder: "nome.sobrenome@portovale.com.br",
-    style: inp
+placeholder: "nome.sobrenome@portovale.com.br",
+autoComplete: "username",
+name: "username",
+"aria-label": "E-mail",
+style: inp
   })), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
     style: {
       fontSize: 13,
@@ -2570,8 +2598,11 @@ function TelaLogin({
     onChange: e => setSenha(e.target.value),
     onKeyDown: e => e.key === "Enter" && handle(),
     placeholder: "Senha",
-    style: {
-      ...inp,
+autoComplete: "current-password",
+name: "password",
+"aria-label": "Senha",
+style: {
+...inp,
       paddingRight: 42
     }
   }), /*#__PURE__*/React.createElement("button", {
@@ -2585,7 +2616,7 @@ function TelaLogin({
       border: "none",
       cursor: "pointer",
       fontSize: 15,
-      color: "var(--cinza-400)"
+      color: "var(--texto-fraco)"
     }
   }, show ? "🙈" : "👁"))), erro && /*#__PURE__*/React.createElement("div", {
     style: {
@@ -2631,7 +2662,7 @@ function TelaLogin({
       textAlign: "center",
       marginTop: 24,
       fontSize: 11,
-      color: "var(--cinza-400)"
+      color: "var(--texto-fraco)"
     }
   }, "Tecnologia GRE · Desenvolvido por Arthur Bomfim"))));
 }
@@ -2640,6 +2671,24 @@ function TelaLogin({
 // Renderizada quando o Supabase Auth dispara PASSWORD_RECOVERY (usuário
 // clicou no link enviado por e-mail). A sessão temporária criada pelo
 // Supabase já autentica updateUser — não é preciso pedir a senha antiga.
+// ─── MEDIDOR DE FORÇA DE SENHA ───────────────────────────────────────────────
+function MedidorForcaSenha({ senha }) {
+  if (!senha) return null;
+  let pts = 0;
+  if (senha.length >= 6) pts++;
+  if (senha.length >= 10) pts++;
+  if (/[a-z]/.test(senha) && /[A-Z]/.test(senha)) pts++;
+  if (/\d/.test(senha)) pts++;
+  if (/[^A-Za-z0-9]/.test(senha)) pts++;
+  const nivel = senha.length < 6 ? 0 : pts <= 2 ? 1 : pts <= 3 ? 2 : 3;
+  const rotulos = ["Muito curta (mínimo 6)", "Fraca", "Média", "Forte"];
+  const cores = ["var(--vermelho-600)", "var(--vermelho-600)", "var(--amber-600)", "var(--verde-600)"];
+  return /*#__PURE__*/React.createElement("div", { style: { marginTop: 8 }, "aria-live": "polite" },
+    /*#__PURE__*/React.createElement("div", { style: { display: "flex", gap: 4 } },
+      [1, 2, 3].map(i => /*#__PURE__*/React.createElement("div", { key: i, style: { flex: 1, height: 4, borderRadius: 999, background: i <= nivel ? cores[nivel] : "var(--cinza-200)" } }))),
+    /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, marginTop: 4, color: cores[nivel], fontWeight: 600 } }, "Força da senha: " + rotulos[nivel]));
+}
+
 function TelaNovaSenha({ onConcluido }) {
   const [senha, setSenha] = useState("");
   const [confirmar, setConfirmar] = useState("");
@@ -2734,9 +2783,11 @@ function TelaNovaSenha({ onConcluido }) {
     value: senha,
     onChange: e => setSenha(e.target.value),
     onKeyDown: e => e.key === "Enter" && !loading && salvar(),
-    placeholder: "Mínimo 6 caracteres",
+autoComplete: "new-password",
+"aria-label": "Nova senha",
+placeholder: "Mínimo 6 caracteres",
     style: inp
-  })), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
+}), /*#__PURE__*/React.createElement(MedidorForcaSenha, { senha })), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
     style: { fontSize: 13, fontWeight: 600, color: "var(--cinza-700)", display: "block", marginBottom: 6 }
   }, "Confirmar senha"), /*#__PURE__*/React.createElement("input", {
     type: "password",
@@ -2744,7 +2795,9 @@ function TelaNovaSenha({ onConcluido }) {
     onChange: e => setConfirmar(e.target.value),
     onKeyDown: e => e.key === "Enter" && !loading && salvar(),
     placeholder: "Repita a nova senha",
-    style: inp
+autoComplete: "new-password",
+"aria-label": "Confirmar senha",
+style: inp
   })), erro && /*#__PURE__*/React.createElement("div", {
     style: {
       background: "var(--vermelho-100)",
@@ -2916,7 +2969,7 @@ function ModalCriarPendencia({
   }, "Observação para o colaborador ", /*#__PURE__*/React.createElement("span", {
     style: {
       fontWeight: 400,
-      color: "var(--cinza-400)"
+      color: "var(--texto-fraco)"
     }
   }, "(opcional)")), /*#__PURE__*/React.createElement("textarea", {
     value: obs,
@@ -3140,7 +3193,7 @@ function ModalAvisarGestor({
   }, "Observação ", /*#__PURE__*/React.createElement("span", {
     style: {
       fontWeight: 400,
-      color: "var(--cinza-400)"
+      color: "var(--texto-fraco)"
     }
   }, "(opcional)")), /*#__PURE__*/React.createElement("textarea", {
     value: obs,
@@ -3362,7 +3415,8 @@ function Dashboard({
   addNotif,
   mesFiltro,
   setMesFiltro,
-  seletorEscopo
+  seletorEscopo,
+  ocorrenciasTodasDatas
 }) {
   const [modalCriar, setModalCriar] = useState(false);
   const [modalImportarPonto, setModalImportarPonto] = useState(false);
@@ -3378,6 +3432,26 @@ function Dashboard({
     });
     return map;
   }, [ocorrenciasMes, funcionarios]);
+  // Comparativo com o mês anterior (mesmo escopo). Só aparece se o mês anterior tiver dados.
+  const ocsMesAnterior = useMemo(() => {
+    if (!ocorrenciasTodasDatas || !mesFiltro) return [];
+    const [a, m] = mesFiltro.split("-").map(Number);
+    const dt = new Date(a, m - 2, 1);
+    const prev = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}`;
+    return ocorrenciasTodasDatas.filter(o => (o.data || "").startsWith(prev));
+  }, [ocorrenciasTodasDatas, mesFiltro]);
+  const temAnterior = ocsMesAnterior.length > 0;
+  const contagensAnt = useMemo(() => {
+    if (!temAnterior) return null;
+    const map = {};
+    funcionarios.forEach(f => { map[f.id] = contarOcorrencias(ocsMesAnterior, f); });
+    return map;
+  }, [temAnterior, ocsMesAnterior, funcionarios]);
+  const antPendentes = ocsMesAnterior.filter(o => o.status === "Pendente").length;
+  const antVerif = ocsMesAnterior.filter(o => o.status === "Verificado").length;
+  const antAlerta = contagensAnt ? funcionarios.filter(f => contagensAnt[f.id].esquecimentos === 2).length : 0;
+  const antLimite = contagensAnt ? funcionarios.filter(f => contagensAnt[f.id].esquecimentos === 3).length : 0;
+  const antExcedido = contagensAnt ? funcionarios.filter(f => contagensAnt[f.id].esquecimentos >= 4).length : 0;
   const alerta = funcionarios.filter(f => contagens[f.id].esquecimentos === 2).length;
   const limite = funcionarios.filter(f => contagens[f.id].esquecimentos === 3).length;
   const excedido = funcionarios.filter(f => contagens[f.id].esquecimentos >= 4).length;
@@ -3513,29 +3587,34 @@ function Dashboard({
   }), /*#__PURE__*/React.createElement(KpiCard, {
     label: "Pendentes",
     value: pendentes,
+comparativo: temAnterior ? { atual: pendentes, anterior: antPendentes, menorMelhor: true } : undefined,
     sub: "Aguardando colaborador",
     accent: pendentes > 0 ? "var(--vermelho-600)" : undefined,
     icon: "⏳"
   }), /*#__PURE__*/React.createElement(KpiCard, {
     label: "Verificados",
     value: verif,
+comparativo: temAnterior ? { atual: verif, anterior: antVerif, menorMelhor: false } : undefined,
     sub: "Concluídos",
     icon: "✅"
   }), /*#__PURE__*/React.createElement(KpiCard, {
     label: "Atenção",
     value: alerta,
+comparativo: temAnterior ? { atual: alerta, anterior: antAlerta, menorMelhor: true } : undefined,
     sub: "2 esquecimentos",
     accent: "var(--amber-600)",
     icon: "🟡"
   }), /*#__PURE__*/React.createElement(KpiCard, {
     label: "Limite",
     value: limite,
+comparativo: temAnterior ? { atual: limite, anterior: antLimite, menorMelhor: true } : undefined,
     sub: "3 esquecimentos",
     accent: "var(--vermelho-600)",
     icon: "🔴"
   }), /*#__PURE__*/React.createElement(KpiCard, {
     label: "Excedido",
     value: excedido,
+comparativo: temAnterior ? { atual: excedido, anterior: antExcedido, menorMelhor: true } : undefined,
     sub: "4+ esquecimentos",
     accent: "var(--excedido-600)",
     icon: "🟣"
@@ -3564,7 +3643,7 @@ function Dashboard({
     style: {
       textAlign: "center",
       padding: "32px 0",
-      color: "var(--cinza-400)",
+      color: "var(--texto-fraco)",
       fontSize: 13
     }
   }, "✅ Nenhum esquecimento este mês.") : /*#__PURE__*/React.createElement("div", {
@@ -3612,7 +3691,7 @@ function Dashboard({
     }, f.nome.split(" ").slice(0, 2).join(" ")), /*#__PURE__*/React.createElement("div", {
       style: {
         fontSize: 11,
-        color: "var(--cinza-400)"
+        color: "var(--texto-fraco)"
       }
     }, f.setor)), /*#__PURE__*/React.createElement(Semaforo, {
       esq: contagens[f.id].esquecimentos
@@ -3622,7 +3701,7 @@ function Dashboard({
         background: al.bg,
         color: al.cor,
         padding: "2px 8px",
-        borderRadius: 20,
+        borderRadius: 16,
         fontWeight: 600
       }
     }, contagens[f.id].esquecimentos));
@@ -3662,7 +3741,7 @@ function Dashboard({
     style: {
       textAlign: "center",
       padding: "32px 0",
-      color: "var(--cinza-400)",
+      color: "var(--texto-fraco)",
       fontSize: 13
     }
   }, "✅ Nenhuma pendência em aberto.") : /*#__PURE__*/React.createElement("div", {
@@ -3723,7 +3802,7 @@ function Dashboard({
         background: "var(--roxo-100)",
         color: "var(--roxo-600)",
         padding: "1px 7px",
-        borderRadius: 20,
+        borderRadius: 16,
         fontWeight: 700,
         display: "inline-block",
         marginTop: 3
@@ -3743,7 +3822,7 @@ function Dashboard({
         background: "var(--amber-400)",
         color: "var(--amber-900)",
         padding: "1px 6px",
-        borderRadius: 20,
+        borderRadius: 16,
         fontWeight: 700
       }
     }, "NOVO")));
@@ -3780,7 +3859,7 @@ function Dashboard({
       style: {
         textAlign: "center",
         padding: "24px 0",
-        color: "var(--cinza-400)",
+        color: "var(--texto-fraco)",
         fontSize: 13
       }
     }, "Nenhum dado no período.") : /*#__PURE__*/React.createElement("div", {
@@ -3813,7 +3892,7 @@ function Dashboard({
       }, total, " ", /*#__PURE__*/React.createElement("span", {
         style: {
           fontWeight: 400,
-          color: "var(--cinza-400)"
+          color: "var(--texto-fraco)"
         }
       }, "(", pct, "%)"))), /*#__PURE__*/React.createElement("div", {
         style: {
@@ -3879,12 +3958,12 @@ function Dashboard({
         style: { maxHeight: 320, overflowY: "auto", paddingRight: 4 }
       },
       topMaisDash.length === 0 ? /*#__PURE__*/React.createElement("p", {
-        style: { fontSize: 12, color: "var(--cinza-400)" }
+        style: { fontSize: 12, color: "var(--texto-fraco)" }
       }, "Nenhuma ocorrência no período.") : topMaisDash.map((f, i) => /*#__PURE__*/React.createElement("div", {
         key: f.id,
         style: { display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }
       }, /*#__PURE__*/React.createElement("span", {
-        style: { fontSize: 11, fontWeight: 700, color: "var(--cinza-400)", width: 14, flexShrink: 0, textAlign: "center" }
+        style: { fontSize: 11, fontWeight: 700, color: "var(--texto-fraco)", width: 14, flexShrink: 0, textAlign: "center" }
       }, i + 1), /*#__PURE__*/React.createElement(Avatar, {
         nome: f.nome,
         id: f.id,
@@ -3906,7 +3985,7 @@ function Dashboard({
           background: "var(--vermelho-100)",
           color: "var(--vermelho-600)",
           padding: "2px 10px",
-          borderRadius: 20,
+          borderRadius: 16,
           fontWeight: 700,
           flexShrink: 0
         }
@@ -3930,14 +4009,14 @@ function Dashboard({
         style: { maxHeight: 320, overflowY: "auto", paddingRight: 4 }
       },
       topMenosDash.length === 0 ? /*#__PURE__*/React.createElement("p", {
-        style: { fontSize: 12, color: "var(--cinza-400)" }
+        style: { fontSize: 12, color: "var(--texto-fraco)" }
       }, "Sem dados no período.") : topMenosDash.map((f, i) => {
         const estrelinha = f.totalOcs === 0;
         return /*#__PURE__*/React.createElement("div", {
           key: f.id,
           style: { display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }
         }, /*#__PURE__*/React.createElement("span", {
-          style: { fontSize: 11, fontWeight: 700, color: "var(--cinza-400)", width: 14, flexShrink: 0, textAlign: "center" }
+          style: { fontSize: 11, fontWeight: 700, color: "var(--texto-fraco)", width: 14, flexShrink: 0, textAlign: "center" }
         }, i + 1), /*#__PURE__*/React.createElement(Avatar, {
           nome: f.nome,
           id: f.id,
@@ -3962,7 +4041,7 @@ function Dashboard({
             background: estrelinha ? "var(--amarelo-100)" : "var(--verde-100)",
             color: estrelinha ? "var(--amarelo-800)" : "var(--verde-700)",
             padding: "2px 10px",
-            borderRadius: 20,
+            borderRadius: 16,
             fontWeight: 700,
             flexShrink: 0
           }
@@ -4293,7 +4372,7 @@ function ListaFuncionarios({
     style: {
       fontSize: 11,
       fontWeight: 700,
-      color: "var(--cinza-400)",
+      color: "var(--texto-fraco)",
       textTransform: "uppercase",
       letterSpacing: ".05em"
     }
@@ -4320,7 +4399,7 @@ function ListaFuncionarios({
     style: {
       fontSize: 11,
       fontWeight: 700,
-      color: "var(--cinza-400)",
+      color: "var(--texto-fraco)",
       textTransform: "uppercase",
       letterSpacing: ".05em"
     }
@@ -4345,7 +4424,7 @@ function ListaFuncionarios({
   },
     arvoreFuncionarios.length === 0
       ? /*#__PURE__*/React.createElement("div", {
-          style: { padding: 40, textAlign: "center", color: "var(--cinza-400)", fontSize: 13, background: "var(--cor-branco)", borderRadius: 16, border: "1px solid var(--cinza-100)" }
+          style: { padding: 40, textAlign: "center", color: "var(--texto-fraco)", fontSize: 13, background: "var(--cor-branco)", borderRadius: 16, border: "1px solid var(--cinza-100)" }
         }, "Nenhuma diretoria cadastrada.")
       : arvoreFuncionarios.map(d => /*#__PURE__*/React.createElement(NoDiretoriaFuncionarios, {
           key: d.id,
@@ -4385,7 +4464,7 @@ function ListaFuncionarios({
       padding: "12px 16px",
       fontSize: 11,
       fontWeight: 700,
-      color: "var(--cinza-400)",
+      color: "var(--texto-fraco)",
       textAlign: "left",
       letterSpacing: ".06em",
       textTransform: "uppercase",
@@ -4441,7 +4520,7 @@ function ListaFuncionarios({
     }, f.vinculo ? /*#__PURE__*/React.createElement("span", {
       style: {
         fontSize: 11, fontWeight: 700, color: "var(--cinza-500)", background: "var(--cinza-100)",
-        padding: "2px 8px", borderRadius: 20
+        padding: "2px 8px", borderRadius: 16
       }
     }, f.vinculo) : "—"), /*#__PURE__*/React.createElement("td", {
       style: {
@@ -4473,7 +4552,7 @@ function ListaFuncionarios({
         background: al.bg,
         color: al.cor,
         padding: "2px 8px",
-        borderRadius: 20,
+        borderRadius: 16,
         fontWeight: 700
       }
     }, contagens[f.id].esquecimentos))), /*#__PURE__*/React.createElement("td", {
@@ -4486,7 +4565,7 @@ function ListaFuncionarios({
         background: al.bg,
         color: al.cor,
         padding: "3px 10px",
-        borderRadius: 20,
+        borderRadius: 16,
         fontWeight: 600
       }
     }, al.label)), /*#__PURE__*/React.createElement("td", {
@@ -4539,7 +4618,7 @@ function ListaFuncionarios({
     }
   },
     /*#__PURE__*/React.createElement("span", {
-      style: { fontSize: 12, color: "var(--cinza-400)" }
+      style: { fontSize: 12, color: "var(--texto-fraco)" }
     }, `Mostrando ${listaVisivel.length} de ${lista.length} funcionário${lista.length === 1 ? "" : "s"}`),
     listaVisivel.length < lista.length && /*#__PURE__*/React.createElement("div", {
       style: { display: "flex", gap: 8, flexWrap: "wrap" }
@@ -4567,7 +4646,7 @@ function ListaFuncionarios({
     style: {
       padding: 40,
       textAlign: "center",
-      color: "var(--cinza-400)",
+      color: "var(--texto-fraco)",
       fontSize: 13
     }
   },
@@ -4759,7 +4838,7 @@ function ListaFuncionarios({
   }, confirmExcluir.cargo, " · ", confirmExcluir.matricula), /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 12,
-      color: "var(--cinza-400)",
+      color: "var(--texto-fraco)",
       marginTop: 4
     }
   }, confirmExcluir.setor))), /*#__PURE__*/React.createElement("div", {
@@ -5038,7 +5117,9 @@ function montarPlanoImportacaoPonto(linhas, funcionarios, ocorrenciasExistentes)
   const porNome = new Map();
   funcionarios.forEach(f => {
     const chave = normalizarNomeParaMatch(f.nome_completo || f.nomeCompleto || f.nome);
-    if (chave && !porNome.has(chave)) porNome.set(chave, f);
+    if (!chave) return;
+    if (!porNome.has(chave)) porNome.set(chave, []);
+    porNome.get(chave).push(f);
   });
 
   const jaImportadas = new Set(
@@ -5051,6 +5132,7 @@ function montarPlanoImportacaoPonto(linhas, funcionarios, ocorrenciasExistentes)
   const semCorrespondencia = [];
   const duplicadas = [];
   const semData = [];
+  const ambiguas = []; // homônimos: mais de um cadastro com o mesmo nome — exige desempate manual
 
   linhas.forEach(linha => {
     const nomeBruto = String(linha[COLUNAS_IMPORT_PONTO.nome] ?? "").trim();
@@ -5060,8 +5142,10 @@ function montarPlanoImportacaoPonto(linhas, funcionarios, ocorrenciasExistentes)
     const dataISO = dataPontoParaISO(linha[COLUNAS_IMPORT_PONTO.data], linha[COLUNAS_IMPORT_PONTO.periodo]);
     if (!dataISO) { semData.push({ nome: nomeBruto, dataBruta: linha[COLUNAS_IMPORT_PONTO.data] }); return; }
 
-    const func = porNome.get(normalizarNomeParaMatch(nomeBruto));
-    if (!func) { semCorrespondencia.push({ nome: nomeBruto, data: dataISO, tipoPendenciaDP }); return; }
+    const cands = porNome.get(normalizarNomeParaMatch(nomeBruto)) || [];
+    if (cands.length === 0) { semCorrespondencia.push({ nome: nomeBruto, data: dataISO, tipoPendenciaDP }); return; }
+    if (cands.length > 1) { ambiguas.push({ nome: nomeBruto, dataISO, tipoPendenciaDP, candidatos: cands }); return; }
+    const func = cands[0];
 
     const marcador = `${func.id}|${dataISO}|${tipoPendenciaDP}`;
     if (jaImportadas.has(marcador)) { duplicadas.push({ nome: nomeBruto, data: dataISO, tipoPendenciaDP }); return; }
@@ -5069,7 +5153,7 @@ function montarPlanoImportacaoPonto(linhas, funcionarios, ocorrenciasExistentes)
     prontas.push({ func, dataISO, tipoPendenciaDP, marcador });
   });
 
-  return { prontas, semCorrespondencia, duplicadas, semData };
+  return { prontas, semCorrespondencia, duplicadas, semData, ambiguas };
 }
 
 function ModalImportarPontoDP({ funcionarios, ocorrencias, setOcorrencias, addNotif, onClose }) {
@@ -5078,12 +5162,17 @@ function ModalImportarPontoDP({ funcionarios, ocorrencias, setOcorrencias, addNo
   const [erro, setErro] = useState("");
   const [plano, setPlano] = useState(null); // resultado de montarPlanoImportacaoPonto
   const [resultado, setResultado] = useState(null); // { criadas }
+  const [escolhas, setEscolhas] = useState({}); // desempate de homônimos: { indice: idFuncionario | "__ignorar__" }
+  const ambiguas = plano?.ambiguas || [];
+  const pendentesDesempate = ambiguas.filter((_, i) => !escolhas[i]).length;
+  const totalProntas = (plano?.prontas.length || 0) + ambiguas.filter((_, i) => escolhas[i] && escolhas[i] !== "__ignorar__").length;
 
   async function selecionarArquivo(file) {
     setArquivo(file);
     setErro("");
     setPlano(null);
     setResultado(null);
+    setEscolhas({});
     if (!file) return;
     setProcessando(true);
     try {
@@ -5097,11 +5186,25 @@ function ModalImportarPontoDP({ funcionarios, ocorrencias, setOcorrencias, addNo
     }
   }
 
-  function confirmarImportacao() {
-    if (!plano || plano.prontas.length === 0) return;
+  async function confirmarImportacao() {
+    if (!plano || totalProntas === 0 || pendentesDesempate > 0) return;
     setProcessando(true);
     const agora = agoraISO();
-    const novas = plano.prontas.map((item, i) => ({
+    // Junta as prontas com os homônimos já desempatados; reaplica a checagem de duplicata.
+    const prontasFinais = [...plano.prontas];
+    const marcadores = new Set(prontasFinais.map(p => p.marcador));
+    const jaExistentes = new Set(ocorrencias.filter(o => o.tipo === TIPO_PENDENTE_ESPECIFICACAO && o.origemImportacaoPonto).map(o => `${o.funcionario_id}|${o.data}|${o.origemImportacaoPonto}`));
+    ambiguas.forEach((amb, i) => {
+      const esc = escolhas[i];
+      if (!esc || esc === "__ignorar__") return;
+      const func = amb.candidatos.find(c => String(c.id) === String(esc));
+      if (!func) return;
+      const marcador = `${func.id}|${amb.dataISO}|${amb.tipoPendenciaDP}`;
+      if (marcadores.has(marcador) || jaExistentes.has(marcador)) return;
+      marcadores.add(marcador);
+      prontasFinais.push({ func, dataISO: amb.dataISO, tipoPendenciaDP: amb.tipoPendenciaDP, marcador });
+    });
+    const novas = prontasFinais.map((item, i) => ({
       id: Date.now() + i,
       funcionario_id: item.func.id,
       origemFuncionario: item.func.origemComercial ? "comercial" : "administrativo",
@@ -5121,7 +5224,12 @@ function ModalImportarPontoDP({ funcionarios, ocorrencias, setOcorrencias, addNo
       novoParaFunc: true
     }));
 
-    setOcorrencias(prev => [...prev, ...novas]);
+    const salvo = await setOcorrencias(prev => [...prev, ...novas]);
+    if (salvo && salvo.ok === false) {
+      setErro("Não foi possível salvar as pendências: " + (salvo.erro || "erro desconhecido") + ". Nada foi enviado aos colaboradores.");
+      setProcessando(false);
+      return;
+    }
     // Uma notificação por colaborador (não por pendência): quem recebeu
     // várias pendências na mesma importação via uma única notificação
     // agrupada, em vez de uma para cada data — evita "spam" no sino do
@@ -5170,7 +5278,7 @@ function ModalImportarPontoDP({ funcionarios, ocorrencias, setOcorrencias, addNo
       /*#__PURE__*/React.createElement("span", { style: { fontSize: 24 } }, "📄"),
       /*#__PURE__*/React.createElement("span", { style: { fontSize: 13, fontWeight: 600, color: "var(--cinza-700)" } },
         arquivo ? arquivo.name : "Clique para selecionar a planilha (.xlsx) do DP"),
-      /*#__PURE__*/React.createElement("span", { style: { fontSize: 11, color: "var(--cinza-400)" } },
+      /*#__PURE__*/React.createElement("span", { style: { fontSize: 11, color: "var(--texto-fraco)" } },
         "Relatório de Pendências de Ponto — colunas Nome, Data, Tipo de Pendência"),
       /*#__PURE__*/React.createElement("input", {
         type: "file",
@@ -5181,7 +5289,7 @@ function ModalImportarPontoDP({ funcionarios, ocorrencias, setOcorrencias, addNo
     ),
 
     processando && /*#__PURE__*/React.createElement("p", {
-      style: { fontSize: 12, color: "var(--cinza-400)", marginTop: 14, textAlign: "center" }
+      style: { fontSize: 12, color: "var(--texto-fraco)", marginTop: 14, textAlign: "center" }
     }, "Processando…"),
 
     erro && /*#__PURE__*/React.createElement("div", {
@@ -5193,7 +5301,7 @@ function ModalImportarPontoDP({ funcionarios, ocorrencias, setOcorrencias, addNo
 
     plano && !processando && /*#__PURE__*/React.createElement("div", { style: { marginTop: 18 } },
       /*#__PURE__*/React.createElement("p", { style: { fontSize: 13, color: "var(--cinza-700)", marginBottom: 10 } },
-        /*#__PURE__*/React.createElement("strong", null, plano.prontas.length), " pendência(s) pronta(s) para criar."),
+        /*#__PURE__*/React.createElement("strong", null, totalProntas), " pendência(s) pronta(s) para criar."),
 
       plano.semCorrespondencia.length > 0 && /*#__PURE__*/React.createElement("div", {
         style: { background: "var(--amber-100)", color: "var(--amber-700)", borderRadius: 12, padding: "10px 14px", fontSize: 12, marginBottom: 8 }
@@ -5210,17 +5318,37 @@ function ModalImportarPontoDP({ funcionarios, ocorrencias, setOcorrencias, addNo
         style: { background: "var(--vermelho-100)", color: "var(--vermelho-800)", borderRadius: 12, padding: "10px 14px", fontSize: 12, marginBottom: 8 }
       }, "⚠️ ", plano.semData.length, " linha(s) com data em formato inesperado, ignoradas."),
 
+      ambiguas.length > 0 && /*#__PURE__*/React.createElement("div", {
+        style: { background: "var(--amber-100)", borderRadius: 12, padding: "12px 14px", marginBottom: 8 }
+      },
+        /*#__PURE__*/React.createElement("div", { style: { fontSize: 12.5, fontWeight: 700, color: "var(--amber-800)", marginBottom: 8 } },
+          "⚠️ " + ambiguas.length + " linha(s) com nome repetido no cadastro — escolha a pessoa certa (ou ignore a linha):"),
+        ambiguas.map((amb, i) => /*#__PURE__*/React.createElement("div", { key: i, style: { display: "flex", flexDirection: "column", gap: 4, marginBottom: 8 } },
+          /*#__PURE__*/React.createElement("label", { htmlFor: "amb_" + i, style: { fontSize: 12, color: "var(--amber-800)", fontWeight: 600 } }, amb.nome + " · " + fmtDate(amb.dataISO) + " · " + amb.tipoPendenciaDP),
+          /*#__PURE__*/React.createElement("select", {
+            id: "amb_" + i,
+            value: escolhas[i] || "",
+            onChange: e => setEscolhas(p => ({ ...p, [i]: e.target.value })),
+            style: { padding: "8px 10px", borderRadius: 8, border: "1px solid var(--amber-400)", fontSize: 12.5 }
+          },
+            /*#__PURE__*/React.createElement("option", { value: "" }, "Selecione…"),
+            amb.candidatos.map(c => /*#__PURE__*/React.createElement("option", { key: c.id, value: String(c.id) },
+              (c.nome_completo || c.nomeCompleto || c.nome) + " — " + (c.matricula || "sem matrícula") + (c.cargo ? " · " + c.cargo : "") + (c.ativo === false || c.situacao === "Inativo" ? " (inativo)" : ""))),
+            /*#__PURE__*/React.createElement("option", { value: "__ignorar__" }, "Ignorar esta linha")
+          )))
+      ),
+
       /*#__PURE__*/React.createElement("div", { style: { display: "flex", gap: 10, marginTop: 12 } },
         /*#__PURE__*/React.createElement("button", {
           onClick: confirmarImportacao,
-          disabled: plano.prontas.length === 0,
+          disabled: totalProntas === 0 || pendentesDesempate > 0 || processando,
           style: {
             background: "var(--marca-gradiente)", color: "var(--cor-branco)", border: "none",
             borderRadius: 12, padding: "10px 20px", fontSize: 13, fontWeight: 700,
-            cursor: plano.prontas.length === 0 ? "not-allowed" : "pointer",
-            opacity: plano.prontas.length === 0 ? 0.5 : 1
+            cursor: (totalProntas === 0 || pendentesDesempate > 0) ? "not-allowed" : "pointer",
+            opacity: (totalProntas === 0 || pendentesDesempate > 0) ? 0.5 : 1
           }
-        }, "Confirmar e enviar aos colaboradores"),
+        }, pendentesDesempate > 0 ? "Resolva " + pendentesDesempate + " nome(s) repetido(s) para continuar" : "Confirmar e enviar aos colaboradores"),
         /*#__PURE__*/React.createElement("button", {
           onClick: () => { setPlano(null); setArquivo(null); },
           style: {
@@ -5338,7 +5466,7 @@ function ModalImportarExcel({ funcionarios, setFuncionarios, onClose }) {
       /*#__PURE__*/React.createElement("span", { style: { fontSize: 24 } }, "📄"),
       /*#__PURE__*/React.createElement("span", { style: { fontSize: 13, fontWeight: 600, color: "var(--cinza-700)" } },
         arquivo ? arquivo.name : "Clique para selecionar um arquivo .xlsx"),
-      /*#__PURE__*/React.createElement("span", { style: { fontSize: 11, color: "var(--cinza-400)" } },
+      /*#__PURE__*/React.createElement("span", { style: { fontSize: 11, color: "var(--texto-fraco)" } },
         "Colunas esperadas: Matricula, Colaborador, Cargo, Area, Situacao"),
       /*#__PURE__*/React.createElement("input", {
         type: "file",
@@ -5349,7 +5477,7 @@ function ModalImportarExcel({ funcionarios, setFuncionarios, onClose }) {
     ),
 
     processando && /*#__PURE__*/React.createElement("p", {
-      style: { fontSize: 12, color: "var(--cinza-400)", marginTop: 14, textAlign: "center" }
+      style: { fontSize: 12, color: "var(--texto-fraco)", marginTop: 14, textAlign: "center" }
     }, "Processando…"),
 
     resultado?.erro && /*#__PURE__*/React.createElement("div", {
@@ -5388,7 +5516,7 @@ function ModalImportarExcel({ funcionarios, setFuncionarios, onClose }) {
     }, "✓ ", resultado.importados, " funcionário(s) importado(s). ", resultado.ignorados, " ignorado(s) (já existiam ou sem matrícula/nome)."),
 
     /*#__PURE__*/React.createElement("p", {
-      style: { fontSize: 12, color: "var(--cinza-400)", marginTop: 18 }
+      style: { fontSize: 12, color: "var(--texto-fraco)", marginTop: 18 }
     }, "Total de funcionários cadastrados neste ambiente de teste: ", /*#__PURE__*/React.createElement("strong", null, funcionarios.length), ".")
   );
 }
@@ -5913,9 +6041,12 @@ async function chamarGerenciarAcesso(acao, funcionario, origem) {
 // de verdade — diferente de EDGE_CRIAR_USUARIO (legado, só funcionarios).
 async function chamarCriarUsuarioIndividual(tabela, id) {
   try {
+    const { data: sessao } = await supa.auth.getSession();
+    const token = sessao?.session?.access_token;
+    if (!token) return { ok: false, erro: "Sessão expirada — faça login novamente." };
     const res = await fetch(EDGE_CRIAR_USUARIO_INDIVIDUAL, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "apikey": SUPA_KEY, "Authorization": `Bearer ${SUPA_KEY}` },
+      headers: { "Content-Type": "application/json", "apikey": SUPA_KEY, "Authorization": `Bearer ${token}` },
       body: JSON.stringify({ tabela, id })
     });
     const json = await res.json();
@@ -6552,7 +6683,7 @@ function ModalImportarEquipeAdministrativa({ onClose, onConcluido }) {
           onChange: e => selecionarArquivo(e.target.files?.[0] || null)
         })
       ),
-      carregando && /*#__PURE__*/React.createElement("p", { style: { fontSize: 12, color: "var(--cinza-400)", marginTop: 14, textAlign: "center" } }, "Lendo planilha e estado atual…")
+      carregando && /*#__PURE__*/React.createElement("p", { style: { fontSize: 12, color: "var(--texto-fraco)", marginTop: 14, textAlign: "center" } }, "Lendo planilha e estado atual…")
     ),
 
     erro && /*#__PURE__*/React.createElement("div", {
@@ -6653,7 +6784,7 @@ function ModalImportarEquipeAdministrativa({ onClose, onConcluido }) {
 
     aplicando && /*#__PURE__*/React.createElement("div", { style: { marginTop: 16, textAlign: "center" } },
       /*#__PURE__*/React.createElement("p", { style: { fontSize: 13, color: "var(--cinza-500)" } }, "⏳ ", etapaAtual || "Aplicando…"),
-      /*#__PURE__*/React.createElement("p", { style: { fontSize: 11.5, color: "var(--cinza-400)", marginTop: 6 } }, "Não feche esta janela.")
+      /*#__PURE__*/React.createElement("p", { style: { fontSize: 11.5, color: "var(--texto-fraco)", marginTop: 6 } }, "Não feche esta janela.")
     ),
 
     concluido && /*#__PURE__*/React.createElement("div", { style: { marginTop: 16, display: "flex", flexDirection: "column", gap: 14 } },
@@ -6843,7 +6974,7 @@ function ModalImportarHierarquia({ onClose, onConcluido }) {
           onChange: e => selecionarArquivo(e.target.files?.[0] || null)
         })
       ),
-      carregando && /*#__PURE__*/React.createElement("p", { style: { fontSize: 12, color: "var(--cinza-400)", marginTop: 14, textAlign: "center" } }, "Lendo planilha e estado atual…")
+      carregando && /*#__PURE__*/React.createElement("p", { style: { fontSize: 12, color: "var(--texto-fraco)", marginTop: 14, textAlign: "center" } }, "Lendo planilha e estado atual…")
     ),
 
     erro && /*#__PURE__*/React.createElement("div", {
@@ -6953,7 +7084,7 @@ function ModalImportarHierarquia({ onClose, onConcluido }) {
 
     aplicando && /*#__PURE__*/React.createElement("div", { style: { marginTop: 16, textAlign: "center" } },
       /*#__PURE__*/React.createElement("p", { style: { fontSize: 13, color: "var(--cinza-500)" } }, "⏳ ", etapaAtual || "Aplicando…"),
-      /*#__PURE__*/React.createElement("p", { style: { fontSize: 11.5, color: "var(--cinza-400)", marginTop: 6 } }, "Não feche esta janela.")
+      /*#__PURE__*/React.createElement("p", { style: { fontSize: 11.5, color: "var(--texto-fraco)", marginTop: 6 } }, "Não feche esta janela.")
     ),
 
     concluido && /*#__PURE__*/React.createElement("div", { style: { marginTop: 16, display: "flex", flexDirection: "column", gap: 14 } },
@@ -7240,7 +7371,7 @@ function PerfilFuncionario({
     style: {
       background: "var(--cor-branco)",
       border: "1px solid var(--cinza-100)",
-      borderRadius: 20,
+      borderRadius: 16,
       padding: 28,
       marginBottom: 20,
       boxShadow: "0 1px 3px var(--sombra-leve)"
@@ -7280,7 +7411,7 @@ function PerfilFuncionario({
       background: al.bg,
       color: al.cor,
       padding: "3px 12px",
-      borderRadius: 20,
+      borderRadius: 16,
       fontWeight: 700
     }
   }, contagem.esquecimentos, " esq. · ", al.label)), /*#__PURE__*/React.createElement("div", {
@@ -7300,7 +7431,7 @@ function PerfilFuncionario({
   }), /*#__PURE__*/React.createElement("span", {
     style: {
       fontSize: 12,
-      color: "var(--cinza-400)"
+      color: "var(--texto-fraco)"
     }
   }, "Esquecimentos no mês"))), !somenteLeituraPendencias && /*#__PURE__*/React.createElement("button", {
     onClick: () => setModalCriar(true),
@@ -7358,7 +7489,7 @@ function PerfilFuncionario({
   }, v), /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 11,
-      color: "var(--cinza-400)",
+      color: "var(--texto-fraco)",
       marginTop: 2
     }
   }, l))))), /*#__PURE__*/React.createElement("div", {
@@ -7402,7 +7533,7 @@ function PerfilFuncionario({
     onClick: () => setFiltroStatus(s),
     style: {
       padding: "5px 12px",
-      borderRadius: 20,
+      borderRadius: 16,
       fontSize: 11,
       fontWeight: 600,
       cursor: "pointer",
@@ -7414,7 +7545,7 @@ function PerfilFuncionario({
     style: {
       padding: 40,
       textAlign: "center",
-      color: "var(--cinza-400)",
+      color: "var(--texto-fraco)",
       fontSize: 13
     }
   }, "Nenhuma ocorrência nesse filtro.") : /*#__PURE__*/React.createElement("table", {
@@ -7433,7 +7564,7 @@ function PerfilFuncionario({
       padding: "11px 16px",
       fontSize: 11,
       fontWeight: 700,
-      color: "var(--cinza-400)",
+      color: "var(--texto-fraco)",
       textAlign: "left",
       letterSpacing: ".06em",
       textTransform: "uppercase"
@@ -7472,7 +7603,7 @@ function PerfilFuncionario({
       }
     }, o.observacaoAdmin || /*#__PURE__*/React.createElement("span", {
       style: {
-        color: "var(--cinza-300)"
+        color: "var(--texto-fraco)"
       }
     }, "—")), /*#__PURE__*/React.createElement("td", {
       style: {
@@ -7483,7 +7614,7 @@ function PerfilFuncionario({
       }
     }, o.resposta ? /*#__PURE__*/React.createElement("span", null, o.resposta) : /*#__PURE__*/React.createElement("span", {
       style: {
-        color: "var(--cinza-300)",
+        color: "var(--texto-fraco)",
         fontStyle: "italic"
       }
     }, "Aguardando")), /*#__PURE__*/React.createElement("td", {
@@ -7520,7 +7651,7 @@ function PerfilFuncionario({
     }, "⚠️ Pendente") : /*#__PURE__*/React.createElement("span", {
       style: {
         fontSize: 11,
-        color: "var(--cinza-400)"
+        color: "var(--texto-fraco)"
       }
     }, "—")), /*#__PURE__*/React.createElement("td", {
       style: {
@@ -7808,7 +7939,7 @@ function PerfilFuncionario({
   /*# Campo: E-mail customizado (opcional) #*/
   /*#__PURE__*/React.createElement("div", null,
     /*#__PURE__*/React.createElement("label", { style: { fontSize: 13, fontWeight: 600, color: "var(--cinza-700)", display: "block", marginBottom: 4 } }, "E-mail de login (opcional)"),
-    /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, color: "var(--cinza-400)", marginBottom: 6 } },
+    /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, color: "var(--texto-fraco)", marginBottom: 6 } },
       "Preencha su00f3 se o e-mail nu00e3o seguir o padru00e3o nome.sobrenome@portovale.com.br"
     ),
     /*#__PURE__*/React.createElement("input", {
@@ -7861,7 +7992,7 @@ function PerfilFuncionario({
 
   /*# Contadores #*/
   /*#__PURE__*/React.createElement("div", { style: { borderTop: "1px solid var(--cinza-100)", paddingTop: 14 } },
-    /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, fontWeight: 700, color: "var(--cinza-400)", textTransform: "uppercase", letterSpacing: ".05em", marginBottom: 12 } }, "Contadores"),
+    /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, fontWeight: 700, color: "var(--texto-fraco)", textTransform: "uppercase", letterSpacing: ".05em", marginBottom: 12 } }, "Contadores"),
     /*#__PURE__*/React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10 } },
       [
         ["Esquecimentos", "esquecimentos"],
@@ -8123,7 +8254,7 @@ function PainelOcorrencias({
     key: s,
     onClick: () => setFiltroStatus(s),
     style: {
-      padding: "7px 16px", borderRadius: 20, fontSize: 12, fontWeight: 700, cursor: "pointer", border: "none",
+      padding: "7px 16px", borderRadius: 16, fontSize: 12, fontWeight: 700, cursor: "pointer", border: "none",
       background: filtroStatus === s ? "var(--indigo-500)" : "var(--cinza-100)",
       color: filtroStatus === s ? "var(--cor-branco)" : "var(--cinza-600)",
       display: "flex", alignItems: "center", gap: 6
@@ -8132,16 +8263,16 @@ function PainelOcorrencias({
     style: {
       background: filtroStatus === s ? "var(--branco-transparente)" : "var(--cinza-200)",
       color: filtroStatus === s ? "var(--cor-branco)" : "var(--cinza-500)",
-      fontSize: 11, padding: "1px 7px", borderRadius: 20
+      fontSize: 11, padding: "1px 7px", borderRadius: 16
     }
   }, contadores[s] || 0), s === "Corrigido" && novosCorrigidos > 0 && /*#__PURE__*/React.createElement("span", {
-    style: { background: "var(--amber-400)", color: "var(--amber-900)", fontSize: 11, padding: "1px 5px", borderRadius: 20, fontWeight: 700 }
+    style: { background: "var(--amber-400)", color: "var(--amber-900)", fontSize: 11, padding: "1px 5px", borderRadius: 16, fontWeight: 700 }
   }, novosCorrigidos, " novo", novosCorrigidos > 1 ? "s" : "")))), /*#__PURE__*/React.createElement("div", {
     style: { display: "flex", gap: 12, marginBottom: 20, flexWrap: "wrap", alignItems: "flex-end" }
   }, /*#__PURE__*/React.createElement("div", {
     style: { display: "flex", flexDirection: "column", gap: 4 }
   }, /*#__PURE__*/React.createElement("span", {
-    style: { fontSize: 11, fontWeight: 700, color: "var(--cinza-400)", textTransform: "uppercase", letterSpacing: ".05em" }
+    style: { fontSize: 11, fontWeight: 700, color: "var(--texto-fraco)", textTransform: "uppercase", letterSpacing: ".05em" }
   }, "Tipo"), /*#__PURE__*/React.createElement("select", {
     value: filtroTipo,
     onChange: e => setFiltroTipo(e.target.value),
@@ -8150,7 +8281,7 @@ function PainelOcorrencias({
   /*#__PURE__*/React.createElement("div", {
     style: { display: "flex", flexDirection: "column", gap: 4, flex: "1 1 220px" }
   }, /*#__PURE__*/React.createElement("span", {
-    style: { fontSize: 11, fontWeight: 700, color: "var(--cinza-400)", textTransform: "uppercase", letterSpacing: ".05em" }
+    style: { fontSize: 11, fontWeight: 700, color: "var(--texto-fraco)", textTransform: "uppercase", letterSpacing: ".05em" }
   }, "Buscar"), /*#__PURE__*/React.createElement("input", {
     value: buscaTexto,
     onChange: e => setBuscaTexto(e.target.value),
@@ -8171,7 +8302,7 @@ function PainelOcorrencias({
     style: { background: "var(--cinza-50)", borderBottom: "1px solid var(--cinza-100)" }
   }, ["Data", "Funcionário", "Matrícula", "Setor", "Tipo", "Status", "Observação", "Ações"].map(h => /*#__PURE__*/React.createElement("th", {
     key: h,
-    style: { padding: "11px 16px", fontSize: 11, fontWeight: 700, color: "var(--cinza-400)", textAlign: "left", letterSpacing: ".06em", textTransform: "uppercase", whiteSpace: "nowrap" }
+    style: { padding: "11px 16px", fontSize: 11, fontWeight: 700, color: "var(--texto-fraco)", textAlign: "left", letterSpacing: ".06em", textTransform: "uppercase", whiteSpace: "nowrap" }
   }, h)))), /*#__PURE__*/React.createElement("tbody", null, ocorrenciasFiltradas.map((o, i) => {
     const func = resolverFuncionarioDaOcorrencia(funcionarios, o);
     const podeVerif = o.status === "Corrigido" || (o.status === "Pendente" && o.criadoPor === "funcionario");
@@ -8193,7 +8324,7 @@ function PainelOcorrencias({
     /*#__PURE__*/React.createElement("td", { style: { padding: "10px 16px", fontSize: 12, fontWeight: 600, color: "var(--cinza-900)" } }, tipoIcon(o.tipo), " ", o.tipo),
     /*#__PURE__*/React.createElement("td", { style: { padding: "10px 16px" } }, /*#__PURE__*/React.createElement(Badge, { status: o.status })),
     /*#__PURE__*/React.createElement("td", { style: { padding: "10px 16px", fontSize: 12, color: "var(--cinza-500)", maxWidth: 200 } },
-      o.observacaoAdmin || /*#__PURE__*/React.createElement("span", { style: { color: "var(--cinza-300)" } }, "—"),
+      o.observacaoAdmin || /*#__PURE__*/React.createElement("span", { style: { color: "var(--texto-fraco)" } }, "—"),
       o.resposta && o.resposta !== "Corrigido no sistema Vibe." && /*#__PURE__*/React.createElement("div", { style: { marginTop: 4, fontStyle: "italic", color: "var(--cinza-600)" } }, "\"", o.resposta, "\""),
       ehErroReg && (easymob ? /*#__PURE__*/React.createElement("button", {
         onClick: () => {
@@ -8225,11 +8356,11 @@ function PainelOcorrencias({
       isAdmin && /*#__PURE__*/React.createElement("button", {
         onClick: () => setModal({ ...o, acao: "excluir" }),
         title: "Excluir pendência",
-        style: { background: "var(--cinza-100)", color: "var(--cinza-400)", border: "none", borderRadius: 8, padding: "6px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer" }
+        style: { background: "var(--cinza-100)", color: "var(--texto-fraco)", border: "none", borderRadius: 8, padding: "6px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer" }
       }, "🗑")
     )));
   }))), ocorrenciasFiltradas.length === 0 && /*#__PURE__*/React.createElement("div", {
-    style: { padding: 40, textAlign: "center", color: "var(--cinza-400)", fontSize: 13 }
+    style: { padding: 40, textAlign: "center", color: "var(--texto-fraco)", fontSize: 13 }
   }, "Nenhuma pendência encontrada com esses filtros.",
     (filtroTipo !== "Todos" || buscaTexto.trim() || filtroStatus !== "Todos") && /*#__PURE__*/React.createElement("button", {
       type: "button",
@@ -8535,7 +8666,7 @@ function ModalExportarRelatorio({ ocorrencias, funcionarios, gerencias = [], onC
   }
 
   const campoStyle = { width: "100%", padding: "9px 12px", borderRadius: 12, border: "1px solid var(--cinza-200)", fontSize: 13, background: "var(--cor-branco)", color: "var(--cinza-900)", outline: "none", boxSizing: "border-box" };
-  const labelStyle = { fontSize: 11, fontWeight: 700, color: "var(--cinza-400)", textTransform: "uppercase", letterSpacing: ".05em", display: "block", marginBottom: 6 };
+  const labelStyle = { fontSize: 11, fontWeight: 700, color: "var(--texto-fraco)", textTransform: "uppercase", letterSpacing: ".05em", display: "block", marginBottom: 6 };
   const STATUS_LISTA = ["Pendente", "Corrigido", "Verificado", "Rejeitado"];
 
   return /*#__PURE__*/React.createElement(Modal, {
@@ -8553,7 +8684,7 @@ function ModalExportarRelatorio({ ocorrencias, funcionarios, gerencias = [], onC
       ),
       (dataDe || dataAte) && /*#__PURE__*/React.createElement("button", {
         onClick: () => { setDataDe(""); setDataAte(""); },
-        style: { marginTop: 6, background: "none", border: "none", color: "var(--cinza-400)", fontSize: 11.5, fontWeight: 600, cursor: "pointer", padding: 0 }
+        style: { marginTop: 6, background: "none", border: "none", color: "var(--texto-fraco)", fontSize: 11.5, fontWeight: 600, cursor: "pointer", padding: 0 }
       }, "✕ Limpar período (exporta tudo)")
     ),
 
@@ -8567,7 +8698,7 @@ function ModalExportarRelatorio({ ocorrencias, funcionarios, gerencias = [], onC
             key: s,
             onClick: () => toggleStatus(s),
             style: {
-              padding: "7px 14px", borderRadius: 20, fontSize: 12, fontWeight: 700, cursor: "pointer", border: "none",
+              padding: "7px 14px", borderRadius: 16, fontSize: 12, fontWeight: 700, cursor: "pointer", border: "none",
               background: ativo ? "var(--indigo-500)" : "var(--cinza-100)",
               color: ativo ? "var(--cor-branco)" : "var(--cinza-600)"
             }
@@ -8610,7 +8741,7 @@ function ModalExportarRelatorio({ ocorrencias, funcionarios, gerencias = [], onC
 
     /*# Funcionário específico — busca com autocomplete #*/
     /*#__PURE__*/React.createElement("div", { style: { position: "relative" } },
-      /*#__PURE__*/React.createElement("label", { style: labelStyle }, "Funcionário específico ", /*#__PURE__*/React.createElement("span", { style: { fontWeight: 400, textTransform: "none", letterSpacing: 0, color: "var(--cinza-300)" } }, "(opcional)")),
+      /*#__PURE__*/React.createElement("label", { style: labelStyle }, "Funcionário específico ", /*#__PURE__*/React.createElement("span", { style: { fontWeight: 400, textTransform: "none", letterSpacing: 0, color: "var(--texto-fraco)" } }, "(opcional)")),
       funcionarioSelecionado
         ? /*#__PURE__*/React.createElement("div", {
             style: { display: "flex", alignItems: "center", gap: 8, background: "var(--marca-50)", border: "1px solid var(--marca-200)", borderRadius: 12, padding: "8px 12px" }
@@ -8647,7 +8778,7 @@ function ModalExportarRelatorio({ ocorrencias, funcionarios, gerencias = [], onC
             }, /*#__PURE__*/React.createElement(Avatar, { nome: f.nome, id: f.id, size: 22 }),
                /*#__PURE__*/React.createElement("div", null,
                  /*#__PURE__*/React.createElement("div", { style: { fontSize: 12.5, fontWeight: 600, color: "var(--cinza-900)" } }, f.nome),
-                 /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, color: "var(--cinza-400)" } }, f.matricula, " · ", f.setor)
+                 /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, color: "var(--texto-fraco)" } }, f.matricula, " · ", f.setor)
                )
             )))
           )
@@ -8765,7 +8896,7 @@ function ProcessosPonto({ usuario, setView, ocorrencias = [], funcionarios = [],
     /*#__PURE__*/React.createElement("div", {
       style: {
         background: "var(--marca-gradiente)",
-        borderRadius: 20,
+        borderRadius: 16,
         padding: "36px 32px 32px",
         marginBottom: 24,
         position: "relative",
@@ -8849,7 +8980,7 @@ function ProcessosPonto({ usuario, setView, ocorrencias = [], funcionarios = [],
         pendenciasRecentes.length > 0 && /*#__PURE__*/React.createElement("div", {
           style: {
             fontSize: 11.5, fontWeight: 700, color: "var(--marca-600)", background: "var(--marca-transparente)",
-            padding: "3px 10px", borderRadius: 20
+            padding: "3px 10px", borderRadius: 16
           }
         }, `${pendenciasRecentes.length} ${pendenciasRecentes.length === 1 ? "pendência" : "pendências"}`)
       ),
@@ -8857,7 +8988,7 @@ function ProcessosPonto({ usuario, setView, ocorrencias = [], funcionarios = [],
         ? /*#__PURE__*/React.createElement("div", {
             style: {
               display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-              gap: 6, padding: "20px 0", color: "var(--cinza-400)", textAlign: "center"
+              gap: 6, padding: "20px 0", color: "var(--texto-fraco)", textAlign: "center"
             }
           },
             /*#__PURE__*/React.createElement("div", { style: { fontSize: 24 } }, "✅"),
@@ -8903,7 +9034,7 @@ function ProcessosPonto({ usuario, setView, ocorrencias = [], funcionarios = [],
                     ? [infoAtual.gerencia, infoAtual.diretoria].filter(Boolean).join(" · ") || "Sem gerência/diretoria"
                     : (new Date(pendenciaAtual.data + "T00:00:00").toLocaleDateString("pt-BR") + " · " + pendenciaAtual.status)
                 ),
-                ehGestor && /*#__PURE__*/React.createElement("div", { style: { fontSize: 11.5, color: "var(--cinza-400)", marginTop: 1 } },
+                ehGestor && /*#__PURE__*/React.createElement("div", { style: { fontSize: 11.5, color: "var(--texto-fraco)", marginTop: 1 } },
                   (pendenciaAtual.tipo || "Ocorrência") + " · " + new Date(pendenciaAtual.data + "T00:00:00").toLocaleDateString("pt-BR") + " · " + pendenciaAtual.status)
               )
             ),
@@ -9066,14 +9197,14 @@ function DuvidasProcessos({ setView }) {
             }, s.titulo),
             s.badge && /*#__PURE__*/React.createElement("span", {
               style: {
-                fontSize: 11, fontWeight: 700, padding: "3px 9px", borderRadius: 20,
+                fontSize: 11, fontWeight: 700, padding: "3px 9px", borderRadius: 16,
                 background: s.badgeColor === "vermelho" ? "var(--vermelho-100)" : "var(--amarelo-100)",
                 color: s.badgeColor === "vermelho" ? "var(--vermelho-600)" : "var(--amarelo-700)"
               }
             }, s.badge),
             /*#__PURE__*/React.createElement("span", {
               style: {
-                fontSize: 11, color: "var(--cinza-300)",
+                fontSize: 11, color: "var(--texto-fraco)",
                 display: "inline-block",
                 transition: "transform .2s",
                 transform: aberto === s.id ? "rotate(180deg)" : "rotate(0deg)"
@@ -9319,7 +9450,7 @@ function MuralRecados({
   }), "📌 Fixar no topo"), /*#__PURE__*/React.createElement("span", {
     style: {
       fontSize: 12,
-      color: "var(--cinza-400)"
+      color: "var(--texto-fraco)"
     }
   }, "Ctrl+Enter para postar")), /*#__PURE__*/React.createElement("button", {
     onClick: postar,
@@ -9342,7 +9473,7 @@ function MuralRecados({
     style: {
       fontSize: 11,
       fontWeight: 700,
-      color: "var(--cinza-400)",
+      color: "var(--texto-fraco)",
       textTransform: "uppercase",
       letterSpacing: ".06em",
       marginBottom: 8,
@@ -9379,7 +9510,7 @@ function MuralRecados({
       borderRadius: 16,
       padding: 48,
       textAlign: "center",
-      color: "var(--cinza-400)",
+      color: "var(--texto-fraco)",
       fontSize: 15
     }
   }, "📭 Nenhum recado ainda. Seja o primeiro a postar!"), /*#__PURE__*/React.createElement("div", {
@@ -9474,14 +9605,14 @@ const RecadoCard = React.memo(function RecadoCard({
       background: "var(--indigo-100)",
       color: "var(--indigo-600)",
       padding: "1px 8px",
-      borderRadius: 20,
+      borderRadius: 16,
       fontWeight: 700,
       marginLeft: 8
     }
   }, "📌 Fixado"), /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 11,
-      color: "var(--cinza-400)",
+      color: "var(--texto-fraco)",
       marginTop: 2
     }
   }, r.autorCargo, " · ", fmtDateHora(r.criadoEm), r.editadoEm ? " (editado)" : "")), /*#__PURE__*/React.createElement("div", {
@@ -9585,7 +9716,7 @@ const RecadoCard = React.memo(function RecadoCard({
       onClick: () => onReagir(r.id, e),
       style: {
         padding: "3px 10px",
-        borderRadius: 20,
+        borderRadius: 16,
         border: `1.5px solid ${ativo ? "var(--indigo-500)" : "var(--cinza-200)"}`,
         background: ativo ? "var(--marca-50)" : "var(--cor-branco)",
         cursor: "pointer",
@@ -9634,7 +9765,7 @@ function PortalFuncionario({
         alignItems: "center",
         justifyContent: "center",
         gap: 8,
-        color: "var(--cinza-400)",
+        color: "var(--texto-fraco)",
         fontSize: 13,
         fontWeight: 500,
         textAlign: "center",
@@ -9876,7 +10007,7 @@ function PortalFuncionario({
               background: "linear-gradient(135deg, var(--amarelo-100), var(--amber-100))",
               color: "var(--amarelo-800)",
               border: "1px solid var(--amber-200)",
-              borderRadius: 20,
+              borderRadius: 16,
               padding: "4px 12px 4px 8px",
               fontSize: 12,
               fontWeight: 700
@@ -9956,7 +10087,7 @@ function PortalFuncionario({
       border: "none",
       cursor: "pointer",
       fontSize: 15,
-      color: "var(--cinza-400)",
+      color: "var(--texto-fraco)",
       flexShrink: 0,
       padding: 0,
       lineHeight: 1
@@ -9998,7 +10129,7 @@ function PortalFuncionario({
   }, v), /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 12,
-      color: "var(--cinza-400)",
+      color: "var(--texto-fraco)",
       marginTop: 4
     }
   }, l)))), contagemFunc.esquecimentos >= 2 && /*#__PURE__*/React.createElement("div", {
@@ -10035,7 +10166,7 @@ function PortalFuncionario({
     style: {
       padding: 48,
       textAlign: "center",
-      color: "var(--cinza-400)",
+      color: "var(--texto-fraco)",
       fontSize: 15
     }
   }, "✨ Nenhuma pendência registrada.") : /*#__PURE__*/React.createElement("div", {
@@ -10098,13 +10229,13 @@ function PortalFuncionario({
         background: "var(--amber-400)",
         color: "var(--amber-900)",
         padding: "1px 6px",
-        borderRadius: 20,
+        borderRadius: 16,
         fontWeight: 700
       }
     }, "NOVO")), /*#__PURE__*/React.createElement("div", {
       style: {
         fontSize: 12,
-        color: "var(--cinza-400)",
+        color: "var(--texto-fraco)",
         marginTop: 4
       }
     }, fmtDate(o.data)), o.observacaoAdmin && /*#__PURE__*/React.createElement("div", {
@@ -10179,7 +10310,7 @@ function PortalFuncionario({
         background: "var(--amber-100)",
         color: "var(--amber-800)",
         padding: "1px 6px",
-        borderRadius: 20,
+        borderRadius: 16,
         marginLeft: "auto",
         fontWeight: 700
       }
@@ -10199,7 +10330,7 @@ function PortalFuncionario({
         marginTop: 6,
         background: "none",
         border: "none",
-        color: "var(--cinza-400)",
+        color: "var(--texto-fraco)",
         fontSize: 11,
         fontWeight: 600,
         cursor: "pointer",
@@ -10675,7 +10806,7 @@ function SecaoSemEmail({ tabela, pessoas, corTexto, onSalvo }) {
           }
         },
           /*#__PURE__*/React.createElement("div", { style: { fontSize: 12.5, fontWeight: 600, color: "var(--cinza-700)", minWidth: 160, flex: "1 1 160px" } },
-            nome, pessoa.matricula && /*#__PURE__*/React.createElement("span", { style: { fontWeight: 400, color: "var(--cinza-400)" } }, " — mat. ", pessoa.matricula),
+            nome, pessoa.matricula && /*#__PURE__*/React.createElement("span", { style: { fontWeight: 400, color: "var(--texto-fraco)" } }, " — mat. ", pessoa.matricula),
             emailAtualInvalido && /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, fontWeight: 400, color: "var(--vermelho-600)", marginTop: 2 } },
               `Atual (inválido): "${pessoa.email.trim()}"`)),
           /*#__PURE__*/React.createElement("input", {
@@ -10970,12 +11101,12 @@ function CardGerencia({ gerencia, aberta, onToggle }) {
         cursor: "pointer", textAlign: "left"
       }
     },
-      /*#__PURE__*/React.createElement("span", { style: { fontSize: 12, color: "var(--cinza-400)", transform: aberta ? "rotate(90deg)" : "rotate(0deg)", transition: "transform .15s", flexShrink: 0 } }, "▶"),
+      /*#__PURE__*/React.createElement("span", { style: { fontSize: 12, color: "var(--texto-fraco)", transform: aberta ? "rotate(90deg)" : "rotate(0deg)", transition: "transform .15s", flexShrink: 0 } }, "▶"),
       gerencia.gerente ? /*#__PURE__*/React.createElement(Avatar, { nome: nomeGerente, id: gerencia.gerente.id, size: 26 })
         : /*#__PURE__*/React.createElement("div", { style: { width: 26, height: 26, borderRadius: "50%", background: "var(--cinza-200)", flexShrink: 0 } }),
       /*#__PURE__*/React.createElement("div", { style: { flex: 1, minWidth: 0 } },
         /*#__PURE__*/React.createElement("div", { style: { fontSize: 13, fontWeight: 700, color: "var(--cinza-900)" } }, gerencia.nome),
-        /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, color: "var(--cinza-400)" } },
+        /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, color: "var(--texto-fraco)" } },
           gerencia.gerente ? nomeGerente : "Sem gerente definido")
       ),
       /*#__PURE__*/React.createElement("span", {
@@ -10987,7 +11118,7 @@ function CardGerencia({ gerencia, aberta, onToggle }) {
     },
       gerencia.gerente && /*#__PURE__*/React.createElement(LinhaPessoa, { pessoa: gerencia.gerente, nivel: "gerente", destaque: true, inativo: gerenteInativo }),
       gerencia.vendedores.length === 0 && !gerencia.gerente
-        ? /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: "var(--cinza-300)", padding: "6px 10px" } }, "Nenhum vendedor nesta gerência.")
+        ? /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: "var(--texto-fraco)", padding: "6px 10px" } }, "Nenhum vendedor nesta gerência.")
         : [
             ...vendedoresAtivos.map(v => /*#__PURE__*/React.createElement(LinhaPessoa, { key: v.id, pessoa: v, nivel: "vendedor" })),
             ...vendedoresInativos.map(v => /*#__PURE__*/React.createElement(LinhaPessoa, { key: v.id, pessoa: v, nivel: "vendedor", inativo: true }))
@@ -11037,7 +11168,7 @@ function NoSubequipe({ grupo, aberta, onToggle, semSubequipe }) {
       semSubequipe && /*#__PURE__*/React.createElement("span", { style: { fontSize: 12, flexShrink: 0 } }, "⚠️"),
       /*#__PURE__*/React.createElement("span", { style: { fontSize: 12.5, fontWeight: 700, color: corTexto, flex: 1 } }, grupo.nome),
       /*#__PURE__*/React.createElement("span", {
-        style: { fontSize: 10.5, fontWeight: 600, color: corBadgeTexto, background: corBadgeFundo, padding: "2px 8px", borderRadius: 20, flexShrink: 0 }
+        style: { fontSize: 11.5, fontWeight: 600, color: corBadgeTexto, background: corBadgeFundo, padding: "2px 8px", borderRadius: 16, flexShrink: 0 }
       }, textoAtivosInativos(grupo.ativos, grupo.inativos))
     ),
     aberta && /*#__PURE__*/React.createElement("div", {
@@ -11068,15 +11199,15 @@ function NoCoordenador({ item, estadoAberto, onToggleChave, chavePrefixo }) {
         cursor: "pointer", textAlign: "left"
       }
     },
-      /*#__PURE__*/React.createElement("span", { style: { fontSize: 12, color: "var(--cinza-400)", transform: aberta ? "rotate(90deg)" : "rotate(0deg)", transition: "transform .15s", flexShrink: 0 } }, "▶"),
+      /*#__PURE__*/React.createElement("span", { style: { fontSize: 12, color: "var(--texto-fraco)", transform: aberta ? "rotate(90deg)" : "rotate(0deg)", transition: "transform .15s", flexShrink: 0 } }, "▶"),
       /*#__PURE__*/React.createElement(Avatar, { nome: coordenador.nome, id: coordenador.id, size: 26 }),
       /*#__PURE__*/React.createElement("div", { style: { flex: 1, minWidth: 0 } },
         /*#__PURE__*/React.createElement("div", { style: { fontSize: 13, fontWeight: 700, color: "var(--cinza-900)" } }, coordenador.nome),
-        /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, color: "var(--cinza-400)" } },
+        /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, color: "var(--texto-fraco)" } },
           subequipes.length, " ", subequipes.length === 1 ? "subequipe" : "subequipes")
       ),
       /*#__PURE__*/React.createElement("span", {
-        style: { fontSize: 11, fontWeight: 600, color: "var(--cinza-500)", background: "var(--cinza-100)", padding: "2px 8px", borderRadius: 20, flexShrink: 0 }
+        style: { fontSize: 11, fontWeight: 600, color: "var(--cinza-500)", background: "var(--cinza-100)", padding: "2px 8px", borderRadius: 16, flexShrink: 0 }
       }, textoAtivosInativos(totalAtivos, totalInativos))
     ),
     aberta && /*#__PURE__*/React.createElement("div", {
@@ -11084,7 +11215,7 @@ function NoCoordenador({ item, estadoAberto, onToggleChave, chavePrefixo }) {
     },
       /*#__PURE__*/React.createElement(LinhaPessoa, { pessoa: coordenador, nivel: "coordenador", destaque: true }),
       subequipes.length === 0
-        ? /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: "var(--cinza-300)", padding: "6px 10px" } }, "Nenhuma subequipe cadastrada.")
+        ? /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: "var(--texto-fraco)", padding: "6px 10px" } }, "Nenhuma subequipe cadastrada.")
         : subequipes.map(sub => /*#__PURE__*/React.createElement(NoSubequipe, {
             key: sub.nome,
             grupo: sub,
@@ -11110,17 +11241,17 @@ function NoEquipeAdministrativa({ equipe, aberta, onToggle, estadoAberto, onTogg
         cursor: "pointer", textAlign: "left"
       }
     },
-      /*#__PURE__*/React.createElement("span", { style: { fontSize: 13, color: "var(--cinza-400)", transform: aberta ? "rotate(90deg)" : "rotate(0deg)", transition: "transform .15s", flexShrink: 0 } }, "▶"),
+      /*#__PURE__*/React.createElement("span", { style: { fontSize: 13, color: "var(--texto-fraco)", transform: aberta ? "rotate(90deg)" : "rotate(0deg)", transition: "transform .15s", flexShrink: 0 } }, "▶"),
       equipe.gerente ? /*#__PURE__*/React.createElement(Avatar, { nome: equipe.gerente.nome, id: equipe.gerente.id, size: 30 })
         : /*#__PURE__*/React.createElement("div", { style: { width: 30, height: 30, borderRadius: "50%", background: "var(--cinza-200)", flexShrink: 0 } }),
       /*#__PURE__*/React.createElement("div", { style: { flex: 1, minWidth: 0 } },
-        /*#__PURE__*/React.createElement("div", { style: { fontSize: 14.5, fontWeight: 800, color: "var(--cinza-900)" } }, equipe.nome),
-        /*#__PURE__*/React.createElement("div", { style: { fontSize: 11.5, color: "var(--cinza-400)" } },
+        /*#__PURE__*/React.createElement("div", { style: { fontSize: 13.5, fontWeight: 800, color: "var(--cinza-900)" } }, equipe.nome),
+        /*#__PURE__*/React.createElement("div", { style: { fontSize: 11.5, color: "var(--texto-fraco)" } },
           equipe.gerente ? equipe.gerente.nome : "Sem gerente definido")
       ),
       equipe.semSubequipe && /*#__PURE__*/React.createElement("span", { title: "Há membros sem subequipe definida", style: { fontSize: 13, flexShrink: 0 } }, "⚠️"),
       /*#__PURE__*/React.createElement("span", {
-        style: { fontSize: 11.5, fontWeight: 600, color: "var(--cinza-500)", background: "var(--cinza-100)", padding: "3px 10px", borderRadius: 20, flexShrink: 0 }
+        style: { fontSize: 11.5, fontWeight: 600, color: "var(--cinza-500)", background: "var(--cinza-100)", padding: "3px 10px", borderRadius: 16, flexShrink: 0 }
       }, textoAtivosInativos(equipe.totalAtivos, equipe.totalInativos))
     ),
     aberta && /*#__PURE__*/React.createElement("div", {
@@ -11147,7 +11278,7 @@ function NoEquipeAdministrativa({ equipe, aberta, onToggle, estadoAberto, onTogg
         onToggle: () => onToggleChave(`eq_${equipe.nome}_sem_sub`)
       }),
       equipe.coordenadores.length === 0 && (!equipe.subequipesDoGerente || equipe.subequipesDoGerente.length === 0) && !equipe.semSubequipe && !equipe.gerente && /*#__PURE__*/React.createElement("div", {
-        style: { fontSize: 12, color: "var(--cinza-300)" }
+        style: { fontSize: 12, color: "var(--texto-fraco)" }
       }, "Nenhum membro nesta equipe.")
     )
   );
@@ -11223,7 +11354,7 @@ function NoRaizAdministrativo({ busca, aberta, onToggle, estadoAberto, onToggleC
       ),
       /*#__PURE__*/React.createElement("span", {
         style: {
-          fontSize: 13, fontWeight: 700, padding: "5px 12px", borderRadius: 20, flexShrink: 0,
+          fontSize: 13, fontWeight: 700, padding: "5px 12px", borderRadius: 16, flexShrink: 0,
           background: aberta ? "rgba(255,255,255,.22)" : "var(--marca-50)",
           color: aberta ? "var(--cor-branco)" : "var(--marca-600)"
         }
@@ -11233,7 +11364,7 @@ function NoRaizAdministrativo({ busca, aberta, onToggle, estadoAberto, onToggleC
       style: { padding: 20, display: "flex", flexDirection: "column", gap: 10, background: "var(--cinza-50)" }
     },
       arvore.equipes.length === 0
-        ? /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: "var(--cinza-300)" } }, "Nenhuma equipe cadastrada.")
+        ? /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: "var(--texto-fraco)" } }, "Nenhuma equipe cadastrada.")
         : arvore.equipes.map(eq => /*#__PURE__*/React.createElement(NoEquipeAdministrativa, {
             key: eq.nome,
             equipe: eq,
@@ -11317,19 +11448,19 @@ function CardGerenciaFuncionarios({ gerencia, aberta, onToggle, contagens, setFu
         cursor: "pointer", textAlign: "left"
       }
     },
-      /*#__PURE__*/React.createElement("span", { style: { fontSize: 12, color: "var(--cinza-400)", transform: aberta ? "rotate(90deg)" : "rotate(0deg)", transition: "transform .15s", flexShrink: 0 } }, "▶"),
+      /*#__PURE__*/React.createElement("span", { style: { fontSize: 12, color: "var(--texto-fraco)", transform: aberta ? "rotate(90deg)" : "rotate(0deg)", transition: "transform .15s", flexShrink: 0 } }, "▶"),
       /*#__PURE__*/React.createElement("div", { style: { flex: 1, minWidth: 0 } },
         /*#__PURE__*/React.createElement("div", { style: { fontSize: 13, fontWeight: 700, color: "var(--cinza-900)" } }, gerencia.nome)
       ),
       /*#__PURE__*/React.createElement("span", {
-        style: { fontSize: 11, fontWeight: 600, color: "var(--cinza-500)", background: "var(--cinza-100)", padding: "2px 8px", borderRadius: 20, flexShrink: 0 }
+        style: { fontSize: 11, fontWeight: 600, color: "var(--cinza-500)", background: "var(--cinza-100)", padding: "2px 8px", borderRadius: 16, flexShrink: 0 }
       }, textoAtivosInativos(gerencia.totalAtivos, gerencia.totalInativos))
     ),
     aberta && /*#__PURE__*/React.createElement("div", {
       style: { padding: "0 10px 10px 34px", display: "flex", flexDirection: "column", gap: 2 }
     },
       gerencia.vendedores.length === 0
-        ? /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: "var(--cinza-300)", padding: "6px 10px" } }, "Nenhum vendedor encontrado nesta gerência.")
+        ? /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: "var(--texto-fraco)", padding: "6px 10px" } }, "Nenhum vendedor encontrado nesta gerência.")
         : gerencia.vendedores.map(f => /*#__PURE__*/React.createElement(LinhaFuncionarioArvore, {
             key: f.id, f, contagens, setFuncSelecionado, setView, somenteLeituraGestor, setConfirmExcluir
           }))
@@ -11352,14 +11483,14 @@ function NoDiretoriaFuncionarios({ diretoria, aberta, onToggle, gerenciasAbertas
         cursor: "pointer", textAlign: "left"
       }
     },
-      /*#__PURE__*/React.createElement("span", { style: { fontSize: 13, color: "var(--cinza-400)", transform: aberta ? "rotate(90deg)" : "rotate(0deg)", transition: "transform .15s", flexShrink: 0 } }, "▶"),
+      /*#__PURE__*/React.createElement("span", { style: { fontSize: 13, color: "var(--texto-fraco)", transform: aberta ? "rotate(90deg)" : "rotate(0deg)", transition: "transform .15s", flexShrink: 0 } }, "▶"),
       /*#__PURE__*/React.createElement("div", { style: { flex: 1, minWidth: 0 } },
         /*#__PURE__*/React.createElement("div", { style: { fontSize: 15, fontWeight: 700, color: "var(--cinza-900)" } }, diretoria.nome),
-        /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: "var(--cinza-400)", marginTop: 2 } },
+        /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: "var(--texto-fraco)", marginTop: 2 } },
           totalGerencias, " ", totalGerencias === 1 ? "gerência" : "gerências")
       ),
       /*#__PURE__*/React.createElement("span", {
-        style: { fontSize: 12, fontWeight: 700, color: "var(--marca-600)", background: "var(--marca-50)", padding: "4px 10px", borderRadius: 20, flexShrink: 0 }
+        style: { fontSize: 12, fontWeight: 700, color: "var(--marca-600)", background: "var(--marca-50)", padding: "4px 10px", borderRadius: 16, flexShrink: 0 }
       }, textoAtivosInativos(diretoria.totalAtivos, diretoria.totalInativos))
     ),
     aberta && /*#__PURE__*/React.createElement("div", {
@@ -11380,7 +11511,7 @@ function NoDiretoriaFuncionarios({ diretoria, aberta, onToggle, gerenciasAbertas
         }))
       ),
       diretoria.gerencias.length === 0 && diretoria.semGerencia.length === 0 && /*#__PURE__*/React.createElement("div", {
-        style: { fontSize: 12, color: "var(--cinza-300)", padding: "6px 4px" }
+        style: { fontSize: 12, color: "var(--texto-fraco)", padding: "6px 4px" }
       }, "Nenhuma gerência cadastrada nesta diretoria.")
     )
   );
@@ -11419,7 +11550,7 @@ function NoDiretoria({ diretoria, aberta, onToggle, gerenciasAbertas, onToggleGe
           cursor: "pointer", textAlign: "left"
         }
       },
-        /*#__PURE__*/React.createElement("span", { style: { fontSize: 13, color: "var(--cinza-400)", transform: aberta ? "rotate(90deg)" : "rotate(0deg)", transition: "transform .15s", flexShrink: 0 } }, "▶"),
+        /*#__PURE__*/React.createElement("span", { style: { fontSize: 13, color: "var(--texto-fraco)", transform: aberta ? "rotate(90deg)" : "rotate(0deg)", transition: "transform .15s", flexShrink: 0 } }, "▶"),
         diretoria.diretor ? /*#__PURE__*/React.createElement(Avatar, { nome: nomeDiretor, id: diretoria.diretor.id, size: 34 })
           : /*#__PURE__*/React.createElement("div", { style: { width: 34, height: 34, borderRadius: "50%", background: "var(--cinza-200)", flexShrink: 0 } }),
         /*#__PURE__*/React.createElement("div", { style: { flex: 1, minWidth: 0 } },
@@ -11429,7 +11560,7 @@ function NoDiretoria({ diretoria, aberta, onToggle, gerenciasAbertas, onToggleGe
               style: { fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 20, background: NIVEL_COR.diretor.bg, color: NIVEL_COR.diretor.texto }
             }, "Diretoria")
           ),
-          /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: "var(--cinza-400)", marginTop: 2 } },
+          /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: "var(--texto-fraco)", marginTop: 2 } },
             diretoria.diretor ? nomeDiretor : "Sem diretor definido", " · ", totalGerencias, " ", totalGerencias === 1 ? "gerência" : "gerências")
         )
       ),
@@ -11438,11 +11569,11 @@ function NoDiretoria({ diretoria, aberta, onToggle, gerenciasAbertas, onToggleGe
         title: "Ver/editar perfil do diretor",
         style: {
           fontSize: 11.5, fontWeight: 700, color: "var(--marca-600)", background: "var(--marca-50)",
-          border: "none", borderRadius: 20, padding: "5px 12px", cursor: "pointer", flexShrink: 0
+          border: "none", borderRadius: 16, padding: "5px 12px", cursor: "pointer", flexShrink: 0
         }
       }, "Editar"),
       /*#__PURE__*/React.createElement("span", {
-        style: { fontSize: 12, fontWeight: 700, color: "var(--marca-600)", background: "var(--marca-50)", padding: "4px 10px", borderRadius: 20, flexShrink: 0 }
+        style: { fontSize: 12, fontWeight: 700, color: "var(--marca-600)", background: "var(--marca-50)", padding: "4px 10px", borderRadius: 16, flexShrink: 0 }
       }, textoAtivosInativos(diretoria.totalAtivos, diretoria.totalInativos))
     ),
     aberta && /*#__PURE__*/React.createElement("div", {
@@ -11459,14 +11590,14 @@ function NoDiretoria({ diretoria, aberta, onToggle, gerenciasAbertas, onToggleGe
       },
         /*#__PURE__*/React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 6 } },
           /*#__PURE__*/React.createElement("span", {
-            style: { fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 20, background: "var(--cinza-200)", color: "var(--cinza-600)" }
+            style: { fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 16, background: "var(--cinza-200)", color: "var(--cinza-600)" }
           }, "-"),
           /*#__PURE__*/React.createElement("span", { style: { fontSize: 12, fontWeight: 600, color: "var(--cinza-500)" } }, "Sem gerência — reporta direto à diretoria")
         ),
         diretoria.semGerencia.map(v => /*#__PURE__*/React.createElement(LinhaPessoa, { key: v.id, pessoa: v, nivel: "vendedor" }))
       ),
       diretoria.gerencias.length === 0 && diretoria.semGerencia.length === 0 && /*#__PURE__*/React.createElement("div", {
-        style: { fontSize: 12, color: "var(--cinza-300)", padding: "6px 4px" }
+        style: { fontSize: 12, color: "var(--texto-fraco)", padding: "6px 4px" }
       }, "Nenhuma gerência cadastrada nesta diretoria.")
     )
   );
@@ -11520,7 +11651,7 @@ function NoSuperintendencia({ superintendencia, aberta, onToggle, estadoAberto, 
         onClick: e => { e.stopPropagation(); onSelecionar(superintendencia.superintendente); },
         title: "Ver/editar perfil do superintendente",
         style: {
-          fontSize: 12, fontWeight: 700, padding: "5px 12px", borderRadius: 20, flexShrink: 0,
+          fontSize: 12, fontWeight: 700, padding: "5px 12px", borderRadius: 16, flexShrink: 0,
           border: "none", cursor: "pointer",
           background: aberta ? "rgba(255,255,255,.22)" : "var(--marca-50)",
           color: aberta ? "var(--cor-branco)" : "var(--marca-600)"
@@ -11528,7 +11659,7 @@ function NoSuperintendencia({ superintendencia, aberta, onToggle, estadoAberto, 
       }, "Editar"),
       /*#__PURE__*/React.createElement("span", {
         style: {
-          fontSize: 13, fontWeight: 700, padding: "5px 12px", borderRadius: 20, flexShrink: 0,
+          fontSize: 13, fontWeight: 700, padding: "5px 12px", borderRadius: 16, flexShrink: 0,
           background: aberta ? "rgba(255,255,255,.22)" : "var(--marca-50)",
           color: aberta ? "var(--cor-branco)" : "var(--marca-600)"
         }
@@ -11538,7 +11669,7 @@ function NoSuperintendencia({ superintendencia, aberta, onToggle, estadoAberto, 
       style: { padding: 20, display: "flex", flexDirection: "column", gap: 10, background: "var(--cinza-50)" }
     },
       superintendencia.diretorias.length === 0
-        ? /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: "var(--cinza-300)" } }, "Nenhuma diretoria cadastrada nesta superintendência.")
+        ? /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: "var(--texto-fraco)" } }, "Nenhuma diretoria cadastrada nesta superintendência.")
         : superintendencia.diretorias.map(d => /*#__PURE__*/React.createElement(NoDiretoria, {
             key: d.id,
             diretoria: d,
@@ -11837,7 +11968,7 @@ function ModalPerfilComercial({ pessoa, onClose, onAtualizado, nomeExibicao: nom
 
     /*# ── Posição na hierarquia ─────────────────────────────────────── #*/
     /*#__PURE__*/React.createElement("div", { style: { borderTop: "1px solid var(--cinza-100)", paddingTop: 14, display: "flex", flexDirection: "column", gap: 12 } },
-      /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, fontWeight: 700, color: "var(--cinza-400)", textTransform: "uppercase", letterSpacing: ".05em" } }, "Posição na hierarquia"),
+      /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, fontWeight: 700, color: "var(--texto-fraco)", textTransform: "uppercase", letterSpacing: ".05em" } }, "Posição na hierarquia"),
 
       /*# Nível/cargo hierárquico #*/
       /*#__PURE__*/React.createElement("div", null,
@@ -11884,7 +12015,7 @@ function ModalPerfilComercial({ pessoa, onClose, onAtualizado, nomeExibicao: nom
       /*# Gerência — para gerente, e opcional para vendedor (vendedor pode
           estar vinculado direto à diretoria, sem gerência) #*/
       (editando.nivel === "gerente" || editando.nivel === "vendedor") && /*#__PURE__*/React.createElement("div", null,
-        /*#__PURE__*/React.createElement("label", { style: labelStyle }, "Gerência", editando.nivel === "vendedor" && /*#__PURE__*/React.createElement("span", { style: { fontWeight: 400, color: "var(--cinza-400)" } }, " (opcional para vendedor)")),
+        /*#__PURE__*/React.createElement("label", { style: labelStyle }, "Gerência", editando.nivel === "vendedor" && /*#__PURE__*/React.createElement("span", { style: { fontWeight: 400, color: "var(--texto-fraco)" } }, " (opcional para vendedor)")),
         /*#__PURE__*/React.createElement("select", {
           value: editando.gerencia_id ?? "",
           onChange: e => setEditando(p => ({ ...p, gerencia_id: e.target.value ? Number(e.target.value) : null })),
@@ -11962,10 +12093,10 @@ function ModalPerfilComercial({ pessoa, onClose, onAtualizado, nomeExibicao: nom
     /*# ── Controle de acesso ─────────────────────────────────────────── #*/
     /*#__PURE__*/React.createElement("div", { style: { borderTop: "1px solid var(--cinza-100)", paddingTop: 16, display: "flex", flexDirection: "column", gap: 12 } },
       /*#__PURE__*/React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 } },
-        /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, fontWeight: 700, color: "var(--cinza-400)", textTransform: "uppercase", letterSpacing: ".05em" } }, "Controle de acesso"),
+        /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, fontWeight: 700, color: "var(--texto-fraco)", textTransform: "uppercase", letterSpacing: ".05em" } }, "Controle de acesso"),
         temLogin && /*#__PURE__*/React.createElement("span", {
           style: {
-            fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 20,
+            fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 16,
             background: acessoRevogado ? "var(--vermelho-100)" : "var(--verde-100)",
             color: acessoRevogado ? "var(--vermelho-600)" : "var(--verde-800)"
           }
@@ -11973,7 +12104,7 @@ function ModalPerfilComercial({ pessoa, onClose, onAtualizado, nomeExibicao: nom
       ),
 
       !temLogin && /*#__PURE__*/React.createElement("div", {
-        style: { fontSize: 12.5, color: "var(--cinza-400)", background: "var(--cinza-50)", borderRadius: 12, padding: "10px 12px" }
+        style: { fontSize: 12.5, color: "var(--texto-fraco)", background: "var(--cinza-50)", borderRadius: 12, padding: "10px 12px" }
       }, "Esta pessoa ainda não tem login criado — nada para gerenciar no Auth até que um login seja criado (ver aviso na tela de Hierarquia)."),
 
       temLogin && podeGerenciarAcesso && /*#__PURE__*/React.createElement("div", { style: { display: "flex", gap: 8, flexWrap: "wrap" } },
@@ -12080,6 +12211,139 @@ function ModalPerfilComercial({ pessoa, onClose, onAtualizado, nomeExibicao: nom
       )
     )
   ));
+}
+// ─── MODAL DE PERFIL — ADMINISTRATIVO ────────────────────────────────────────
+// Variante enxuta do ModalPerfilComercial para `funcionarios_administrativo`
+// (colunas: nome, cargo, setor, matricula, email, ativo, auth_user_id,
+// acesso_revogado; id UUID). Hierarquia (equipe/papel) continua vindo da
+// importação de planilha — aqui só cadastro básico + controle de acesso.
+function ModalPerfilAdministrativo({ pessoa, onClose, onAtualizado, pode }) {
+  const podeEditarPerfil = pode("editar_perfil");
+  const podeGerenciarAcesso = pode("gerenciar_acesso");
+  const [editando, setEditando] = useState({
+    nome: pessoa.nome || "",
+    cargo: pessoa.cargo || "",
+    setor: pessoa.setor || "",
+    email: pessoa.email || "",
+    matricula: pessoa.matricula || "",
+    ativo: pessoa.ativo !== false
+  });
+  const [salvando, setSalvando] = useState(false);
+  const [erroSalvar, setErroSalvar] = useState("");
+  const [sucessoSalvar, setSucessoSalvar] = useState("");
+  const [authUserId, setAuthUserId] = useState(pessoa.auth_user_id || null);
+  const [acessoRevogado, setAcessoRevogado] = useState(!!pessoa.acesso_revogado);
+  const [acaoEmAndamento, setAcaoEmAndamento] = useState(null);
+  const [resultadoAcao, setResultadoAcao] = useState(null);
+  const [confirmAcao, setConfirmAcao] = useState(null); // "criar_login" | "revogar_acesso" | "reativar_acesso"
+  const temLogin = !!authUserId;
+  const pessoaAtual = () => ({ ...pessoa, auth_user_id: authUserId, acesso_revogado: acessoRevogado });
+
+  async function salvar() {
+    if (!podeEditarPerfil) { setErroSalvar("Você não tem permissão para editar perfil."); return; }
+    if (!editando.nome.trim() || !editando.matricula.trim()) { setErroSalvar("Nome e matrícula são obrigatórios."); return; }
+    const email = editando.email.trim().toLowerCase();
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { setErroSalvar("E-mail inválido."); return; }
+    setSalvando(true); setErroSalvar(""); setSucessoSalvar("");
+    const campos = {
+      nome: editando.nome.trim().toUpperCase(),
+      cargo: editando.cargo.trim().toUpperCase() || null,
+      setor: editando.setor.trim() || null,
+      email: email || null,
+      matricula: editando.matricula.trim(),
+      ativo: editando.ativo
+    };
+    const { data, error } = await supa.from("funcionarios_administrativo").update(campos).eq("id", pessoa.id).select().single();
+    setSalvando(false);
+    if (error) { setErroSalvar(`Falha ao salvar: ${extrairMensagemErro(error)}`); return; }
+    setSucessoSalvar("Perfil atualizado com sucesso." + (!campos.ativo && temLogin && !acessoRevogado ? " Atenção: o acesso continua ativo — revogue abaixo se necessário." : ""));
+    setTimeout(() => setSucessoSalvar(""), 6000);
+    onAtualizado && onAtualizado({ ...pessoaAtual(), ...data });
+  }
+
+  async function executarAcao(acao) {
+    if (!podeGerenciarAcesso) { setResultadoAcao({ ok: false, erro: "Você não tem permissão para gerenciar acesso." }); return; }
+    if (acaoEmAndamento) return;
+    setConfirmAcao(null); setAcaoEmAndamento(acao); setResultadoAcao(null);
+    if (acao === "criar_login") {
+      const r = await chamarCriarUsuarioIndividual("funcionarios_administrativo", pessoa.id);
+      if (!r.ok) { setAcaoEmAndamento(null); setResultadoAcao({ ok: false, erro: r.erro || "Falha ao criar login." }); return; }
+      // Relê a linha para obter o auth_user_id gravado pela Edge Function.
+      const { data, error } = await supa.from("funcionarios_administrativo").select("*").eq("id", pessoa.id).single();
+      setAcaoEmAndamento(null);
+      if (error || !data?.auth_user_id) { setResultadoAcao({ ok: false, erro: "Login criado, mas não foi possível confirmar — recarregue a tela." }); return; }
+      setAuthUserId(data.auth_user_id);
+      setResultadoAcao({ ok: true, mensagem: "Login criado com a senha inicial padrão." + (r.senha ? ` Senha inicial: ${r.senha}` : "") });
+      onAtualizado && onAtualizado({ ...pessoa, ...data });
+      return;
+    }
+    const r = await chamarGerenciarAcesso(acao, { ...pessoa, ...editando, auth_user_id: authUserId });
+    setAcaoEmAndamento(null);
+    if (!r.ok) { setResultadoAcao({ ok: false, erro: r.erro || "Falha desconhecida." }); return; }
+    if (acao === "revogar_acesso") setAcessoRevogado(true);
+    if (acao === "reativar_acesso") setAcessoRevogado(false);
+    setResultadoAcao(acao === "resetar_senha"
+      ? { ok: true, mensagem: "Nova senha temporária gerada. Copie e repasse com segurança:", senhaTemporaria: r.senha_temporaria || null }
+      : { ok: true, mensagem: acao === "revogar_acesso" ? "Acesso revogado — o login foi bloqueado." : "Acesso reativado — o login voltou a funcionar." });
+    if (acao !== "resetar_senha") onAtualizado && onAtualizado({ ...pessoa, auth_user_id: authUserId, acesso_revogado: acao === "revogar_acesso" });
+  }
+
+  const inp = { width: "100%", padding: "9px 12px", borderRadius: 12, border: "1px solid var(--cinza-200)", fontSize: 13, background: "var(--cor-branco)", color: "var(--cinza-900)" };
+  const rot = { fontSize: 12, fontWeight: 600, color: "var(--cinza-600)", display: "block", marginBottom: 4 };
+  const campo = (id, label, chave, extra) => /*#__PURE__*/React.createElement("div", null,
+    /*#__PURE__*/React.createElement("label", { htmlFor: "adm_" + id, style: rot }, label),
+    /*#__PURE__*/React.createElement("input", { id: "adm_" + id, value: editando[chave], onChange: e => setEditando(p => ({ ...p, [chave]: e.target.value })), style: inp, ...(extra || {}) }));
+  const btn = (cor, fundo, borda) => ({ padding: "9px 14px", borderRadius: 12, border: `1px solid ${borda}`, background: fundo, color: cor, fontSize: 12.5, fontWeight: 700, cursor: acaoEmAndamento ? "default" : "pointer", opacity: acaoEmAndamento ? 0.6 : 1 });
+  const textosConfirma = {
+    criar_login: ["Criar login", "Será criado um login com a senha inicial padrão para esta pessoa (e-mail obrigatório no cadastro).", "Criar login"],
+    revogar_acesso: ["Revogar acesso", "O login será bloqueado imediatamente. A pessoa não conseguirá entrar até o acesso ser reativado.", "Revogar acesso"],
+    reativar_acesso: ["Reativar acesso", "O login voltará a funcionar.", "Reativar acesso"]
+  };
+
+  return /*#__PURE__*/React.createElement(Modal, { title: "👤 " + (pessoa.nome || "Perfil"), onClose, maxWidth: 560 },
+    /*#__PURE__*/React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 16 } },
+      /*#__PURE__*/React.createElement("div", { style: { pointerEvents: podeEditarPerfil ? "auto" : "none", opacity: podeEditarPerfil ? 1 : 0.7, display: "flex", flexDirection: "column", gap: 12 } },
+        campo("nome", "Nome completo", "nome"),
+        /*#__PURE__*/React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 } },
+          campo("matricula", "Matrícula", "matricula"),
+          campo("setor", "Setor", "setor")),
+        campo("cargo", "Cargo", "cargo"),
+        campo("email", "E-mail", "email", { type: "email", autoComplete: "off" }),
+        /*#__PURE__*/React.createElement("div", null,
+          /*#__PURE__*/React.createElement("label", { htmlFor: "adm_ativo", style: rot }, "Situação"),
+          /*#__PURE__*/React.createElement("select", { id: "adm_ativo", value: editando.ativo ? "1" : "0", onChange: e => setEditando(p => ({ ...p, ativo: e.target.value === "1" })), style: inp },
+            /*#__PURE__*/React.createElement("option", { value: "1" }, "Ativo"),
+            /*#__PURE__*/React.createElement("option", { value: "0" }, "Inativo")))),
+      erroSalvar && /*#__PURE__*/React.createElement("div", { style: { background: "var(--vermelho-100)", borderRadius: 12, padding: "10px 14px", fontSize: 13, color: "var(--vermelho-600)" } }, erroSalvar),
+      sucessoSalvar && /*#__PURE__*/React.createElement("div", { style: { background: "var(--verde-100)", borderRadius: 12, padding: "10px 14px", fontSize: 13, color: "var(--verde-800)" } }, "✅ ", sucessoSalvar),
+      podeEditarPerfil && /*#__PURE__*/React.createElement("div", { style: { display: "flex", justifyContent: "flex-end" } },
+        /*#__PURE__*/React.createElement("button", { type: "button", onClick: salvar, disabled: salvando, style: { padding: "10px 20px", borderRadius: 12, border: "none", background: salvando ? "var(--cinza-300)" : "var(--marca-gradiente)", color: "var(--branco-fixo)", fontSize: 13, fontWeight: 700, cursor: salvando ? "not-allowed" : "pointer" } }, salvando ? "⏳ Salvando..." : "💾 Salvar alterações")),
+
+      /*# Controle de acesso #*/
+      /*#__PURE__*/React.createElement("div", { style: { borderTop: "1px solid var(--cinza-100)", paddingTop: 16, display: "flex", flexDirection: "column", gap: 12 } },
+        /*#__PURE__*/React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 } },
+          /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, fontWeight: 700, color: "var(--texto-fraco)", textTransform: "uppercase", letterSpacing: ".05em" } }, "Controle de acesso"),
+          temLogin && /*#__PURE__*/React.createElement("span", { style: { fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 16, background: acessoRevogado ? "var(--vermelho-100)" : "var(--verde-100)", color: acessoRevogado ? "var(--vermelho-600)" : "var(--verde-800)" } }, acessoRevogado ? "🔒 Acesso revogado" : "🔓 Acesso ativo")),
+        !temLogin && /*#__PURE__*/React.createElement("div", { style: { fontSize: 12.5, color: "var(--texto-fraco)", background: "var(--cinza-50)", borderRadius: 12, padding: "10px 12px" } }, "Esta pessoa ainda não tem login."),
+        !temLogin && podeGerenciarAcesso && /*#__PURE__*/React.createElement("div", null,
+          /*#__PURE__*/React.createElement("button", { type: "button", disabled: !!acaoEmAndamento || !pessoa.email, onClick: () => setConfirmAcao("criar_login"), style: btn("var(--marca-700)", "var(--marca-50)", "var(--marca-300)") }, acaoEmAndamento === "criar_login" ? "⏳ Criando..." : "➕ Criar login"),
+          !pessoa.email && /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: "var(--amber-700)", marginTop: 6 } }, "Cadastre e salve o e-mail antes de criar o login.")),
+        temLogin && podeGerenciarAcesso && /*#__PURE__*/React.createElement("div", { style: { display: "flex", gap: 8, flexWrap: "wrap" } },
+          /*#__PURE__*/React.createElement("button", { type: "button", disabled: !!acaoEmAndamento, onClick: () => executarAcao("resetar_senha"), style: btn("var(--marca-700)", "var(--marca-50)", "var(--marca-300)") }, acaoEmAndamento === "resetar_senha" ? "⏳ Gerando..." : "🔑 Gerar nova senha"),
+          acessoRevogado
+            ? /*#__PURE__*/React.createElement("button", { type: "button", disabled: !!acaoEmAndamento, onClick: () => setConfirmAcao("reativar_acesso"), style: btn("var(--verde-800)", "var(--verde-50)", "var(--verde-200)") }, "🔓 Reativar acesso")
+            : /*#__PURE__*/React.createElement("button", { type: "button", disabled: !!acaoEmAndamento, onClick: () => setConfirmAcao("revogar_acesso"), style: btn("var(--vermelho-600)", "var(--vermelho-100)", "var(--vermelho-300)") }, "🔒 Revogar acesso")),
+        !podeGerenciarAcesso && /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: "var(--texto-fraco)" } }, "🔒 Você não tem permissão para gerenciar acesso."),
+        resultadoAcao && /*#__PURE__*/React.createElement("div", { role: "status", style: { fontSize: 12.5, borderRadius: 12, padding: "10px 12px", background: resultadoAcao.ok ? "var(--verde-100)" : "var(--vermelho-100)", color: resultadoAcao.ok ? "var(--verde-800)" : "var(--vermelho-600)", display: "flex", flexDirection: "column", gap: 8 } },
+          /*#__PURE__*/React.createElement("span", null, resultadoAcao.ok ? `✅ ${resultadoAcao.mensagem}` : `❌ ${resultadoAcao.erro}`),
+          resultadoAcao.ok && resultadoAcao.senhaTemporaria && /*#__PURE__*/React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, background: "var(--cor-branco)", border: "1px solid var(--verde-200)", borderRadius: 8, padding: "8px 10px" } },
+            /*#__PURE__*/React.createElement("code", { style: { fontSize: 15, fontWeight: 700, letterSpacing: ".05em", color: "var(--cinza-900)", flex: 1 } }, resultadoAcao.senhaTemporaria),
+            /*#__PURE__*/React.createElement("button", { type: "button", onClick: () => navigator.clipboard && navigator.clipboard.writeText(resultadoAcao.senhaTemporaria), style: { padding: "5px 10px", borderRadius: 8, border: "1px solid var(--verde-200)", background: "var(--verde-50)", color: "var(--verde-800)", fontSize: 11.5, fontWeight: 700, cursor: "pointer" } }, "📋 Copiar"))))),
+    confirmAcao && /*#__PURE__*/React.createElement(Modal, { title: textosConfirma[confirmAcao][0], onClose: () => setConfirmAcao(null), maxWidth: 420 },
+      /*#__PURE__*/React.createElement("p", { style: { fontSize: 13, color: "var(--cinza-700)", marginBottom: 16, lineHeight: 1.5 } }, textosConfirma[confirmAcao][1]),
+      /*#__PURE__*/React.createElement("div", { style: { display: "flex", gap: 10, justifyContent: "flex-end" } },
+        /*#__PURE__*/React.createElement("button", { type: "button", onClick: () => setConfirmAcao(null), style: { padding: "9px 16px", borderRadius: 12, border: "none", background: "var(--cinza-100)", color: "var(--cinza-600)", fontSize: 13, fontWeight: 600, cursor: "pointer" } }, "Cancelar"),
+        /*#__PURE__*/React.createElement("button", { type: "button", onClick: () => executarAcao(confirmAcao), style: { padding: "9px 16px", borderRadius: 12, border: "none", background: confirmAcao === "revogar_acesso" ? "var(--vermelho-600)" : "var(--marca-600)", color: "var(--branco-fixo)", fontSize: 13, fontWeight: 700, cursor: "pointer" } }, textosConfirma[confirmAcao][2]))));
 }
 // ─── LOG DE AUDITORIA (log_acessos) ────────────────────────────────────────
 // Lista cronológica (mais recente primeiro) de toda ação administrativa
@@ -12257,7 +12521,7 @@ function ModalLogAcessos({ onClose }) {
     erro && /*#__PURE__*/React.createElement("div", { style: { background: "var(--vermelho-100)", color: "var(--vermelho-600)", borderRadius: 12, padding: "10px 14px", fontSize: 13 } }, "Não foi possível carregar o log: ", erro),
 
     !carregando && !erro && itensFiltrados.length === 0 && /*#__PURE__*/React.createElement("div", {
-      style: { padding: 24, textAlign: "center", color: "var(--cinza-400)", fontSize: 13 }
+      style: { padding: 24, textAlign: "center", color: "var(--texto-fraco)", fontSize: 13 }
     }, "Nenhum registro encontrado."),
 
     !carregando && !erro && itensFiltrados.length > 0 && /*#__PURE__*/React.createElement("div", {
@@ -12272,16 +12536,16 @@ function ModalLogAcessos({ onClose }) {
         },
           /*#__PURE__*/React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" } },
             /*#__PURE__*/React.createElement("span", { style: { fontSize: 12.5, fontWeight: 700, color: rubrica.cor } }, rubrica.label),
-            /*#__PURE__*/React.createElement("span", { style: { fontSize: 11.5, color: "var(--cinza-400)" } }, formatarDataHoraLog(item.criado_em))
+            /*#__PURE__*/React.createElement("span", { style: { fontSize: 11.5, color: "var(--texto-fraco)" } }, formatarDataHoraLog(item.criado_em))
           ),
           /*#__PURE__*/React.createElement("div", { style: { fontSize: 12.5, color: "var(--cinza-700)" } },
             item.funcionario_nome || "—", item.funcionario_matricula ? ` — mat. ${item.funcionario_matricula}` : "",
             item.origem === "importacao_planilha" && /*#__PURE__*/React.createElement("span", {
-              style: { marginLeft: 8, fontSize: 11, fontWeight: 700, color: "var(--amber-700)", background: "var(--amber-100)", padding: "2px 8px", borderRadius: 20 }
+              style: { marginLeft: 8, fontSize: 11, fontWeight: 700, color: "var(--amber-700)", background: "var(--amber-100)", padding: "2px 8px", borderRadius: 16 }
             }, "via importação")
           ),
-          detalheTexto && /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: "var(--cinza-400)" } }, detalheTexto),
-          /*#__PURE__*/React.createElement("div", { style: { fontSize: 11.5, color: "var(--cinza-300)" } }, "por ", item.ator_email)
+          detalheTexto && /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: "var(--texto-fraco)" } }, detalheTexto),
+          /*#__PURE__*/React.createElement("div", { style: { fontSize: 11.5, color: "var(--texto-fraco)" } }, "por ", item.ator_email)
         );
       })
     )
@@ -12495,7 +12759,7 @@ function PainelPermissoes() {
     /*#__PURE__*/React.createElement("div", null,
       /*#__PURE__*/React.createElement("div", { style: { marginBottom: 10 } },
         /*#__PURE__*/React.createElement("div", { style: { fontSize: 15, fontWeight: 700, color: "var(--cinza-900)" } }, "Exceções individuais"),
-        /*#__PURE__*/React.createElement("div", { style: { fontSize: 12.5, color: "var(--cinza-400)", marginTop: 2 } },
+        /*#__PURE__*/React.createElement("div", { style: { fontSize: 12.5, color: "var(--texto-fraco)", marginTop: 2 } },
           "Selecione uma pessoa para dar ou tirar uma permissão específica, sem mudar a regra do papel dela.")
       ),
       /*#__PURE__*/React.createElement("div", {
@@ -12516,7 +12780,7 @@ function PainelPermissoes() {
           }),
           /*#__PURE__*/React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 4, overflow: "auto" } },
             listaPessoasSelecao.length === 0 && /*#__PURE__*/React.createElement("div", {
-              style: { fontSize: 12, color: "var(--cinza-300)", padding: "8px 4px" }
+              style: { fontSize: 12, color: "var(--texto-fraco)", padding: "8px 4px" }
             }, "Nenhuma pessoa encontrada."),
             listaPessoasSelecao.map(f => {
               const selecionada = pessoaExcecao?.id === f.id;
@@ -12533,7 +12797,7 @@ function PainelPermissoes() {
               },
                 /*#__PURE__*/React.createElement("div", { style: { fontWeight: 700 } },
                   `${nomeExibicao(f, nomesExibicaoPessoas)}`),
-                /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, color: "var(--cinza-400)" } },
+                /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, color: "var(--texto-fraco)" } },
                   `${f.cargo_origem || f.cargo || nivelDaPessoa(f) || ""} · ${caminhoHierarquico(f)}`)
               );
             })
@@ -12543,7 +12807,7 @@ function PainelPermissoes() {
         !pessoaExcecao && /*#__PURE__*/React.createElement("div", {
           style: {
             background: "var(--cinza-50)", border: "1px dashed var(--cinza-200)", borderRadius: 16,
-            padding: 40, textAlign: "center", color: "var(--cinza-300)", fontSize: 13
+            padding: 40, textAlign: "center", color: "var(--texto-fraco)", fontSize: 13
           }
         }, "Selecione uma pessoa à esquerda para ver e editar as permissões dela."),
         pessoaExcecao && /*#__PURE__*/React.createElement("div", {
@@ -12552,18 +12816,18 @@ function PainelPermissoes() {
           /*#__PURE__*/React.createElement("div", { style: { display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8, paddingBottom: 12, borderBottom: "1px solid var(--cinza-100)" } },
             /*#__PURE__*/React.createElement("div", null,
               /*#__PURE__*/React.createElement("div", { style: { fontSize: 15, fontWeight: 700, color: "var(--cinza-900)" } }, nomeExibicao(pessoaExcecao, nomesExibicaoPessoas)),
-              /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: "var(--cinza-400)", marginTop: 2 } },
+              /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: "var(--texto-fraco)", marginTop: 2 } },
                 `${pessoaExcecao.cargo_origem || pessoaExcecao.cargo || ""} · Papel: ${nivelDaPessoa(pessoaExcecao)} · mat. ${pessoaExcecao.matricula || "—"}`),
-              /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: "var(--cinza-400)" } }, caminhoHierarquico(pessoaExcecao))
+              /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: "var(--texto-fraco)" } }, caminhoHierarquico(pessoaExcecao))
             ),
             /*#__PURE__*/React.createElement("button", {
               onClick: () => setPessoaExcecao(null),
-              style: { background: "none", border: "none", color: "var(--cinza-400)", fontSize: 12, cursor: "pointer", fontWeight: 600, flexShrink: 0 }
+              style: { background: "none", border: "none", color: "var(--texto-fraco)", fontSize: 12, cursor: "pointer", fontWeight: 600, flexShrink: 0 }
             }, "✕ Fechar")
           ),
           grupos.map(grupo => /*#__PURE__*/React.createElement("div", { key: grupo, style: { display: "flex", flexDirection: "column", gap: 2 } },
             /*#__PURE__*/React.createElement("div", {
-              style: { fontSize: 11, fontWeight: 700, color: "var(--cinza-400)", textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 4 }
+              style: { fontSize: 11, fontWeight: 700, color: "var(--texto-fraco)", textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 4 }
             }, grupo),
             PERMISSOES_CATALOGO.filter(p => p.grupo === grupo).map(p => {
               const ligado = valorEfetivoPessoa(pessoaExcecao, p.chave);
@@ -12617,15 +12881,15 @@ function PainelPermissoes() {
       },
         /*#__PURE__*/React.createElement("div", null,
           /*#__PURE__*/React.createElement("div", { style: { fontSize: 15, fontWeight: 700, color: "var(--cinza-900)" } }, "Permissões por papel"),
-          /*#__PURE__*/React.createElement("div", { style: { fontSize: 12.5, color: "var(--cinza-400)", marginTop: 2 } },
+          /*#__PURE__*/React.createElement("div", { style: { fontSize: 12.5, color: "var(--texto-fraco)", marginTop: 2 } },
             "Define o padrão que cada papel da hierarquia segue quando não há exceção individual.")
         ),
         /*#__PURE__*/React.createElement("span", {
-          style: { fontSize: 13, color: "var(--cinza-400)", transform: matrizAberta ? "rotate(180deg)" : "none", transition: "transform .15s" }
+          style: { fontSize: 13, color: "var(--texto-fraco)", transform: matrizAberta ? "rotate(180deg)" : "none", transition: "transform .15s" }
         }, "▾")
       ),
       matrizAberta && /*#__PURE__*/React.createElement("div", { style: { borderTop: "1px solid var(--cinza-100)", overflowX: "auto" } },
-        /*#__PURE__*/React.createElement("div", { style: { padding: "12px 18px 0", fontSize: 12.5, color: "var(--cinza-400)", lineHeight: 1.5 } },
+        /*#__PURE__*/React.createElement("div", { style: { padding: "12px 18px 0", fontSize: 12.5, color: "var(--texto-fraco)", lineHeight: 1.5 } },
           /*#__PURE__*/React.createElement("strong", null, "admin_geral"), " sempre tem acesso total e não aparece aqui — isso evita que uma configuração errada tranque o próprio administrador para fora do Painel de Acessos."),
         /*#__PURE__*/React.createElement("table", { style: { width: "100%", minWidth: 560, borderCollapse: "collapse", fontSize: 12.5, marginTop: 12 } },
           /*#__PURE__*/React.createElement("thead", null,
@@ -12635,7 +12899,7 @@ function PainelPermissoes() {
                 key: nivel,
                 style: { textAlign: "center", padding: "10px 12px", fontWeight: 700, color: "var(--cinza-700)" }
               }, /*#__PURE__*/React.createElement("div", { style: { textTransform: "capitalize" } }, nivel),
-                 /*#__PURE__*/React.createElement("div", { style: { fontSize: 10.5, fontWeight: 600, color: "var(--cinza-400)", textTransform: "none" } },
+                 /*#__PURE__*/React.createElement("div", { style: { fontSize: 11.5, fontWeight: 600, color: "var(--texto-fraco)", textTransform: "none" } },
                    `${contagemPorPapel[nivel] ?? 0} ${contagemPorPapel[nivel] === 1 ? "pessoa" : "pessoas"}`)
               ))
             )
@@ -12929,7 +13193,7 @@ function ArvoreHierarquia({ pode = () => true, ocorrencias = [], funcionariosUni
     /*#__PURE__*/React.createElement("div", { style: { display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, flexWrap: "wrap" } },
       /*#__PURE__*/React.createElement("div", null,
         /*#__PURE__*/React.createElement("h1", { style: { fontSize: 18, fontWeight: 800, color: "var(--cinza-900)", marginBottom: 4 } }, "🔐 Painel de Acessos"),
-        /*#__PURE__*/React.createElement("p", { style: { fontSize: 13, color: "var(--cinza-400)" } },
+        /*#__PURE__*/React.createElement("p", { style: { fontSize: 13, color: "var(--texto-fraco)" } },
           totais.total, " funcionários · ", totais.superintendencias, " superintendências · ",
           totais.diretorias, " diretorias · ", totais.gerencias, " gerências · ", totais.vendedores, " vendedores")
       ),
@@ -13021,15 +13285,15 @@ function ArvoreHierarquia({ pode = () => true, ocorrencias = [], funcionariosUni
       /*#__PURE__*/React.createElement("div", { style: { display: "flex", gap: 20, flexWrap: "wrap" } },
         /*#__PURE__*/React.createElement("div", null,
           /*#__PURE__*/React.createElement("div", { style: { fontSize: 18, fontWeight: 800, color: "var(--verde-600)" } }, totais.ativosComAcesso),
-          /*#__PURE__*/React.createElement("div", { style: { fontSize: 11.5, color: "var(--cinza-400)", fontWeight: 600 } }, "Com acesso ativo")
+          /*#__PURE__*/React.createElement("div", { style: { fontSize: 11.5, color: "var(--texto-fraco)", fontWeight: 600 } }, "Com acesso ativo")
         ),
         /*#__PURE__*/React.createElement("div", null,
           /*#__PURE__*/React.createElement("div", { style: { fontSize: 18, fontWeight: 800, color: "var(--amber-700)" } }, semLoginCount),
-          /*#__PURE__*/React.createElement("div", { style: { fontSize: 11.5, color: "var(--cinza-400)", fontWeight: 600 } }, "Sem login criado")
+          /*#__PURE__*/React.createElement("div", { style: { fontSize: 11.5, color: "var(--texto-fraco)", fontWeight: 600 } }, "Sem login criado")
         ),
         /*#__PURE__*/React.createElement("div", null,
           /*#__PURE__*/React.createElement("div", { style: { fontSize: 18, fontWeight: 800, color: "var(--vermelho-600)" } }, totais.revogados),
-          /*#__PURE__*/React.createElement("div", { style: { fontSize: 11.5, color: "var(--cinza-400)", fontWeight: 600 } }, "Acesso inativo")
+          /*#__PURE__*/React.createElement("div", { style: { fontSize: 11.5, color: "var(--texto-fraco)", fontWeight: 600 } }, "Acesso inativo")
         )
       ),
       semLoginCount > 0 && /*#__PURE__*/React.createElement("div", {
@@ -13127,15 +13391,15 @@ function ArvoreHierarquia({ pode = () => true, ocorrencias = [], funcionariosUni
       /*#__PURE__*/React.createElement("div", { style: { display: "flex", gap: 20, flexWrap: "wrap" } },
         /*#__PURE__*/React.createElement("div", null,
           /*#__PURE__*/React.createElement("div", { style: { fontSize: 18, fontWeight: 800, color: "var(--verde-600)" } }, totaisAdmin.ativosComAcesso),
-          /*#__PURE__*/React.createElement("div", { style: { fontSize: 11.5, color: "var(--cinza-400)", fontWeight: 600 } }, "Com acesso ativo")
+          /*#__PURE__*/React.createElement("div", { style: { fontSize: 11.5, color: "var(--texto-fraco)", fontWeight: 600 } }, "Com acesso ativo")
         ),
         /*#__PURE__*/React.createElement("div", null,
           /*#__PURE__*/React.createElement("div", { style: { fontSize: 18, fontWeight: 800, color: "var(--amber-700)" } }, semLoginCountAdmin),
-          /*#__PURE__*/React.createElement("div", { style: { fontSize: 11.5, color: "var(--cinza-400)", fontWeight: 600 } }, "Sem login criado")
+          /*#__PURE__*/React.createElement("div", { style: { fontSize: 11.5, color: "var(--texto-fraco)", fontWeight: 600 } }, "Sem login criado")
         ),
         /*#__PURE__*/React.createElement("div", null,
           /*#__PURE__*/React.createElement("div", { style: { fontSize: 18, fontWeight: 800, color: "var(--vermelho-600)" } }, totaisAdmin.revogados),
-          /*#__PURE__*/React.createElement("div", { style: { fontSize: 11.5, color: "var(--cinza-400)", fontWeight: 600 } }, "Acesso inativo")
+          /*#__PURE__*/React.createElement("div", { style: { fontSize: 11.5, color: "var(--texto-fraco)", fontWeight: 600 } }, "Acesso inativo")
         )
       ),
       semLoginCountAdmin > 0 && /*#__PURE__*/React.createElement("div", {
@@ -13241,7 +13505,7 @@ function ArvoreHierarquia({ pode = () => true, ocorrencias = [], funcionariosUni
             })
           }),
           arvore.length === 0
-            ? (buscaAdiada.trim() ? /*#__PURE__*/React.createElement("div", { style: { padding: 40, textAlign: "center", color: "var(--cinza-300)", fontSize: 13 } }, "Nenhum resultado para essa busca.") : null)
+            ? (buscaAdiada.trim() ? /*#__PURE__*/React.createElement("div", { style: { padding: 40, textAlign: "center", color: "var(--texto-fraco)", fontSize: 13 } }, "Nenhum resultado para essa busca.") : null)
             : arvore.map(s => /*#__PURE__*/React.createElement(NoSuperintendencia, {
                 key: s.id,
                 superintendencia: s,
@@ -13272,7 +13536,18 @@ function ArvoreHierarquia({ pode = () => true, ocorrencias = [], funcionariosUni
         setPessoaSelecionada(pessoaAtualizada);
       }
     })
-  );
+,
+// Administrativo (funcionarios_administrativo): schema próprio (nome, sem nome_completo).
+pessoaSelecionada && !pessoaSelecionada.nome_completo && pessoaSelecionada.nome && /*#__PURE__*/React.createElement(ModalPerfilAdministrativo, {
+pessoa: pessoaSelecionada,
+pode,
+onClose: () => setPessoaSelecionada(null),
+onAtualizado: pessoaAtualizada => {
+atualizarFuncionarioLocalAdmin(pessoaAtualizada);
+setPessoaSelecionada(pessoaAtualizada);
+}
+})
+);
 }
 // ─── LIMITE DE ERRO ──────────────────────────────────────────────────────────
 // Sem isso, qualquer erro de render (um campo undefined vindo de um registro
@@ -13683,7 +13958,7 @@ function App() {
       alignItems: "center",
       justifyContent: "center",
       background: "var(--fundo-pagina)",
-      color: "var(--cinza-400)",
+      color: "var(--texto-fraco)",
       fontSize: 13,
       fontWeight: 500
     }
@@ -13754,6 +14029,7 @@ function App() {
     if (temAcessoGestao) {
       if (view === "dashboard") return /*#__PURE__*/React.createElement(Dashboard, {
         ocorrencias: ocorrenciasRelatorio,
+ocorrenciasTodasDatas: ocorrenciasRelatorioTodasDatas,
         setView: setView,
         setFuncSelecionado: setFuncSelecionado,
         funcionarios: funcionariosRelatorio,
@@ -13961,7 +14237,7 @@ function App() {
       fontSize: 11,
       fontWeight: 700,
       padding: "1px 6px",
-      borderRadius: 20
+      borderRadius: 16
     }
   }, n.badge))), /*#__PURE__*/React.createElement("div", {
     style: {
@@ -13993,7 +14269,7 @@ function App() {
   }, usuario.nome.split(" ")[0]), /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 11,
-      color: "var(--cinza-400)"
+      color: "var(--texto-fraco)"
     }
   }, "Administrador"))), /*#__PURE__*/React.createElement(BotaoTema, {
     theme: theme,
@@ -14010,7 +14286,7 @@ function App() {
       background: "var(--cor-branco)",
       fontSize: 12,
       cursor: "pointer",
-      color: "var(--cinza-400)",
+      color: "var(--texto-fraco)",
       fontWeight: 500,
       textAlign: "left"
     }
@@ -14021,7 +14297,7 @@ function App() {
       borderTop: "1px solid var(--cinza-100)",
       fontSize: 11,
       lineHeight: 1.5,
-      color: "var(--cinza-300)",
+      color: "var(--texto-fraco)",
       textAlign: "center"
     }
   }, "Tecnologia GRE", /*#__PURE__*/React.createElement("br", null), "Desenvolvido por Arthur Bomfim"))), /*#__PURE__*/React.createElement("div", {
@@ -14060,7 +14336,7 @@ function App() {
     onClick: () => setView("mural"),
     style: {
       padding: "6px 14px",
-      borderRadius: 20,
+      borderRadius: 16,
       border: "none",
       fontSize: 12,
       fontWeight: 600,
@@ -14075,13 +14351,13 @@ function App() {
       fontSize: 11,
       fontWeight: 700,
       padding: "3px 10px",
-      borderRadius: 20
+      borderRadius: 16
     }
   }, "🔔 ", minhasPendentes, " pendência", minhasPendentes > 1 ? "s" : ""), /*#__PURE__*/React.createElement("button", {
     onClick: () => setView("duvidas"),
     style: {
       padding: "6px 14px",
-      borderRadius: 20,
+      borderRadius: 16,
       border: "none",
       fontSize: 12,
       fontWeight: 600,
@@ -14093,7 +14369,7 @@ function App() {
     onClick: () => setView("portal"),
     style: {
       padding: "6px 14px",
-      borderRadius: 20,
+      borderRadius: 16,
       border: "none",
       fontSize: 12,
       fontWeight: 600,
@@ -14115,7 +14391,7 @@ function App() {
       background: "none",
       border: "none",
       fontSize: 12,
-      color: "var(--cinza-400)",
+      color: "var(--texto-fraco)",
       cursor: "pointer",
       fontWeight: 500
     }
@@ -14132,7 +14408,7 @@ function App() {
       paddingTop: 16,
       borderTop: "1px solid var(--cinza-100)",
       fontSize: 11,
-      color: "var(--cinza-300)",
+      color: "var(--texto-fraco)",
       textAlign: "center"
     }
   }, "Tecnologia GRE · Desenvolvido por Arthur Bomfim"))), /*#__PURE__*/React.createElement(Toast, {
