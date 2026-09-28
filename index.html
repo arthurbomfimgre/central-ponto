@@ -90,7 +90,7 @@ const {
 // inline já escritos, que continuam funcionando exatamente como estão.
 const T = {
   fonte: { xs: 11, sm: 12, md: 13, lg: 15, xl: 18, xxl: 24 },
-  raio:  { sm: 8, md: 12, lg: 16, pill: 20 },
+  raio:  { sm: 8, md: 12, lg: 16, pill: 999 },
   peso:  { normal: 400, media: 500, forte: 600, forte2: 700, extra: 800 },
   espaco: { 1: 2, 2: 4, 3: 6, 4: 8, 5: 10, 6: 12, 7: 14, 8: 16, 9: 20 },
 };
@@ -1676,7 +1676,7 @@ function EstadoVazio({ icone, titulo, texto, acaoLabel, onAcao, padding = "32px 
       onClick: onAcao,
       style: {
         marginTop: 14, padding: "8px 18px", borderRadius: 12, border: "1px solid var(--cinza-200)",
-        background: "var(--cor-branco)", fontSize: 12.5, fontWeight: 600, color: "var(--marca-500)", cursor: "pointer"
+        background: "var(--cor-branco)", fontSize: 13, fontWeight: 600, color: "var(--marca-500)", cursor: "pointer"
       }
     }, acaoLabel)
   );
@@ -1702,8 +1702,8 @@ function EsqueletoLinhas({ quantidade = 6 }) {
         style: { width: 28, height: 28, borderRadius: "50%", background: "var(--cinza-100)", flexShrink: 0 }
       }),
       /*#__PURE__*/React.createElement("div", { style: { flex: 1, display: "flex", flexDirection: "column", gap: 6 } },
-        /*#__PURE__*/React.createElement("div", { style: { height: 11, width: "45%", borderRadius: 6, background: "var(--cinza-100)" } }),
-        /*#__PURE__*/React.createElement("div", { style: { height: 9, width: "25%", borderRadius: 6, background: "var(--cinza-100)" } })
+        /*#__PURE__*/React.createElement("div", { style: { height: 11, width: "45%", borderRadius: 8, background: "var(--cinza-100)" } }),
+        /*#__PURE__*/React.createElement("div", { style: { height: 9, width: "25%", borderRadius: 8, background: "var(--cinza-100)" } })
       )
     ))
   );
@@ -2764,7 +2764,7 @@ function TelaNovaSenha({ onConcluido }) {
   }, "Defina sua nova senha")), /*#__PURE__*/React.createElement("div", {
     style: {
       background: "var(--cor-branco)",
-      borderRadius: 24,
+      borderRadius: 16,
       padding: "36px 36px 32px",
       boxShadow: "0 8px 40px var(--sombra-suave)",
       border: "1px solid var(--cinza-100)"
@@ -3904,13 +3904,13 @@ comparativo: temAnterior ? { atual: excedido, anterior: antExcedido, menorMelhor
       }, "(", pct, "%)"))), /*#__PURE__*/React.createElement("div", {
         style: {
           height: 6,
-          borderRadius: 3,
+          borderRadius: 8,
           background: "var(--cinza-100)"
         }
       }, /*#__PURE__*/React.createElement("div", {
         style: {
           height: "100%",
-          borderRadius: 3,
+          borderRadius: 8,
           background: "linear-gradient(90deg,var(--indigo-500),var(--roxo-500))",
           width: `${pct}%`
         }
@@ -4113,7 +4113,6 @@ function ListaFuncionarios({
   // (dentro da própria equipe) podem.
   const somenteLeituraGestor = ["diretor", "superintendente"].includes(usuario?.nivel);
   const [modalAdd, setModalAdd] = useState(false);
-  const [modalImportarExcel, setModalImportarExcel] = useState(false);
   const [confirmExcluir, setConfirmExcluir] = useState(null);
   const [confirmExcluirTodos, setConfirmExcluirTodos] = useState(false);
   const [textoConfirmTodos, setTextoConfirmTodos] = useState("");
@@ -4633,7 +4632,7 @@ function ListaFuncionarios({
         onClick: () => setVisiveis(v => v + POR_PAGINA),
         style: {
           padding: "8px 18px", borderRadius: 12, border: "1px solid var(--cinza-200)",
-          background: "var(--cor-branco)", fontSize: 12.5, fontWeight: 600,
+          background: "var(--cor-branco)", fontSize: 13, fontWeight: 600,
           color: "var(--cinza-700)", cursor: "pointer"
         }
       }, `Carregar mais ${Math.min(POR_PAGINA, lista.length - listaVisivel.length)}`),
@@ -4642,7 +4641,7 @@ function ListaFuncionarios({
         onClick: () => setVisiveis(lista.length),
         style: {
           padding: "8px 18px", borderRadius: 12, border: "none",
-          background: "var(--cinza-50)", fontSize: 12.5, fontWeight: 600,
+          background: "var(--cinza-50)", fontSize: 13, fontWeight: 600,
           color: "var(--cinza-500)", cursor: "pointer"
         }
       }, "Mostrar todos")
@@ -4662,7 +4661,7 @@ function ListaFuncionarios({
       onClick: () => { setBusca(""); setCargoFiltro("Todos"); setVinculoFiltro("Todos"); },
       style: {
         marginTop: 14, padding: "8px 18px", borderRadius: 12, border: "1px solid var(--cinza-200)",
-        background: "var(--cor-branco)", fontSize: 12.5, fontWeight: 600,
+        background: "var(--cor-branco)", fontSize: 13, fontWeight: 600,
         color: "var(--cinza-700)", cursor: "pointer"
       }
     }, "Limpar filtros")
@@ -4805,11 +4804,7 @@ function ListaFuncionarios({
       alignItems: "center",
       gap: 6
     }
-  }, salvando ? "⏳ Salvando..." : "✅ Adicionar")))), modalImportarExcel && /*#__PURE__*/React.createElement(ModalImportarExcel, {
-    funcionarios: funcionarios,
-    setFuncionarios: setFuncionarios,
-    onClose: () => setModalImportarExcel(false)
-  }), confirmExcluir && /*#__PURE__*/React.createElement(Modal, {
+  }, salvando ? "⏳ Salvando..." : "✅ Adicionar")))), confirmExcluir && /*#__PURE__*/React.createElement(Modal, {
     title: "⚠️ Excluir funcionário",
     onClose: () => setConfirmExcluir(null),
     maxWidth: 460
@@ -5199,13 +5194,15 @@ function ModalImportarPontoDP({ funcionarios, ocorrencias, setOcorrencias, addNo
     const prontasFinais = [...plano.prontas];
     const marcadores = new Set(prontasFinais.map(p => p.marcador));
     const jaExistentes = new Set(ocorrencias.filter(o => o.tipo === TIPO_PENDENTE_ESPECIFICACAO && o.origemImportacaoPonto).map(o => `${o.funcionario_id}|${o.data}|${o.origemImportacaoPonto}`));
+    const duplicadasNoDesempate = [];
+    const ignoradasManual = ambiguas.filter((_, i) => escolhas[i] === "__ignorar__");
     ambiguas.forEach((amb, i) => {
       const esc = escolhas[i];
       if (!esc || esc === "__ignorar__") return;
       const func = amb.candidatos.find(c => String(c.id) === String(esc));
       if (!func) return;
       const marcador = `${func.id}|${amb.dataISO}|${amb.tipoPendenciaDP}`;
-      if (marcadores.has(marcador) || jaExistentes.has(marcador)) return;
+      if (marcadores.has(marcador) || jaExistentes.has(marcador)) { duplicadasNoDesempate.push({ nome: amb.nome, data: amb.dataISO, tipoPendenciaDP: amb.tipoPendenciaDP }); return; }
       marcadores.add(marcador);
       prontasFinais.push({ func, dataISO: amb.dataISO, tipoPendenciaDP: amb.tipoPendenciaDP, marcador });
     });
@@ -5258,7 +5255,24 @@ function ModalImportarPontoDP({ funcionarios, ocorrencias, setOcorrencias, addNo
         paraFunc: funcionarioId
       });
     });
-    setResultado({ criadas: novas.length });
+    // Log de tudo que aconteceu na importação — base do relatório em XLSX.
+    const nomeDe = f => f.nome_completo || f.nome || "";
+    const log = [
+      ...prontasFinais.map(it => ({ Situação: "Criada", Nome: nomeDe(it.func), Data: fmtDate(it.dataISO), "Tipo (DP)": it.tipoPendenciaDP, Detalhe: "" })),
+      ...plano.duplicadas.concat(duplicadasNoDesempate).map(l => ({ Situação: "Já importada (ignorada)", Nome: l.nome, Data: fmtDate(l.data), "Tipo (DP)": l.tipoPendenciaDP, Detalhe: "Mesma pendência já existia" })),
+      ...plano.semCorrespondencia.map(l => ({ Situação: "Nome não encontrado", Nome: l.nome, Data: fmtDate(l.data), "Tipo (DP)": l.tipoPendenciaDP, Detalhe: "Não há cadastro com esse nome — corrigir o cadastro e reimportar" })),
+      ...plano.semData.map(l => ({ Situação: "Sem data válida", Nome: l.nome, Data: String(l.dataBruta ?? ""), "Tipo (DP)": "", Detalhe: "Data ausente ou em formato não reconhecido" })),
+      ...ignoradasManual.map(a => ({ Situação: "Homônimo ignorado", Nome: a.nome, Data: fmtDate(a.dataISO), "Tipo (DP)": a.tipoPendenciaDP, Detalhe: "Ignorada manualmente no desempate" }))
+    ];
+    setResultado({
+      criadas: novas.length,
+      colaboradores: porFuncionario.size,
+      duplicadas: plano.duplicadas.length + duplicadasNoDesempate.length,
+      semCorrespondencia: plano.semCorrespondencia.length,
+      semData: plano.semData.length,
+      ignoradas: ignoradasManual.length,
+      log
+    });
     setPlano(null);
     setArquivo(null);
     setProcessando(false);
@@ -5326,7 +5340,7 @@ function ModalImportarPontoDP({ funcionarios, ocorrencias, setOcorrencias, addNo
       ambiguas.length > 0 && /*#__PURE__*/React.createElement("div", {
         style: { background: "var(--amber-100)", borderRadius: 12, padding: "12px 14px", marginBottom: 8 }
       },
-        /*#__PURE__*/React.createElement("div", { style: { fontSize: 12.5, fontWeight: 700, color: "var(--amber-800)", marginBottom: 8 } },
+        /*#__PURE__*/React.createElement("div", { style: { fontSize: 13, fontWeight: 700, color: "var(--amber-800)", marginBottom: 8 } },
           "⚠️ " + ambiguas.length + " linha(s) com nome repetido no cadastro — escolha a pessoa certa (ou ignore a linha):"),
         ambiguas.map((amb, i) => /*#__PURE__*/React.createElement("div", { key: i, style: { display: "flex", flexDirection: "column", gap: 4, marginBottom: 8 } },
           /*#__PURE__*/React.createElement("label", { htmlFor: "amb_" + i, style: { fontSize: 12, color: "var(--amber-800)", fontWeight: 600 } }, amb.nome + " · " + fmtDate(amb.dataISO) + " · " + amb.tipoPendenciaDP),
@@ -5334,7 +5348,7 @@ function ModalImportarPontoDP({ funcionarios, ocorrencias, setOcorrencias, addNo
             id: "amb_" + i,
             value: escolhas[i] || "",
             onChange: e => setEscolhas(p => ({ ...p, [i]: e.target.value })),
-            style: { padding: "8px 10px", borderRadius: 8, border: "1px solid var(--amber-400)", fontSize: 12.5 }
+            style: { padding: "8px 10px", borderRadius: 8, border: "1px solid var(--amber-400)", fontSize: 13 }
           },
             /*#__PURE__*/React.createElement("option", { value: "" }, "Selecione…"),
             amb.candidatos.map(c => /*#__PURE__*/React.createElement("option", { key: c.id, value: String(c.id) },
@@ -5364,165 +5378,36 @@ function ModalImportarPontoDP({ funcionarios, ocorrencias, setOcorrencias, addNo
       )
     ),
 
-    resultado && /*#__PURE__*/React.createElement("div", {
-      style: {
-        marginTop: 16, background: "var(--verde-100)", color: "var(--verde-800)",
-        borderRadius: 12, padding: "12px 16px", fontSize: 13, fontWeight: 600
-      }
-    }, "✓ ", resultado.criadas, " pendência(s) criada(s) e enviada(s) aos respectivos colaboradores no Portal.")
-  );
-}
-
-function ModalImportarExcel({ funcionarios, setFuncionarios, onClose }) {
-  const [arquivo, setArquivo] = useState(null);
-  const [processando, setProcessando] = useState(false);
-  const [resultado, setResultado] = useState(null); // { importados, ignorados, erro }
-  const [preview, setPreview] = useState(null); // linhas cruas antes de confirmar
-
-  async function selecionarArquivo(file) {
-    setArquivo(file);
-    setResultado(null);
-    setPreview(null);
-    if (!file) return;
-    setProcessando(true);
-    try {
-      const linhas = await lerArquivoExcel(file);
-      setPreview(linhas);
-    } catch (err) {
-      setResultado({ erro: extrairMensagemErro(err) });
-    } finally {
-      setProcessando(false);
-    }
-  }
-
-  function confirmarImportacao() {
-    if (!preview || preview.length === 0) return;
-    setProcessando(true);
-    const matriculasExistentes = new Set(funcionarios.map(f => String(f.matricula).trim()));
-    let nextId = (funcionarios.reduce((max, f) => Math.max(max, f.id), 0)) + 1;
-    const novos = [];
-    let ignorados = 0;
-
-    preview.forEach(linha => {
-      const matricula = String(linha[MAPA_COLUNAS_IMPORT_EXCEL.matricula] ?? "").trim();
-      const nomeCompleto = String(linha[MAPA_COLUNAS_IMPORT_EXCEL.nome] ?? "").trim();
-      if (!matricula || !nomeCompleto) { ignorados++; return; }
-      if (matriculasExistentes.has(matricula)) { ignorados++; return; }
-
-      const emailProfissional = String(linha[MAPA_COLUNAS_IMPORT_EXCEL.emailProfissional] ?? "").trim().toLowerCase() || null;
-      // Prioriza o nome curto derivado do e-mail profissional
-      // (nome.sobrenome@portovaleconsorcios.com.br -> "NOME SOBRENOME").
-      // Se o e-mail estiver ausente ou fora do padrão esperado, cai de
-      // volta para o nome completo original da planilha.
-      const nomeCurtoDoEmail = extrairNomeCurtoDoEmail(emailProfissional);
-      const nome = nomeCurtoDoEmail || nomeCompleto;
-
-      const situacao = String(linha[MAPA_COLUNAS_IMPORT_EXCEL.situacao] ?? "").trim().toUpperCase();
-      novos.push({
-        id: nextId++,
-        nome: nome.toUpperCase(),
-        matricula,
-        setor: String(linha[MAPA_COLUNAS_IMPORT_EXCEL.setor] ?? "").trim().toUpperCase() || "—",
-        cargo: String(linha[MAPA_COLUNAS_IMPORT_EXCEL.cargo] ?? "").trim().toUpperCase() || "—",
-        ativo: situacao ? situacao === "ATIVO" : true,
-        esquecimentos: 0,
-        atestados: 0,
-        faltas: 0,
-        banco_horas: 0,
-        erros_registro: 0,
-        abonos: 0,
-        integracoes: 0,
-        // Campos extras da planilha, guardados para uso futuro (sem tela
-        // própria ainda) — não afetam nenhuma lógica existente do app.
-        supervisor: String(linha[MAPA_COLUNAS_IMPORT_EXCEL.supervisor] ?? "").trim() || null,
-        gerencia: String(linha[MAPA_COLUNAS_IMPORT_EXCEL.gerencia] ?? "").trim() || null,
-        emailProfissional,
-        // Nome completo original da planilha, preservado à parte para
-        // referência/consulta futura, já que `nome` agora pode ser a
-        // versão curta extraída do e-mail.
-        nomeCompleto: nomeCompleto.toUpperCase()
-      });
-      matriculasExistentes.add(matricula);
-    });
-
-    setFuncionarios(prev => [...prev, ...novos]);
-    setResultado({ importados: novos.length, ignorados });
-    setPreview(null);
-    setArquivo(null);
-    setProcessando(false);
-  }
-
-  return /*#__PURE__*/React.createElement(Modal, {
-    title: "📥 Importar funcionários por Excel",
-    onClose: onClose,
-    maxWidth: 520
-  },
-    /*#__PURE__*/React.createElement("p", {
-      style: { fontSize: 13, color: "var(--cinza-500)", marginBottom: 18 }
-    }, "Ambiente de teste — os dados importados aqui ficam isolados neste navegador e não afetam o sistema real."),
-
-    /*#__PURE__*/React.createElement("label", {
-      style: {
-        display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-        gap: 8, border: "2px dashed var(--cinza-200)", borderRadius: 12, padding: "28px 16px",
-        cursor: "pointer", textAlign: "center"
-      }
-    },
-      /*#__PURE__*/React.createElement("span", { style: { fontSize: 24 } }, "📄"),
-      /*#__PURE__*/React.createElement("span", { style: { fontSize: 13, fontWeight: 600, color: "var(--cinza-700)" } },
-        arquivo ? arquivo.name : "Clique para selecionar um arquivo .xlsx"),
-      /*#__PURE__*/React.createElement("span", { style: { fontSize: 11, color: "var(--texto-fraco)" } },
-        "Colunas esperadas: Matricula, Colaborador, Cargo, Area, Situacao"),
-      /*#__PURE__*/React.createElement("input", {
-        type: "file",
-        accept: ".xlsx,.xls",
-        style: { display: "none" },
-        onChange: e => selecionarArquivo(e.target.files?.[0] || null)
-      })
-    ),
-
-    processando && /*#__PURE__*/React.createElement("p", {
-      style: { fontSize: 12, color: "var(--texto-fraco)", marginTop: 14, textAlign: "center" }
-    }, "Processando…"),
-
-    resultado?.erro && /*#__PURE__*/React.createElement("div", {
-      style: {
-        marginTop: 16, background: "var(--vermelho-100)", color: "var(--vermelho-800)",
-        borderRadius: 12, padding: "10px 14px", fontSize: 13, fontWeight: 600
-      }
-    }, "⚠️ ", resultado.erro),
-
-    preview && !processando && /*#__PURE__*/React.createElement("div", { style: { marginTop: 18 } },
-      /*#__PURE__*/React.createElement("p", { style: { fontSize: 13, color: "var(--cinza-700)", marginBottom: 10 } },
-        /*#__PURE__*/React.createElement("strong", null, preview.length), " linha(s) encontrada(s) no arquivo. Ao confirmar, o sistema verifica automaticamente pela matrícula e adiciona somente quem ainda não está cadastrado — quem já existe é ignorado sem duplicar."),
-      /*#__PURE__*/React.createElement("div", { style: { display: "flex", gap: 10 } },
-        /*#__PURE__*/React.createElement("button", {
-          onClick: confirmarImportacao,
-          style: {
-            background: "var(--marca-gradiente)", color: "var(--cor-branco)", border: "none",
-            borderRadius: 12, padding: "10px 20px", fontSize: 13, fontWeight: 700, cursor: "pointer"
-          }
-        }, "Confirmar importação"),
-        /*#__PURE__*/React.createElement("button", {
-          onClick: () => { setPreview(null); setArquivo(null); },
-          style: {
-            background: "var(--cinza-100)", color: "var(--cinza-600)", border: "none",
-            borderRadius: 12, padding: "10px 20px", fontSize: 13, fontWeight: 600, cursor: "pointer"
-          }
-        }, "Cancelar")
-      )
-    ),
-
-    resultado && !resultado.erro && /*#__PURE__*/React.createElement("div", {
-      style: {
-        marginTop: 16, background: "var(--verde-100)", color: "var(--verde-800)",
-        borderRadius: 12, padding: "12px 16px", fontSize: 13, fontWeight: 600
-      }
-    }, "✓ ", resultado.importados, " funcionário(s) importado(s). ", resultado.ignorados, " ignorado(s) (já existiam ou sem matrícula/nome)."),
-
-    /*#__PURE__*/React.createElement("p", {
-      style: { fontSize: 12, color: "var(--texto-fraco)", marginTop: 18 }
-    }, "Total de funcionários cadastrados neste ambiente de teste: ", /*#__PURE__*/React.createElement("strong", null, funcionarios.length), ".")
+    resultado && /*#__PURE__*/React.createElement("div", { style: { marginTop: 16, display: "flex", flexDirection: "column", gap: 10 } },
+      /*#__PURE__*/React.createElement("div", {
+        role: "status",
+        style: { background: "var(--verde-100)", color: "var(--verde-800)", borderRadius: 12, padding: "12px 16px", fontSize: 13, fontWeight: 600 }
+      }, "✓ ", resultado.criadas, " pendência(s) criada(s) para ", resultado.colaboradores, " colaborador(es) e enviada(s) no Portal."),
+      (resultado.duplicadas + resultado.semCorrespondencia + resultado.semData + resultado.ignoradas) > 0 && /*#__PURE__*/React.createElement("div", {
+        style: { background: "var(--amber-100)", color: "var(--amber-800)", borderRadius: 12, padding: "10px 16px", fontSize: 13, lineHeight: 1.6 }
+      },
+        "Não importadas: ",
+        [
+          resultado.semCorrespondencia > 0 && resultado.semCorrespondencia + " nome(s) não encontrado(s)",
+          resultado.duplicadas > 0 && resultado.duplicadas + " já importada(s)",
+          resultado.semData > 0 && resultado.semData + " sem data válida",
+          resultado.ignoradas > 0 && resultado.ignoradas + " homônimo(s) ignorado(s)"
+        ].filter(Boolean).join(" · "), "."
+      ),
+      /*#__PURE__*/React.createElement("button", {
+        type: "button",
+        onClick: () => {
+          try {
+            const ws = XLSX.utils.json_to_sheet(resultado.log);
+            ws["!cols"] = [{ wch: 24 }, { wch: 34 }, { wch: 12 }, { wch: 26 }, { wch: 52 }];
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, "Log da importação");
+            XLSX.writeFile(wb, `log-importacao-ponto-dp-${hoje()}.xlsx`);
+          } catch (e) { setErro("Não foi possível gerar o log: " + (e?.message || e)); }
+        },
+        style: { alignSelf: "flex-start", padding: "8px 16px", borderRadius: 12, border: "1px solid var(--cinza-200)", background: "var(--cor-branco)", fontSize: 13, fontWeight: 600, color: "var(--marca-500)", cursor: "pointer" }
+      }, "⬇ Baixar log em XLSX")
+    )
   );
 }
 
@@ -6716,7 +6601,7 @@ function ModalImportarEquipeAdministrativa({ onClose, onConcluido }) {
 
       plano.travasInativacao.map(t => /*#__PURE__*/React.createElement("div", {
         key: t.equipeId,
-        style: { background: "var(--vermelho-100)", color: "var(--vermelho-800)", borderRadius: 12, padding: "10px 14px", fontSize: 12.5, fontWeight: 600, display: "flex", flexDirection: "column", gap: 6 }
+        style: { background: "var(--vermelho-100)", color: "var(--vermelho-800)", borderRadius: 12, padding: "10px 14px", fontSize: 13, fontWeight: 600, display: "flex", flexDirection: "column", gap: 6 }
       },
         /*#__PURE__*/React.createElement("span", null, "🛑 Trava de segurança — ", t.equipeId, ": ", t.ausentes, " de ", t.totalAtivos, " ativos não vieram (", Math.round(t.percentual), "%, limite ", plano.limitePercentualInativacao, "%). Planilha parcial ou errada? Nada desta equipe será inativado a menos que você libere."),
         /*#__PURE__*/React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 8, fontWeight: 700, cursor: "pointer" } },
@@ -6735,7 +6620,7 @@ function ModalImportarEquipeAdministrativa({ onClose, onConcluido }) {
       )),
 
       plano.candidatosInativacao.length > 0 && /*#__PURE__*/React.createElement("div", null,
-        /*#__PURE__*/React.createElement("p", { style: { fontSize: 12.5, fontWeight: 700, color: "var(--amber-700)", marginBottom: 6 } },
+        /*#__PURE__*/React.createElement("p", { style: { fontSize: 13, fontWeight: 700, color: "var(--amber-700)", marginBottom: 6 } },
           "ℹ️ Ativos no banco que não vieram nesta planilha. Os marcados serão inativados ao confirmar (desmarque quem ficou de fora por engano):"),
         /*#__PURE__*/React.createElement("ul", { style: { fontSize: 12, color: "var(--amber-700)", paddingLeft: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 3, maxHeight: 160, overflow: "auto" } },
           plano.candidatosInativacao.map(f => {
@@ -6755,7 +6640,7 @@ function ModalImportarEquipeAdministrativa({ onClose, onConcluido }) {
       ),
 
       plano.semCoordenadorResolvido.length > 0 && /*#__PURE__*/React.createElement("div", null,
-        /*#__PURE__*/React.createElement("p", { style: { fontSize: 12.5, fontWeight: 700, color: "var(--amber-700)", marginBottom: 6 } },
+        /*#__PURE__*/React.createElement("p", { style: { fontSize: 13, fontWeight: 700, color: "var(--amber-700)", marginBottom: 6 } },
           "⚠️ Não foi possível casar o supervisor com nenhum coordenador desta planilha (serão importados sem coordenador vinculado):"),
         /*#__PURE__*/React.createElement("ul", { style: { fontSize: 12, color: "var(--amber-700)", paddingLeft: 18, display: "flex", flexDirection: "column", gap: 2, maxHeight: 140, overflow: "auto" } },
           plano.semCoordenadorResolvido.map((e, i) => /*#__PURE__*/React.createElement("li", { key: i },
@@ -6763,7 +6648,7 @@ function ModalImportarEquipeAdministrativa({ onClose, onConcluido }) {
       ),
 
       plano.erros.length > 0 && /*#__PURE__*/React.createElement("div", null,
-        /*#__PURE__*/React.createElement("p", { style: { fontSize: 12.5, fontWeight: 700, color: "var(--vermelho-700)", marginBottom: 6 } }, "Linhas ignoradas (não serão importadas):"),
+        /*#__PURE__*/React.createElement("p", { style: { fontSize: 13, fontWeight: 700, color: "var(--vermelho-700)", marginBottom: 6 } }, "Linhas ignoradas (não serão importadas):"),
         /*#__PURE__*/React.createElement("ul", { style: { fontSize: 12, color: "var(--vermelho-700)", paddingLeft: 18, display: "flex", flexDirection: "column", gap: 2, maxHeight: 160, overflow: "auto" } },
           plano.erros.map((e, i) => /*#__PURE__*/React.createElement("li", { key: i },
             "Linha ", e.linha, e.nome ? ` (${e.nome}${e.matricula ? ", matrícula " + e.matricula : ""})` : "", ": ", e.motivo)))
@@ -6789,7 +6674,7 @@ function ModalImportarEquipeAdministrativa({ onClose, onConcluido }) {
 
     aplicando && /*#__PURE__*/React.createElement("div", { style: { marginTop: 16, textAlign: "center" } },
       /*#__PURE__*/React.createElement("p", { style: { fontSize: 13, color: "var(--cinza-500)" } }, "⏳ ", etapaAtual || "Aplicando…"),
-      /*#__PURE__*/React.createElement("p", { style: { fontSize: 11.5, color: "var(--texto-fraco)", marginTop: 6 } }, "Não feche esta janela.")
+      /*#__PURE__*/React.createElement("p", { style: { fontSize: 12, color: "var(--texto-fraco)", marginTop: 6 } }, "Não feche esta janela.")
     ),
 
     concluido && /*#__PURE__*/React.createElement("div", { style: { marginTop: 16, display: "flex", flexDirection: "column", gap: 14 } },
@@ -6797,10 +6682,10 @@ function ModalImportarEquipeAdministrativa({ onClose, onConcluido }) {
         style: { background: "var(--verde-100)", color: "var(--verde-800)", borderRadius: 12, padding: "12px 16px", fontSize: 13, fontWeight: 600 }
       }, "✓ Importação da equipe \"", concluido.nomeEquipe, "\" concluída: ", concluido.novos, " novo(s), ", concluido.atualizados, " atualizado(s), ", concluido.inativados, " inativado(s)."),
       concluido.logFalhou && /*#__PURE__*/React.createElement("div", {
-        style: { background: "var(--amber-100)", color: "var(--amber-800)", borderRadius: 12, padding: "10px 14px", fontSize: 12.5, fontWeight: 600 }
+        style: { background: "var(--amber-100)", color: "var(--amber-800)", borderRadius: 12, padding: "10px 14px", fontSize: 13, fontWeight: 600 }
       }, "⚠️ As alterações acima foram aplicadas normalmente, mas não foi possível registrar esta importação no Log de auditoria."),
       concluido.listaNovos?.length > 0 && /*#__PURE__*/React.createElement("details", {
-        style: { background: "var(--verde-50)", borderRadius: 12, padding: "10px 14px", fontSize: 12.5 }
+        style: { background: "var(--verde-50)", borderRadius: 12, padding: "10px 14px", fontSize: 13 }
       },
         /*#__PURE__*/React.createElement("summary", { style: { fontWeight: 700, color: "var(--verde-800)", cursor: "pointer" } },
           "Ver ", concluido.listaNovos.length, " funcionário(s) novo(s)"),
@@ -6808,7 +6693,7 @@ function ModalImportarEquipeAdministrativa({ onClose, onConcluido }) {
           concluido.listaNovos.map((f, i) => /*#__PURE__*/React.createElement("li", { key: i }, f.nome, " — mat. ", f.matricula)))
       ),
       concluido.listaAtualizados?.length > 0 && /*#__PURE__*/React.createElement("details", {
-        style: { background: "var(--azul-50)", borderRadius: 12, padding: "10px 14px", fontSize: 12.5 }
+        style: { background: "var(--azul-50)", borderRadius: 12, padding: "10px 14px", fontSize: 13 }
       },
         /*#__PURE__*/React.createElement("summary", { style: { fontWeight: 700, color: "var(--azul-700)", cursor: "pointer" } },
           "Ver ", concluido.listaAtualizados.length, " funcionário(s) atualizado(s)"),
@@ -6816,7 +6701,7 @@ function ModalImportarEquipeAdministrativa({ onClose, onConcluido }) {
           concluido.listaAtualizados.map((f, i) => /*#__PURE__*/React.createElement("li", { key: i }, f.nome, " — mat. ", f.matricula)))
       ),
       concluido.listaInativados?.length > 0 && /*#__PURE__*/React.createElement("details", {
-        style: { background: "var(--amber-50)", borderRadius: 12, padding: "10px 14px", fontSize: 12.5 }
+        style: { background: "var(--amber-50)", borderRadius: 12, padding: "10px 14px", fontSize: 13 }
       },
         /*#__PURE__*/React.createElement("summary", { style: { fontWeight: 700, color: "var(--amber-800)", cursor: "pointer" } },
           "Ver ", concluido.listaInativados.length, " funcionário(s) inativado(s)"),
@@ -6930,7 +6815,8 @@ function ModalImportarHierarquia({ onClose, onConcluido }) {
         // resumo detalhado após a importação (não só a contagem).
         listaNovos: planoFiltrado.funcionariosNovos.map(f => ({ nome: nomeParaLog(f), matricula: f.matricula })),
         listaAtualizados: planoFiltrado.funcionariosAtualizados.map(f => ({ nome: f.nome, matricula: f.matriculaAnterior })),
-        listaInativados: planoFiltrado.funcionariosInativados.map(f => ({ nome: nomeParaLog(f), matricula: f.matricula }))
+        listaInativados: planoFiltrado.funcionariosInativados.map(f => ({ nome: nomeParaLog(f), matricula: f.matricula })),
+        linhasIgnoradas: (plano.erros || []).map(e => ({ linha: e.linha, nome: e.nome || "", matricula: e.matricula || "", motivo: e.motivo }))
       });
       setPlano(null);
       setArquivo(null);
@@ -7019,9 +6905,9 @@ function ModalImportarHierarquia({ onClose, onConcluido }) {
         ),
 
         plano.diretoriasNovas.length > 0 && /*#__PURE__*/React.createElement("div", null,
-          /*#__PURE__*/React.createElement("p", { style: { fontSize: 12.5, fontWeight: 700, color: "var(--cinza-600)", marginBottom: 6 } },
+          /*#__PURE__*/React.createElement("p", { style: { fontSize: 13, fontWeight: 700, color: "var(--cinza-600)", marginBottom: 6 } },
             "Diretorias que serão criadas — desmarque se for erro de digitação:"),
-          /*#__PURE__*/React.createElement("ul", { style: { listStyle: "none", fontSize: 12.5, color: "var(--cinza-600)", paddingLeft: 0, display: "flex", flexDirection: "column", gap: 4 } },
+          /*#__PURE__*/React.createElement("ul", { style: { listStyle: "none", fontSize: 13, color: "var(--cinza-600)", paddingLeft: 0, display: "flex", flexDirection: "column", gap: 4 } },
             plano.diretoriasNovas.map((d, i) => {
               const rejeitada = diretoriasRejeitadas.has(d.chave);
               // <label> envolvendo o campo: sem isso o checkbox não tinha
@@ -7040,9 +6926,9 @@ function ModalImportarHierarquia({ onClose, onConcluido }) {
         ),
 
         plano.gerenciasNovas.length > 0 && /*#__PURE__*/React.createElement("div", null,
-          /*#__PURE__*/React.createElement("p", { style: { fontSize: 12.5, fontWeight: 700, color: "var(--cinza-600)", marginBottom: 6 } },
+          /*#__PURE__*/React.createElement("p", { style: { fontSize: 13, fontWeight: 700, color: "var(--cinza-600)", marginBottom: 6 } },
             "Gerências que serão criadas — desmarque se for erro de digitação:"),
-          /*#__PURE__*/React.createElement("ul", { style: { listStyle: "none", fontSize: 12.5, color: "var(--cinza-600)", paddingLeft: 0, display: "flex", flexDirection: "column", gap: 4, maxHeight: 160, overflow: "auto" } },
+          /*#__PURE__*/React.createElement("ul", { style: { listStyle: "none", fontSize: 13, color: "var(--cinza-600)", paddingLeft: 0, display: "flex", flexDirection: "column", gap: 4, maxHeight: 160, overflow: "auto" } },
             plano.gerenciasNovas.map((g, i) => {
               // Se a diretoria-mãe foi desmarcada, a gerência já não seria
               // criada de qualquer forma — mostra desabilitada, não editável.
@@ -7061,8 +6947,22 @@ function ModalImportarHierarquia({ onClose, onConcluido }) {
             }))
         ),
 
+        // Quem será afetado, ANTES de confirmar — principalmente os inativados,
+        // que perdem o acesso: conferir aqui evita revogar login por engano.
+        [
+          ["Novos", planoFiltrado.funcionariosNovos.map(f => nomeParaLog(f) + " — mat. " + f.matricula), "var(--verde-50)", "var(--verde-800)"],
+          ["Atualizados", planoFiltrado.funcionariosAtualizados.map(f => f.nome + " — mat. " + f.matriculaAnterior), "var(--azul-50)", "var(--azul-700)"],
+          ["Inativados (perdem o acesso)", planoFiltrado.funcionariosInativados.map(f => nomeParaLog(f) + " — mat. " + f.matricula), "var(--amber-50)", "var(--amber-800)"]
+        ].filter(([, itens]) => itens.length > 0).map(([titulo, itens, bg, cor]) => /*#__PURE__*/React.createElement("details", {
+          key: titulo, style: { background: bg, borderRadius: 12, padding: "10px 14px", fontSize: 13 }
+        },
+          /*#__PURE__*/React.createElement("summary", { style: { fontWeight: 700, color: cor, cursor: "pointer" } }, "Ver ", titulo.toLowerCase(), " (", itens.length, ")"),
+          /*#__PURE__*/React.createElement("ul", { style: { paddingLeft: 18, marginTop: 8, display: "flex", flexDirection: "column", gap: 2, maxHeight: 200, overflow: "auto" } },
+            itens.map((t, i) => /*#__PURE__*/React.createElement("li", { key: i }, t)))
+        )),
+
         plano.erros.length > 0 && /*#__PURE__*/React.createElement("div", null,
-          /*#__PURE__*/React.createElement("p", { style: { fontSize: 12.5, fontWeight: 700, color: "var(--vermelho-700)", marginBottom: 6 } }, "Linhas ignoradas (não serão importadas):"),
+          /*#__PURE__*/React.createElement("p", { style: { fontSize: 13, fontWeight: 700, color: "var(--vermelho-700)", marginBottom: 6 } }, "Linhas ignoradas (não serão importadas):"),
           /*#__PURE__*/React.createElement("ul", { style: { fontSize: 12, color: "var(--vermelho-700)", paddingLeft: 18, display: "flex", flexDirection: "column", gap: 2, maxHeight: 160, overflow: "auto" } },
             plano.erros.map((e, i) => /*#__PURE__*/React.createElement("li", { key: i },
               "Linha ", e.linha, e.nome ? ` (${e.nome}${e.matricula ? ", matrícula " + e.matricula : ""})` : "", ": ", e.motivo)))
@@ -7089,7 +6989,7 @@ function ModalImportarHierarquia({ onClose, onConcluido }) {
 
     aplicando && /*#__PURE__*/React.createElement("div", { style: { marginTop: 16, textAlign: "center" } },
       /*#__PURE__*/React.createElement("p", { style: { fontSize: 13, color: "var(--cinza-500)" } }, "⏳ ", etapaAtual || "Aplicando…"),
-      /*#__PURE__*/React.createElement("p", { style: { fontSize: 11.5, color: "var(--texto-fraco)", marginTop: 6 } }, "Não feche esta janela.")
+      /*#__PURE__*/React.createElement("p", { style: { fontSize: 12, color: "var(--texto-fraco)", marginTop: 6 } }, "Não feche esta janela.")
     ),
 
     concluido && /*#__PURE__*/React.createElement("div", { style: { marginTop: 16, display: "flex", flexDirection: "column", gap: 14 } },
@@ -7098,10 +6998,10 @@ function ModalImportarHierarquia({ onClose, onConcluido }) {
       }, "✓ Importação concluída: ", concluido.novos, " novo(s), ", concluido.atualizados, " atualizado(s), ",
         concluido.inativados, " inativado(s), ", concluido.diretoriasCriadas, " diretoria(s) nova(s), ", concluido.gerenciasCriadas, " gerência(s) nova(s)."),
       concluido.logFalhou && /*#__PURE__*/React.createElement("div", {
-        style: { background: "var(--amber-100)", color: "var(--amber-800)", borderRadius: 12, padding: "10px 14px", fontSize: 12.5, fontWeight: 600 }
+        style: { background: "var(--amber-100)", color: "var(--amber-800)", borderRadius: 12, padding: "10px 14px", fontSize: 13, fontWeight: 600 }
       }, "⚠️ As alterações acima foram aplicadas normalmente, mas não foi possível registrar esta importação no Log de auditoria (falha de conexão ou permissão). Ela não vai aparecer lá."),
       concluido.logDebug && /*#__PURE__*/React.createElement("details", {
-        style: { background: "var(--cinza-100)", borderRadius: 12, padding: "10px 14px", fontSize: 11.5, color: "var(--cinza-600)" }
+        style: { background: "var(--cinza-100)", borderRadius: 12, padding: "10px 14px", fontSize: 12, color: "var(--cinza-600)" }
       },
         /*#__PURE__*/React.createElement("summary", { style: { fontWeight: 700, cursor: "pointer" } }, "🔧 Diagnóstico do registro no log (temporário)"),
         /*#__PURE__*/React.createElement("pre", { style: { whiteSpace: "pre-wrap", marginTop: 8, fontSize: 11 } }, JSON.stringify(concluido.logDebug, null, 2))
@@ -7112,7 +7012,7 @@ function ModalImportarHierarquia({ onClose, onConcluido }) {
       // linhas, mas ainda assim consultável na hora sem precisar ir noutra
       // tela.
       concluido.listaNovos?.length > 0 && /*#__PURE__*/React.createElement("details", {
-        style: { background: "var(--verde-50)", borderRadius: 12, padding: "10px 14px", fontSize: 12.5 }
+        style: { background: "var(--verde-50)", borderRadius: 12, padding: "10px 14px", fontSize: 13 }
       },
         /*#__PURE__*/React.createElement("summary", { style: { fontWeight: 700, color: "var(--verde-800)", cursor: "pointer" } },
           "Ver ", concluido.listaNovos.length, " funcionário(s) novo(s)"),
@@ -7120,7 +7020,7 @@ function ModalImportarHierarquia({ onClose, onConcluido }) {
           concluido.listaNovos.map((f, i) => /*#__PURE__*/React.createElement("li", { key: i }, f.nome, " — mat. ", f.matricula)))
       ),
       concluido.listaAtualizados?.length > 0 && /*#__PURE__*/React.createElement("details", {
-        style: { background: "var(--azul-50)", borderRadius: 12, padding: "10px 14px", fontSize: 12.5 }
+        style: { background: "var(--azul-50)", borderRadius: 12, padding: "10px 14px", fontSize: 13 }
       },
         /*#__PURE__*/React.createElement("summary", { style: { fontWeight: 700, color: "var(--azul-700)", cursor: "pointer" } },
           "Ver ", concluido.listaAtualizados.length, " funcionário(s) atualizado(s)"),
@@ -7128,7 +7028,7 @@ function ModalImportarHierarquia({ onClose, onConcluido }) {
           concluido.listaAtualizados.map((f, i) => /*#__PURE__*/React.createElement("li", { key: i }, f.nome, " — mat. ", f.matricula)))
       ),
       concluido.listaInativados?.length > 0 && /*#__PURE__*/React.createElement("details", {
-        style: { background: "var(--amber-50)", borderRadius: 12, padding: "10px 14px", fontSize: 12.5 }
+        style: { background: "var(--amber-50)", borderRadius: 12, padding: "10px 14px", fontSize: 13 }
       },
         /*#__PURE__*/React.createElement("summary", { style: { fontWeight: 700, color: "var(--amber-800)", cursor: "pointer" } },
           "Ver ", concluido.listaInativados.length, " funcionário(s) inativado(s) / acesso revogado"),
@@ -7136,7 +7036,7 @@ function ModalImportarHierarquia({ onClose, onConcluido }) {
           concluido.listaInativados.map((f, i) => /*#__PURE__*/React.createElement("li", { key: i }, f.nome, " — mat. ", f.matricula)))
       ),
       concluido.revogadosRetroativos?.length > 0 && /*#__PURE__*/React.createElement("details", {
-        style: { background: "var(--amber-50)", borderRadius: 12, padding: "10px 14px", fontSize: 12.5 }
+        style: { background: "var(--amber-50)", borderRadius: 12, padding: "10px 14px", fontSize: 13 }
       },
         /*#__PURE__*/React.createElement("summary", { style: { fontWeight: 700, color: "var(--amber-800)", cursor: "pointer" } },
           "Ver ", concluido.revogadosRetroativos.length, " funcionário(s) que já estavam inativos e tiveram o acesso revogado agora"),
@@ -7144,7 +7044,7 @@ function ModalImportarHierarquia({ onClose, onConcluido }) {
           concluido.revogadosRetroativos.map((f, i) => /*#__PURE__*/React.createElement("li", { key: i }, f.nome, " — mat. ", f.matricula)))
       ),
       concluido.falhasRevogacao?.length > 0 && /*#__PURE__*/React.createElement("div", {
-        style: { background: "var(--amber-100)", color: "var(--amber-800)", borderRadius: 12, padding: "12px 16px", fontSize: 12.5 }
+        style: { background: "var(--amber-100)", color: "var(--amber-800)", borderRadius: 12, padding: "12px 16px", fontSize: 13 }
       },
         /*#__PURE__*/React.createElement("div", { style: { fontWeight: 700, marginBottom: 6 } },
           "⚠️ Situação atualizada, mas ", concluido.falhasRevogacao.length, " login(s) não puderam ser revogados automaticamente no Auth (revogue manualmente no painel de Acessos):"),
@@ -7153,6 +7053,30 @@ function ModalImportarHierarquia({ onClose, onConcluido }) {
             f.nome, " (mat. ", f.matricula, ") — ", f.motivo))
         )
       ),
+      concluido.linhasIgnoradas?.length > 0 && /*#__PURE__*/React.createElement("div", {
+        style: { background: "var(--vermelho-100)", color: "var(--vermelho-800)", borderRadius: 12, padding: "10px 16px", fontSize: 13 }
+      }, concluido.linhasIgnoradas.length, " linha(s) da planilha foram ignoradas por erro — estão no log em XLSX."),
+      /*#__PURE__*/React.createElement("button", {
+        type: "button",
+        onClick: () => {
+          try {
+            const linhas = [
+              ...(concluido.listaNovos || []).map(f => ({ Situação: "Novo", Nome: f.nome, Matrícula: f.matricula, Detalhe: "" })),
+              ...(concluido.listaAtualizados || []).map(f => ({ Situação: "Atualizado", Nome: f.nome, Matrícula: f.matricula, Detalhe: "" })),
+              ...(concluido.listaInativados || []).map(f => ({ Situação: "Inativado", Nome: f.nome, Matrícula: f.matricula, Detalhe: "Acesso revogado" })),
+              ...(concluido.revogadosRetroativos || []).map(f => ({ Situação: "Acesso revogado (já inativo)", Nome: f.nome, Matrícula: f.matricula, Detalhe: "" })),
+              ...(concluido.falhasRevogacao || []).map(f => ({ Situação: "Falha ao revogar login", Nome: f.nome, Matrícula: f.matricula, Detalhe: f.motivo })),
+              ...(concluido.linhasIgnoradas || []).map(l => ({ Situação: "Linha ignorada (erro)", Nome: l.nome, Matrícula: l.matricula, Detalhe: "Linha " + l.linha + ": " + l.motivo }))
+            ];
+            const ws = XLSX.utils.json_to_sheet(linhas);
+            ws["!cols"] = [{ wch: 28 }, { wch: 36 }, { wch: 14 }, { wch: 60 }];
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, "Log da importação");
+            XLSX.writeFile(wb, `log-importacao-hierarquia-${hoje()}.xlsx`);
+          } catch (e) { setErro("Não foi possível gerar o log: " + (e?.message || e)); }
+        },
+        style: { alignSelf: "flex-start", padding: "8px 16px", borderRadius: 12, border: "1px solid var(--cinza-200)", background: "var(--cor-branco)", fontSize: 13, fontWeight: 600, color: "var(--marca-500)", cursor: "pointer" }
+      }, "⬇ Baixar log em XLSX"),
       /*#__PURE__*/React.createElement("button", {
         onClick: onClose,
         style: {
@@ -8366,7 +8290,7 @@ function PainelOcorrencias({
       style: {
         display: "block", margin: "14px auto 0", padding: "8px 18px", borderRadius: 12,
         border: "1px solid var(--cinza-200)", background: "var(--cor-branco)",
-        fontSize: 12.5, fontWeight: 600, color: "var(--cinza-700)", cursor: "pointer"
+        fontSize: 13, fontWeight: 600, color: "var(--cinza-700)", cursor: "pointer"
       }
     }, "Limpar filtros")
   ));
@@ -8682,7 +8606,7 @@ function ModalExportarRelatorio({ ocorrencias, funcionarios, gerencias = [], onC
       ),
       (dataDe || dataAte) && /*#__PURE__*/React.createElement("button", {
         onClick: () => { setDataDe(""); setDataAte(""); },
-        style: { marginTop: 6, background: "none", border: "none", color: "var(--texto-fraco)", fontSize: 11.5, fontWeight: 600, cursor: "pointer", padding: 0 }
+        style: { marginTop: 6, background: "none", border: "none", color: "var(--texto-fraco)", fontSize: 12, fontWeight: 600, cursor: "pointer", padding: 0 }
       }, "✕ Limpar período (exporta tudo)")
     ),
 
@@ -8775,7 +8699,7 @@ function ModalExportarRelatorio({ ocorrencias, funcionarios, gerencias = [], onC
               }
             }, /*#__PURE__*/React.createElement(Avatar, { nome: f.nome, id: f.id, size: 22 }),
                /*#__PURE__*/React.createElement("div", null,
-                 /*#__PURE__*/React.createElement("div", { style: { fontSize: 12.5, fontWeight: 600, color: "var(--cinza-900)" } }, f.nome),
+                 /*#__PURE__*/React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: "var(--cinza-900)" } }, f.nome),
                  /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, color: "var(--texto-fraco)" } }, f.matricula, " · ", f.setor)
                )
             )))
@@ -8977,7 +8901,7 @@ function ProcessosPonto({ usuario, setView, ocorrencias = [], funcionarios = [],
         ),
         pendenciasRecentes.length > 0 && /*#__PURE__*/React.createElement("div", {
           style: {
-            fontSize: 11.5, fontWeight: 700, color: "var(--marca-600)", background: "var(--marca-transparente)",
+            fontSize: 12, fontWeight: 700, color: "var(--marca-600)", background: "var(--marca-transparente)",
             padding: "3px 10px", borderRadius: 16
           }
         }, `${pendenciasRecentes.length} ${pendenciasRecentes.length === 1 ? "pendência" : "pendências"}`)
@@ -8992,7 +8916,7 @@ function ProcessosPonto({ usuario, setView, ocorrencias = [], funcionarios = [],
             /*#__PURE__*/React.createElement("div", { style: { fontSize: 24 } }, "✅"),
             /*#__PURE__*/React.createElement("div", { style: { fontSize: 13, fontWeight: 600 } },
               ehGestor ? "Nenhuma pendência na equipe" : "Nenhuma pendência no momento"),
-            /*#__PURE__*/React.createElement("div", { style: { fontSize: 12.5 } },
+            /*#__PURE__*/React.createElement("div", { style: { fontSize: 13 } },
               ehGestor ? "Tudo certo com o ponto do time por aqui." : "Tudo certo com o seu ponto por aqui.")
           )
         : /*#__PURE__*/React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10 } },
@@ -9032,7 +8956,7 @@ function ProcessosPonto({ usuario, setView, ocorrencias = [], funcionarios = [],
                     ? [infoAtual.gerencia, infoAtual.diretoria].filter(Boolean).join(" · ") || "Sem gerência/diretoria"
                     : (new Date(pendenciaAtual.data + "T00:00:00").toLocaleDateString("pt-BR") + " · " + pendenciaAtual.status)
                 ),
-                ehGestor && /*#__PURE__*/React.createElement("div", { style: { fontSize: 11.5, color: "var(--texto-fraco)", marginTop: 1 } },
+                ehGestor && /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: "var(--texto-fraco)", marginTop: 1 } },
                   (pendenciaAtual.tipo || "Ocorrência") + " · " + new Date(pendenciaAtual.data + "T00:00:00").toLocaleDateString("pt-BR") + " · " + pendenciaAtual.status)
               )
             ),
@@ -9227,7 +9151,7 @@ function DuvidasProcessos({ setView }) {
                   }
                 }, c.subtitulo),
                 /*#__PURE__*/React.createElement("p", {
-                  style: { fontSize: 13.5, color: "var(--cinza-700)", lineHeight: 1.65, margin: 0 }
+                  style: { fontSize: 13, color: "var(--cinza-700)", lineHeight: 1.65, margin: 0 }
                 }, c.texto)
               )
             )
@@ -10095,7 +10019,7 @@ function PortalFuncionario({
   }, "✕"))), notifsAtivas.length > 5 && /*#__PURE__*/React.createElement("button", {
     type: "button",
     onClick: () => setVerTodasNotifs(v => !v),
-    style: { alignSelf: "flex-start", background: "none", border: "none", cursor: "pointer", fontSize: 12.5, fontWeight: 600, color: "var(--marca-500)", padding: "2px 0" }
+    style: { alignSelf: "flex-start", background: "none", border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600, color: "var(--marca-500)", padding: "2px 0" }
   }, verTodasNotifs ? "Mostrar menos" : `Ver todas (${notifsAtivas.length})`)), sucesso && /*#__PURE__*/React.createElement("div", {
     style: {
       background: "var(--verde-100)",
@@ -10809,7 +10733,7 @@ function SecaoSemEmail({ tabela, pessoas, corTexto, onSalvo }) {
             borderRadius: 8, padding: "8px 10px"
           }
         },
-          /*#__PURE__*/React.createElement("div", { style: { fontSize: 12.5, fontWeight: 600, color: "var(--cinza-700)", minWidth: 160, flex: "1 1 160px" } },
+          /*#__PURE__*/React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: "var(--cinza-700)", minWidth: 160, flex: "1 1 160px" } },
             nome, pessoa.matricula && /*#__PURE__*/React.createElement("span", { style: { fontWeight: 400, color: "var(--texto-fraco)" } }, " — mat. ", pessoa.matricula),
             emailAtualInvalido && /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, fontWeight: 400, color: "var(--vermelho-600)", marginTop: 2 } },
               `Atual (inválido): "${pessoa.email.trim()}"`)),
@@ -10827,7 +10751,7 @@ function SecaoSemEmail({ tabela, pessoas, corTexto, onSalvo }) {
             style: {
               flex: "2 1 220px", padding: "6px 10px", borderRadius: 8,
               border: `1px solid ${erro ? "var(--vermelho-400)" : "var(--cinza-200)"}`,
-              fontSize: 12.5, outline: "none", color: "var(--cinza-900)"
+              fontSize: 13, outline: "none", color: "var(--cinza-900)"
             }
           }),
           /*#__PURE__*/React.createElement("button", {
@@ -10840,7 +10764,7 @@ function SecaoSemEmail({ tabela, pessoas, corTexto, onSalvo }) {
               cursor: salvando ? "default" : "pointer", flexShrink: 0
             }
           }, salvando ? "Salvando…" : "Salvar"),
-          erro && /*#__PURE__*/React.createElement("div", { style: { width: "100%", fontSize: 11.5, color: "var(--vermelho-600)" } }, erro)
+          erro && /*#__PURE__*/React.createElement("div", { style: { width: "100%", fontSize: 12, color: "var(--vermelho-600)" } }, erro)
         );
       })
     )
@@ -11114,7 +11038,7 @@ function CardGerencia({ gerencia, aberta, onToggle }) {
           gerencia.gerente ? nomeGerente : "Sem gerente definido")
       ),
       /*#__PURE__*/React.createElement("span", {
-        style: { fontSize: 11, fontWeight: 600, color: "var(--cinza-500)", background: "var(--cinza-100)", padding: "2px 8px", borderRadius: 20, flexShrink: 0 }
+        style: { fontSize: 11, fontWeight: 600, color: "var(--cinza-500)", background: "var(--cinza-100)", padding: "2px 8px", borderRadius: 999, flexShrink: 0 }
       }, textoAtivosInativos(totalAtivos, totalInativos))
     ),
     aberta && /*#__PURE__*/React.createElement("div", {
@@ -11170,9 +11094,9 @@ function NoSubequipe({ grupo, aberta, onToggle, semSubequipe }) {
     },
       /*#__PURE__*/React.createElement("span", { style: { fontSize: 11, color: corTexto, opacity: 0.6, transform: aberta ? "rotate(90deg)" : "rotate(0deg)", transition: "transform .15s", flexShrink: 0 } }, "▶"),
       semSubequipe && /*#__PURE__*/React.createElement("span", { style: { fontSize: 12, flexShrink: 0 } }, "⚠️"),
-      /*#__PURE__*/React.createElement("span", { style: { fontSize: 12.5, fontWeight: 700, color: corTexto, flex: 1 } }, grupo.nome),
+      /*#__PURE__*/React.createElement("span", { style: { fontSize: 13, fontWeight: 700, color: corTexto, flex: 1 } }, grupo.nome),
       /*#__PURE__*/React.createElement("span", {
-        style: { fontSize: 11.5, fontWeight: 600, color: corBadgeTexto, background: corBadgeFundo, padding: "2px 8px", borderRadius: 16, flexShrink: 0 }
+        style: { fontSize: 12, fontWeight: 600, color: corBadgeTexto, background: corBadgeFundo, padding: "2px 8px", borderRadius: 16, flexShrink: 0 }
       }, textoAtivosInativos(grupo.ativos, grupo.inativos))
     ),
     aberta && /*#__PURE__*/React.createElement("div", {
@@ -11249,13 +11173,13 @@ function NoEquipeAdministrativa({ equipe, aberta, onToggle, estadoAberto, onTogg
       equipe.gerente ? /*#__PURE__*/React.createElement(Avatar, { nome: equipe.gerente.nome, id: equipe.gerente.id, size: 30 })
         : /*#__PURE__*/React.createElement("div", { style: { width: 30, height: 30, borderRadius: "50%", background: "var(--cinza-200)", flexShrink: 0 } }),
       /*#__PURE__*/React.createElement("div", { style: { flex: 1, minWidth: 0 } },
-        /*#__PURE__*/React.createElement("div", { style: { fontSize: 13.5, fontWeight: 800, color: "var(--cinza-900)" } }, equipe.nome),
-        /*#__PURE__*/React.createElement("div", { style: { fontSize: 11.5, color: "var(--texto-fraco)" } },
+        /*#__PURE__*/React.createElement("div", { style: { fontSize: 13, fontWeight: 800, color: "var(--cinza-900)" } }, equipe.nome),
+        /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: "var(--texto-fraco)" } },
           equipe.gerente ? equipe.gerente.nome : "Sem gerente definido")
       ),
       equipe.semSubequipe && /*#__PURE__*/React.createElement("span", { title: "Há membros sem subequipe definida", style: { fontSize: 13, flexShrink: 0 } }, "⚠️"),
       /*#__PURE__*/React.createElement("span", {
-        style: { fontSize: 11.5, fontWeight: 600, color: "var(--cinza-500)", background: "var(--cinza-100)", padding: "3px 10px", borderRadius: 16, flexShrink: 0 }
+        style: { fontSize: 12, fontWeight: 600, color: "var(--cinza-500)", background: "var(--cinza-100)", padding: "3px 10px", borderRadius: 16, flexShrink: 0 }
       }, textoAtivosInativos(equipe.totalAtivos, equipe.totalInativos))
     ),
     aberta && /*#__PURE__*/React.createElement("div", {
@@ -11352,7 +11276,7 @@ function NoRaizAdministrativo({ busca, aberta, onToggle, estadoAberto, onToggleC
       /*#__PURE__*/React.createElement("div", { style: { width: 40, height: 40, borderRadius: "50%", background: aberta ? "rgba(255,255,255,.3)" : "var(--cinza-100)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, flexShrink: 0 } }, "🏢"),
       /*#__PURE__*/React.createElement("div", { style: { flex: 1, minWidth: 0 } },
         /*#__PURE__*/React.createElement("div", { style: { fontSize: 15, fontWeight: 800 } }, "Administrativo"),
-        /*#__PURE__*/React.createElement("div", { style: { fontSize: 12.5, opacity: .85, marginTop: 2 } },
+        /*#__PURE__*/React.createElement("div", { style: { fontSize: 13, opacity: .85, marginTop: 2 } },
           arvoreCompleta.equipes.length, " ", arvoreCompleta.equipes.length === 1 ? "equipe" : "equipes",
           totalComSubequipePendente > 0 && ` · ⚠️ ${totalComSubequipePendente} sem subequipe definida`)
       ),
@@ -11561,7 +11485,7 @@ function NoDiretoria({ diretoria, aberta, onToggle, gerenciasAbertas, onToggleGe
           /*#__PURE__*/React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8 } },
             /*#__PURE__*/React.createElement("span", { style: { fontSize: 15, fontWeight: 700, color: "var(--cinza-900)" } }, diretoria.nome),
             /*#__PURE__*/React.createElement("span", {
-              style: { fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 20, background: NIVEL_COR.diretor.bg, color: NIVEL_COR.diretor.texto }
+              style: { fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 999, background: NIVEL_COR.diretor.bg, color: NIVEL_COR.diretor.texto }
             }, "Diretoria")
           ),
           /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: "var(--texto-fraco)", marginTop: 2 } },
@@ -11572,7 +11496,7 @@ function NoDiretoria({ diretoria, aberta, onToggle, gerenciasAbertas, onToggleGe
         onClick: e => { e.stopPropagation(); onSelecionar(diretoria.diretor); },
         title: "Ver/editar perfil do diretor",
         style: {
-          fontSize: 11.5, fontWeight: 700, color: "var(--marca-600)", background: "var(--marca-50)",
+          fontSize: 12, fontWeight: 700, color: "var(--marca-600)", background: "var(--marca-50)",
           border: "none", borderRadius: 16, padding: "5px 12px", cursor: "pointer", flexShrink: 0
         }
       }, "Editar"),
@@ -11646,7 +11570,7 @@ function NoSuperintendencia({ superintendencia, aberta, onToggle, estadoAberto, 
           : /*#__PURE__*/React.createElement("div", { style: { width: 40, height: 40, borderRadius: "50%", background: "rgba(255,255,255,.3)", flexShrink: 0 } }),
         /*#__PURE__*/React.createElement("div", { style: { flex: 1, minWidth: 0 } },
           /*#__PURE__*/React.createElement("div", { style: { fontSize: 15, fontWeight: 800 } }, superintendencia.nome),
-          /*#__PURE__*/React.createElement("div", { style: { fontSize: 12.5, opacity: .85, marginTop: 2 } },
+          /*#__PURE__*/React.createElement("div", { style: { fontSize: 13, opacity: .85, marginTop: 2 } },
             superintendencia.superintendente ? nomeSuper : "Sem superintendente definido",
             " · ", totalDiretorias, " ", totalDiretorias === 1 ? "diretoria" : "diretorias")
         )
@@ -11927,7 +11851,7 @@ function ModalPerfilComercial({ pessoa, onClose, onAtualizado, nomeExibicao: nom
     }, `Matrícula ${pessoa.matricula || "—"} · ${(diretorias || []).find(d => d.id === pessoa.diretoria_id)?.nome || "sem diretoria"}${(gerencias || []).find(g => g.id === pessoa.gerencia_id) ? " · " + gerencias.find(g => g.id === pessoa.gerencia_id).nome : ""}`),
 
     !podeEditarPerfil && /*#__PURE__*/React.createElement("div", {
-      style: { background: "var(--cinza-100)", borderRadius: 12, padding: "10px 14px", fontSize: 12.5, color: "var(--cinza-600)", fontWeight: 600 }
+      style: { background: "var(--cinza-100)", borderRadius: 12, padding: "10px 14px", fontSize: 13, color: "var(--cinza-600)", fontWeight: 600 }
     }, "🔒 Você não tem permissão para editar dados cadastrais. Exibindo em modo somente leitura."),
 
     // Envolve todos os campos cadastrais num wrapper que bloqueia
@@ -12108,7 +12032,7 @@ function ModalPerfilComercial({ pessoa, onClose, onAtualizado, nomeExibicao: nom
       ),
 
       !temLogin && /*#__PURE__*/React.createElement("div", {
-        style: { fontSize: 12.5, color: "var(--texto-fraco)", background: "var(--cinza-50)", borderRadius: 12, padding: "10px 12px" }
+        style: { fontSize: 13, color: "var(--texto-fraco)", background: "var(--cinza-50)", borderRadius: 12, padding: "10px 12px" }
       }, "Esta pessoa ainda não tem login criado — nada para gerenciar no Auth até que um login seja criado (ver aviso na tela de Hierarquia)."),
 
       temLogin && podeGerenciarAcesso && /*#__PURE__*/React.createElement("div", { style: { display: "flex", gap: 8, flexWrap: "wrap" } },
@@ -12117,7 +12041,7 @@ function ModalPerfilComercial({ pessoa, onClose, onAtualizado, nomeExibicao: nom
           disabled: !!acaoEmAndamento,
           style: {
             padding: "9px 14px", borderRadius: 12, border: "1px solid var(--marca-300)",
-            background: "var(--marca-50)", color: "var(--marca-700)", fontSize: 12.5, fontWeight: 700,
+            background: "var(--marca-50)", color: "var(--marca-700)", fontSize: 13, fontWeight: 700,
             cursor: acaoEmAndamento ? "default" : "pointer", opacity: acaoEmAndamento && acaoEmAndamento !== "resetar_senha" ? 0.5 : 1
           }
         }, acaoEmAndamento === "resetar_senha" ? "⏳ Gerando..." : "🔑 Gerar nova senha")
@@ -12128,7 +12052,7 @@ function ModalPerfilComercial({ pessoa, onClose, onAtualizado, nomeExibicao: nom
 
       resultadoAcao && /*#__PURE__*/React.createElement("div", {
         style: {
-          fontSize: 12.5, borderRadius: 12, padding: "10px 12px",
+          fontSize: 13, borderRadius: 12, padding: "10px 12px",
           background: resultadoAcao.ok ? "var(--verde-100)" : "var(--vermelho-100)",
           color: resultadoAcao.ok ? "var(--verde-800)" : "var(--vermelho-600)",
           display: "flex", flexDirection: "column", gap: 8
@@ -12151,7 +12075,7 @@ function ModalPerfilComercial({ pessoa, onClose, onAtualizado, nomeExibicao: nom
             onClick: () => navigator.clipboard && navigator.clipboard.writeText(resultadoAcao.senhaTemporaria),
             style: {
               padding: "5px 10px", borderRadius: 8, border: "1px solid var(--verde-300)",
-              background: "var(--verde-50)", color: "var(--verde-800)", fontSize: 11.5, fontWeight: 700,
+              background: "var(--verde-50)", color: "var(--verde-800)", fontSize: 12, fontWeight: 700,
               cursor: "pointer"
             }
           }, "📋 Copiar")
@@ -12297,7 +12221,7 @@ function ModalPerfilAdministrativo({ pessoa, onClose, onAtualizado, pode }) {
   const campo = (id, label, chave, extra) => /*#__PURE__*/React.createElement("div", null,
     /*#__PURE__*/React.createElement("label", { htmlFor: "adm_" + id, style: rot }, label),
     /*#__PURE__*/React.createElement("input", { id: "adm_" + id, value: editando[chave], onChange: e => setEditando(p => ({ ...p, [chave]: e.target.value })), style: inp, ...(extra || {}) }));
-  const btn = (cor, fundo, borda) => ({ padding: "9px 14px", borderRadius: 12, border: `1px solid ${borda}`, background: fundo, color: cor, fontSize: 12.5, fontWeight: 700, cursor: acaoEmAndamento ? "default" : "pointer", opacity: acaoEmAndamento ? 0.6 : 1 });
+  const btn = (cor, fundo, borda) => ({ padding: "9px 14px", borderRadius: 12, border: `1px solid ${borda}`, background: fundo, color: cor, fontSize: 13, fontWeight: 700, cursor: acaoEmAndamento ? "default" : "pointer", opacity: acaoEmAndamento ? 0.6 : 1 });
   const textosConfirma = {
     criar_login: ["Criar login", "Será criado um login com a senha inicial padrão para esta pessoa (e-mail obrigatório no cadastro).", "Criar login"],
     revogar_acesso: ["Revogar acesso", "O login será bloqueado imediatamente. A pessoa não conseguirá entrar até o acesso ser reativado.", "Revogar acesso"],
@@ -12328,7 +12252,7 @@ function ModalPerfilAdministrativo({ pessoa, onClose, onAtualizado, pode }) {
         /*#__PURE__*/React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 } },
           /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, fontWeight: 700, color: "var(--texto-fraco)", textTransform: "uppercase", letterSpacing: ".05em" } }, "Controle de acesso"),
           temLogin && /*#__PURE__*/React.createElement("span", { style: { fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 16, background: acessoRevogado ? "var(--vermelho-100)" : "var(--verde-100)", color: acessoRevogado ? "var(--vermelho-600)" : "var(--verde-800)" } }, acessoRevogado ? "🔒 Acesso revogado" : "🔓 Acesso ativo")),
-        !temLogin && /*#__PURE__*/React.createElement("div", { style: { fontSize: 12.5, color: "var(--texto-fraco)", background: "var(--cinza-50)", borderRadius: 12, padding: "10px 12px" } }, "Esta pessoa ainda não tem login."),
+        !temLogin && /*#__PURE__*/React.createElement("div", { style: { fontSize: 13, color: "var(--texto-fraco)", background: "var(--cinza-50)", borderRadius: 12, padding: "10px 12px" } }, "Esta pessoa ainda não tem login."),
         !temLogin && podeGerenciarAcesso && /*#__PURE__*/React.createElement("div", null,
           /*#__PURE__*/React.createElement("button", { type: "button", disabled: !!acaoEmAndamento || !pessoa.email, onClick: () => setConfirmAcao("criar_login"), style: btn("var(--marca-700)", "var(--marca-50)", "var(--marca-300)") }, acaoEmAndamento === "criar_login" ? "⏳ Criando..." : "➕ Criar login"),
           !pessoa.email && /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: "var(--amber-700)", marginTop: 6 } }, "Cadastre e salve o e-mail antes de criar o login.")),
@@ -12338,11 +12262,11 @@ function ModalPerfilAdministrativo({ pessoa, onClose, onAtualizado, pode }) {
             ? /*#__PURE__*/React.createElement("button", { type: "button", disabled: !!acaoEmAndamento, onClick: () => setConfirmAcao("reativar_acesso"), style: btn("var(--verde-800)", "var(--verde-50)", "var(--verde-200)") }, "🔓 Reativar acesso")
             : /*#__PURE__*/React.createElement("button", { type: "button", disabled: !!acaoEmAndamento, onClick: () => setConfirmAcao("revogar_acesso"), style: btn("var(--vermelho-600)", "var(--vermelho-100)", "var(--vermelho-300)") }, "🔒 Revogar acesso")),
         !podeGerenciarAcesso && /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: "var(--texto-fraco)" } }, "🔒 Você não tem permissão para gerenciar acesso."),
-        resultadoAcao && /*#__PURE__*/React.createElement("div", { role: "status", style: { fontSize: 12.5, borderRadius: 12, padding: "10px 12px", background: resultadoAcao.ok ? "var(--verde-100)" : "var(--vermelho-100)", color: resultadoAcao.ok ? "var(--verde-800)" : "var(--vermelho-600)", display: "flex", flexDirection: "column", gap: 8 } },
+        resultadoAcao && /*#__PURE__*/React.createElement("div", { role: "status", style: { fontSize: 13, borderRadius: 12, padding: "10px 12px", background: resultadoAcao.ok ? "var(--verde-100)" : "var(--vermelho-100)", color: resultadoAcao.ok ? "var(--verde-800)" : "var(--vermelho-600)", display: "flex", flexDirection: "column", gap: 8 } },
           /*#__PURE__*/React.createElement("span", null, resultadoAcao.ok ? `✅ ${resultadoAcao.mensagem}` : `❌ ${resultadoAcao.erro}`),
           resultadoAcao.ok && resultadoAcao.senhaTemporaria && /*#__PURE__*/React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, background: "var(--cor-branco)", border: "1px solid var(--verde-200)", borderRadius: 8, padding: "8px 10px" } },
             /*#__PURE__*/React.createElement("code", { style: { fontSize: 15, fontWeight: 700, letterSpacing: ".05em", color: "var(--cinza-900)", flex: 1 } }, resultadoAcao.senhaTemporaria),
-            /*#__PURE__*/React.createElement("button", { type: "button", onClick: () => navigator.clipboard && navigator.clipboard.writeText(resultadoAcao.senhaTemporaria), style: { padding: "5px 10px", borderRadius: 8, border: "1px solid var(--verde-200)", background: "var(--verde-50)", color: "var(--verde-800)", fontSize: 11.5, fontWeight: 700, cursor: "pointer" } }, "📋 Copiar"))))),
+            /*#__PURE__*/React.createElement("button", { type: "button", onClick: () => navigator.clipboard && navigator.clipboard.writeText(resultadoAcao.senhaTemporaria), style: { padding: "5px 10px", borderRadius: 8, border: "1px solid var(--verde-200)", background: "var(--verde-50)", color: "var(--verde-800)", fontSize: 12, fontWeight: 700, cursor: "pointer" } }, "📋 Copiar"))))),
     confirmAcao && /*#__PURE__*/React.createElement(Modal, { title: textosConfirma[confirmAcao][0], onClose: () => setConfirmAcao(null), maxWidth: 420 },
       /*#__PURE__*/React.createElement("p", { style: { fontSize: 13, color: "var(--cinza-700)", marginBottom: 16, lineHeight: 1.5 } }, textosConfirma[confirmAcao][1]),
       /*#__PURE__*/React.createElement("div", { style: { display: "flex", gap: 10, justifyContent: "flex-end" } },
@@ -12495,7 +12419,7 @@ function ModalLogAcessos({ onClose }) {
     });
   }, [itens, buscaAdiada, filtroAcao]);
 
-  const campoStyle = { padding: "9px 12px", borderRadius: 12, border: "1px solid var(--cinza-200)", fontSize: 12.5, outline: "none", background: "var(--cor-branco)", color: "var(--cinza-900)" };
+  const campoStyle = { padding: "9px 12px", borderRadius: 12, border: "1px solid var(--cinza-200)", fontSize: 13, outline: "none", background: "var(--cor-branco)", color: "var(--cinza-900)" };
 
   return /*#__PURE__*/React.createElement(Modal, {
     title: "📋 Log de auditoria",
@@ -12539,17 +12463,17 @@ function ModalLogAcessos({ onClose }) {
           style: { border: "1px solid var(--cinza-100)", borderRadius: 12, padding: "10px 14px", display: "flex", flexDirection: "column", gap: 4 }
         },
           /*#__PURE__*/React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" } },
-            /*#__PURE__*/React.createElement("span", { style: { fontSize: 12.5, fontWeight: 700, color: rubrica.cor } }, rubrica.label),
-            /*#__PURE__*/React.createElement("span", { style: { fontSize: 11.5, color: "var(--texto-fraco)" } }, formatarDataHoraLog(item.criado_em))
+            /*#__PURE__*/React.createElement("span", { style: { fontSize: 13, fontWeight: 700, color: rubrica.cor } }, rubrica.label),
+            /*#__PURE__*/React.createElement("span", { style: { fontSize: 12, color: "var(--texto-fraco)" } }, formatarDataHoraLog(item.criado_em))
           ),
-          /*#__PURE__*/React.createElement("div", { style: { fontSize: 12.5, color: "var(--cinza-700)" } },
+          /*#__PURE__*/React.createElement("div", { style: { fontSize: 13, color: "var(--cinza-700)" } },
             item.funcionario_nome || "—", item.funcionario_matricula ? ` — mat. ${item.funcionario_matricula}` : "",
             item.origem === "importacao_planilha" && /*#__PURE__*/React.createElement("span", {
               style: { marginLeft: 8, fontSize: 11, fontWeight: 700, color: "var(--amber-700)", background: "var(--amber-100)", padding: "2px 8px", borderRadius: 16 }
             }, "via importação")
           ),
           detalheTexto && /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: "var(--texto-fraco)" } }, detalheTexto),
-          /*#__PURE__*/React.createElement("div", { style: { fontSize: 11.5, color: "var(--texto-fraco)" } }, "por ", item.ator_email)
+          /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: "var(--texto-fraco)" } }, "por ", item.ator_email)
         );
       })
     )
@@ -12729,7 +12653,7 @@ function PainelPermissoes() {
 
   return /*#__PURE__*/React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 18 } },
     erro && /*#__PURE__*/React.createElement("div", {
-      style: { background: "var(--vermelho-100)", color: "var(--vermelho-700)", padding: "10px 14px", borderRadius: 12, fontSize: 12.5 }
+      style: { background: "var(--vermelho-100)", color: "var(--vermelho-700)", padding: "10px 14px", borderRadius: 12, fontSize: 13 }
     }, `❌ ${erro}`),
     // ── Toggle Administrativo/Comercial — decide a fonte de pessoas usada
     // tanto na busca de exceção individual quanto na matriz por papel
@@ -12764,7 +12688,7 @@ function PainelPermissoes() {
     /*#__PURE__*/React.createElement("div", null,
       /*#__PURE__*/React.createElement("div", { style: { marginBottom: 10 } },
         /*#__PURE__*/React.createElement("div", { style: { fontSize: 15, fontWeight: 700, color: "var(--cinza-900)" } }, "Exceções individuais"),
-        /*#__PURE__*/React.createElement("div", { style: { fontSize: 12.5, color: "var(--texto-fraco)", marginTop: 2 } },
+        /*#__PURE__*/React.createElement("div", { style: { fontSize: 13, color: "var(--texto-fraco)", marginTop: 2 } },
           "Selecione uma pessoa para dar ou tirar uma permissão específica, sem mudar a regra do papel dela.")
       ),
       /*#__PURE__*/React.createElement("div", {
@@ -12796,7 +12720,7 @@ function PainelPermissoes() {
                   textAlign: "left", padding: "8px 12px", borderRadius: 12,
                   border: selecionada ? "1px solid var(--indigo-300)" : "1px solid var(--cinza-100)",
                   background: selecionada ? "var(--indigo-50)" : "var(--cor-branco)",
-                  cursor: "pointer", fontSize: 12.5, color: "var(--cinza-900)",
+                  cursor: "pointer", fontSize: 13, color: "var(--cinza-900)",
                   display: "flex", flexDirection: "column", gap: 2
                 }
               },
@@ -12886,7 +12810,7 @@ function PainelPermissoes() {
       },
         /*#__PURE__*/React.createElement("div", null,
           /*#__PURE__*/React.createElement("div", { style: { fontSize: 15, fontWeight: 700, color: "var(--cinza-900)" } }, "Permissões por papel"),
-          /*#__PURE__*/React.createElement("div", { style: { fontSize: 12.5, color: "var(--texto-fraco)", marginTop: 2 } },
+          /*#__PURE__*/React.createElement("div", { style: { fontSize: 13, color: "var(--texto-fraco)", marginTop: 2 } },
             "Define o padrão que cada papel da hierarquia segue quando não há exceção individual.")
         ),
         /*#__PURE__*/React.createElement("span", {
@@ -12894,9 +12818,9 @@ function PainelPermissoes() {
         }, "▾")
       ),
       matrizAberta && /*#__PURE__*/React.createElement("div", { style: { borderTop: "1px solid var(--cinza-100)", overflowX: "auto" } },
-        /*#__PURE__*/React.createElement("div", { style: { padding: "12px 18px 0", fontSize: 12.5, color: "var(--texto-fraco)", lineHeight: 1.5 } },
+        /*#__PURE__*/React.createElement("div", { style: { padding: "12px 18px 0", fontSize: 13, color: "var(--texto-fraco)", lineHeight: 1.5 } },
           /*#__PURE__*/React.createElement("strong", null, "admin_geral"), " sempre tem acesso total e não aparece aqui — isso evita que uma configuração errada tranque o próprio administrador para fora do Painel de Acessos."),
-        /*#__PURE__*/React.createElement("table", { style: { width: "100%", minWidth: 560, borderCollapse: "collapse", fontSize: 12.5, marginTop: 12 } },
+        /*#__PURE__*/React.createElement("table", { style: { width: "100%", minWidth: 560, borderCollapse: "collapse", fontSize: 13, marginTop: 12 } },
           /*#__PURE__*/React.createElement("thead", null,
             /*#__PURE__*/React.createElement("tr", { style: { background: "var(--cinza-50)" } },
               /*#__PURE__*/React.createElement("th", { style: { textAlign: "left", padding: "10px 16px", fontWeight: 700, color: "var(--cinza-700)" } }, "Permissão"),
@@ -12904,7 +12828,7 @@ function PainelPermissoes() {
                 key: nivel,
                 style: { textAlign: "center", padding: "10px 12px", fontWeight: 700, color: "var(--cinza-700)" }
               }, /*#__PURE__*/React.createElement("div", { style: { textTransform: "capitalize" } }, nivel),
-                 /*#__PURE__*/React.createElement("div", { style: { fontSize: 11.5, fontWeight: 600, color: "var(--texto-fraco)", textTransform: "none" } },
+                 /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, fontWeight: 600, color: "var(--texto-fraco)", textTransform: "none" } },
                    `${contagemPorPapel[nivel] ?? 0} ${contagemPorPapel[nivel] === 1 ? "pessoa" : "pessoas"}`)
               ))
             )
@@ -12914,7 +12838,7 @@ function PainelPermissoes() {
               /*#__PURE__*/React.createElement("tr", { key: `grupo_${grupo}` },
                 /*#__PURE__*/React.createElement("td", {
                   colSpan: niveisConfiguraveisAtivos.length + 1,
-                  style: { padding: "8px 16px", background: "var(--cinza-50)", fontWeight: 700, color: "var(--cinza-500)", fontSize: 11.5, textTransform: "uppercase", letterSpacing: 0.4 }
+                  style: { padding: "8px 16px", background: "var(--cinza-50)", fontWeight: 700, color: "var(--cinza-500)", fontSize: 12, textTransform: "uppercase", letterSpacing: 0.4 }
                 }, grupo)
               ),
               ...PERMISSOES_CATALOGO.filter(p => p.grupo === grupo).map(p =>
@@ -13208,7 +13132,7 @@ function ArvoreHierarquia({ pode = () => true, ocorrencias = [], funcionariosUni
           style: {
             padding: "9px 16px", borderRadius: 12, border: "1px solid var(--cinza-200)",
             background: "var(--cor-branco)", color: "var(--cinza-700)",
-            fontSize: 12.5, fontWeight: 700, cursor: "pointer"
+            fontSize: 13, fontWeight: 700, cursor: "pointer"
           }
         }, "📋 Log de auditoria"),
         pode("importar_planilha") && /*#__PURE__*/React.createElement("button", {
@@ -13216,7 +13140,7 @@ function ArvoreHierarquia({ pode = () => true, ocorrencias = [], funcionariosUni
           style: {
             padding: "9px 16px", borderRadius: 12, border: "none",
             background: "var(--marca-gradiente)", color: "var(--cor-branco)",
-            fontSize: 12.5, fontWeight: 700, cursor: "pointer"
+            fontSize: 13, fontWeight: 700, cursor: "pointer"
           }
         }, "📥 Importar planilha"),
         pode("importar_planilha") && /*#__PURE__*/React.createElement("button", {
@@ -13224,7 +13148,7 @@ function ArvoreHierarquia({ pode = () => true, ocorrencias = [], funcionariosUni
           style: {
             padding: "9px 16px", borderRadius: 12, border: "1px solid var(--marca-300)",
             background: "var(--cor-branco)", color: "var(--marca-700)",
-            fontSize: 12.5, fontWeight: 700, cursor: "pointer"
+            fontSize: 13, fontWeight: 700, cursor: "pointer"
           }
         }, "📥 Importar administrativo")
       )
@@ -13243,7 +13167,7 @@ function ArvoreHierarquia({ pode = () => true, ocorrencias = [], funcionariosUni
         onClick: () => setAba(a),
         style: {
           padding: "8px 16px", borderRadius: 12, border: "none", cursor: "pointer",
-          fontSize: 12.5, fontWeight: 700,
+          fontSize: 13, fontWeight: 700,
           background: aba === a ? "var(--marca-gradiente)" : "var(--cinza-100)",
           color: aba === a ? "var(--cor-branco)" : "var(--cinza-600)"
         }
@@ -13290,15 +13214,15 @@ function ArvoreHierarquia({ pode = () => true, ocorrencias = [], funcionariosUni
       /*#__PURE__*/React.createElement("div", { style: { display: "flex", gap: 20, flexWrap: "wrap" } },
         /*#__PURE__*/React.createElement("div", null,
           /*#__PURE__*/React.createElement("div", { style: { fontSize: 18, fontWeight: 800, color: "var(--verde-600)" } }, totais.ativosComAcesso),
-          /*#__PURE__*/React.createElement("div", { style: { fontSize: 11.5, color: "var(--texto-fraco)", fontWeight: 600 } }, "Com acesso ativo")
+          /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: "var(--texto-fraco)", fontWeight: 600 } }, "Com acesso ativo")
         ),
         /*#__PURE__*/React.createElement("div", null,
           /*#__PURE__*/React.createElement("div", { style: { fontSize: 18, fontWeight: 800, color: "var(--amber-700)" } }, semLoginCount),
-          /*#__PURE__*/React.createElement("div", { style: { fontSize: 11.5, color: "var(--texto-fraco)", fontWeight: 600 } }, "Sem login criado")
+          /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: "var(--texto-fraco)", fontWeight: 600 } }, "Sem login criado")
         ),
         /*#__PURE__*/React.createElement("div", null,
           /*#__PURE__*/React.createElement("div", { style: { fontSize: 18, fontWeight: 800, color: "var(--vermelho-600)" } }, totais.revogados),
-          /*#__PURE__*/React.createElement("div", { style: { fontSize: 11.5, color: "var(--texto-fraco)", fontWeight: 600 } }, "Acesso inativo")
+          /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: "var(--texto-fraco)", fontWeight: 600 } }, "Acesso inativo")
         )
       ),
       semLoginCount > 0 && /*#__PURE__*/React.createElement("div", {
@@ -13309,7 +13233,7 @@ function ArvoreHierarquia({ pode = () => true, ocorrencias = [], funcionariosUni
         }
       },
         /*#__PURE__*/React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" } },
-          /*#__PURE__*/React.createElement("div", { style: { flex: 1, minWidth: 220, fontSize: 12.5, color: "var(--amber-800)" } },
+          /*#__PURE__*/React.createElement("div", { style: { flex: 1, minWidth: 220, fontSize: 13, color: "var(--amber-800)" } },
             "⚠️ ", semLoginCount, " funcionário(s) ainda sem login criado (auth_user_id vazio)."),
           /*#__PURE__*/React.createElement("button", {
             onClick: criarUsuariosEmLote,
@@ -13317,7 +13241,7 @@ function ArvoreHierarquia({ pode = () => true, ocorrencias = [], funcionariosUni
             style: {
               padding: "8px 16px", borderRadius: 12, border: "none",
               background: criandoUsuarios ? "var(--cinza-300)" : "var(--marca-600)",
-              color: "var(--cor-branco)", fontSize: 12.5, fontWeight: 700,
+              color: "var(--cor-branco)", fontSize: 13, fontWeight: 700,
               cursor: criandoUsuarios ? "default" : "pointer", flexShrink: 0
             }
           }, criandoUsuarios ? "Criando… (não feche esta aba)" : "Criar logins em lote")
@@ -13331,7 +13255,7 @@ function ArvoreHierarquia({ pode = () => true, ocorrencias = [], funcionariosUni
           style: {
             background: resumoUsuarios.erro ? "var(--vermelho-100)" : "var(--verde-100)",
             border: `1px solid ${resumoUsuarios.erro ? "var(--vermelho-300)" : "var(--verde-200)"}`,
-            borderRadius: 12, padding: "12px 16px", fontSize: 12.5,
+            borderRadius: 12, padding: "12px 16px", fontSize: 13,
             color: resumoUsuarios.erro ? "var(--vermelho-800)" : "var(--verde-800)"
           }
         },
@@ -13356,7 +13280,7 @@ function ArvoreHierarquia({ pode = () => true, ocorrencias = [], funcionariosUni
         /*#__PURE__*/React.createElement("details", null,
           /*#__PURE__*/React.createElement("summary", { style: { fontSize: 12, fontWeight: 700, color: "var(--amber-800)", cursor: "pointer" } },
             "Ver quem está sem login"),
-          /*#__PURE__*/React.createElement("ul", { style: { paddingLeft: 18, marginTop: 8, display: "flex", flexDirection: "column", gap: 2, fontSize: 12.5, color: "var(--amber-800)", maxHeight: 220, overflow: "auto" } },
+          /*#__PURE__*/React.createElement("ul", { style: { paddingLeft: 18, marginTop: 8, display: "flex", flexDirection: "column", gap: 2, fontSize: 13, color: "var(--amber-800)", maxHeight: 220, overflow: "auto" } },
             funcionarios.filter(f => !f.auth_user_id).sort((a, b) => nomeExibicao(a, nomesExibicao).localeCompare(nomeExibicao(b, nomesExibicao), "pt-BR", { sensitivity: "base" })).map(f =>
               /*#__PURE__*/React.createElement("li", { key: f.id }, nomeExibicao(f, nomesExibicao), " — mat. ", f.matricula)))
         ),
@@ -13374,7 +13298,7 @@ function ArvoreHierarquia({ pode = () => true, ocorrencias = [], funcionariosUni
       totais.revogados > 0 && /*#__PURE__*/React.createElement("details", null,
         /*#__PURE__*/React.createElement("summary", { style: { fontSize: 12, fontWeight: 700, color: "var(--vermelho-600)", cursor: "pointer" } },
           "Ver quem está com acesso inativo"),
-        /*#__PURE__*/React.createElement("ul", { style: { paddingLeft: 18, marginTop: 8, display: "flex", flexDirection: "column", gap: 2, fontSize: 12.5, color: "var(--vermelho-600)", maxHeight: 220, overflow: "auto" } },
+        /*#__PURE__*/React.createElement("ul", { style: { paddingLeft: 18, marginTop: 8, display: "flex", flexDirection: "column", gap: 2, fontSize: 13, color: "var(--vermelho-600)", maxHeight: 220, overflow: "auto" } },
           funcionarios.filter(f => !!f.auth_user_id && !!f.acesso_revogado).sort((a, b) => nomeExibicao(a, nomesExibicao).localeCompare(nomeExibicao(b, nomesExibicao), "pt-BR", { sensitivity: "base" })).map(f =>
             /*#__PURE__*/React.createElement("li", { key: f.id }, nomeExibicao(f, nomesExibicao), " — mat. ", f.matricula)))
       )
@@ -13392,19 +13316,19 @@ function ArvoreHierarquia({ pode = () => true, ocorrencias = [], funcionariosUni
         borderRadius: 16, padding: "18px 20px", display: "flex", flexDirection: "column", gap: 14
       }
     },
-      /*#__PURE__*/React.createElement("div", { style: { fontSize: 12.5, fontWeight: 800, color: "var(--cinza-500)", textTransform: "uppercase", letterSpacing: 0.3 } }, "Administrativo"),
+      /*#__PURE__*/React.createElement("div", { style: { fontSize: 13, fontWeight: 800, color: "var(--cinza-500)", textTransform: "uppercase", letterSpacing: 0.3 } }, "Administrativo"),
       /*#__PURE__*/React.createElement("div", { style: { display: "flex", gap: 20, flexWrap: "wrap" } },
         /*#__PURE__*/React.createElement("div", null,
           /*#__PURE__*/React.createElement("div", { style: { fontSize: 18, fontWeight: 800, color: "var(--verde-600)" } }, totaisAdmin.ativosComAcesso),
-          /*#__PURE__*/React.createElement("div", { style: { fontSize: 11.5, color: "var(--texto-fraco)", fontWeight: 600 } }, "Com acesso ativo")
+          /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: "var(--texto-fraco)", fontWeight: 600 } }, "Com acesso ativo")
         ),
         /*#__PURE__*/React.createElement("div", null,
           /*#__PURE__*/React.createElement("div", { style: { fontSize: 18, fontWeight: 800, color: "var(--amber-700)" } }, semLoginCountAdmin),
-          /*#__PURE__*/React.createElement("div", { style: { fontSize: 11.5, color: "var(--texto-fraco)", fontWeight: 600 } }, "Sem login criado")
+          /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: "var(--texto-fraco)", fontWeight: 600 } }, "Sem login criado")
         ),
         /*#__PURE__*/React.createElement("div", null,
           /*#__PURE__*/React.createElement("div", { style: { fontSize: 18, fontWeight: 800, color: "var(--vermelho-600)" } }, totaisAdmin.revogados),
-          /*#__PURE__*/React.createElement("div", { style: { fontSize: 11.5, color: "var(--texto-fraco)", fontWeight: 600 } }, "Acesso inativo")
+          /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: "var(--texto-fraco)", fontWeight: 600 } }, "Acesso inativo")
         )
       ),
       semLoginCountAdmin > 0 && /*#__PURE__*/React.createElement("div", {
@@ -13415,7 +13339,7 @@ function ArvoreHierarquia({ pode = () => true, ocorrencias = [], funcionariosUni
         }
       },
         /*#__PURE__*/React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" } },
-          /*#__PURE__*/React.createElement("div", { style: { flex: 1, minWidth: 220, fontSize: 12.5, color: "var(--amber-800)" } },
+          /*#__PURE__*/React.createElement("div", { style: { flex: 1, minWidth: 220, fontSize: 13, color: "var(--amber-800)" } },
             "⚠️ ", semLoginCountAdmin, " funcionário(s) administrativo(s) ainda sem login criado (auth_user_id vazio)."),
           /*#__PURE__*/React.createElement("button", {
             onClick: criarUsuariosAdminEmLote,
@@ -13423,7 +13347,7 @@ function ArvoreHierarquia({ pode = () => true, ocorrencias = [], funcionariosUni
             style: {
               padding: "8px 16px", borderRadius: 12, border: "none",
               background: criandoUsuariosAdmin ? "var(--cinza-300)" : "var(--marca-600)",
-              color: "var(--cor-branco)", fontSize: 12.5, fontWeight: 700,
+              color: "var(--cor-branco)", fontSize: 13, fontWeight: 700,
               cursor: criandoUsuariosAdmin ? "default" : "pointer", flexShrink: 0
             }
           }, criandoUsuariosAdmin ? "Criando… (não feche esta aba)" : "Criar logins em lote")
@@ -13439,7 +13363,7 @@ function ArvoreHierarquia({ pode = () => true, ocorrencias = [], funcionariosUni
           style: {
             background: resumoUsuariosAdmin.erro ? "var(--vermelho-100)" : "var(--verde-100)",
             border: `1px solid ${resumoUsuariosAdmin.erro ? "var(--vermelho-300)" : "var(--verde-200)"}`,
-            borderRadius: 12, padding: "12px 16px", fontSize: 12.5,
+            borderRadius: 12, padding: "12px 16px", fontSize: 13,
             color: resumoUsuariosAdmin.erro ? "var(--vermelho-800)" : "var(--verde-800)"
           }
         },
@@ -13457,7 +13381,7 @@ function ArvoreHierarquia({ pode = () => true, ocorrencias = [], funcionariosUni
         /*#__PURE__*/React.createElement("details", null,
           /*#__PURE__*/React.createElement("summary", { style: { fontSize: 12, fontWeight: 700, color: "var(--amber-800)", cursor: "pointer" } },
             "Ver quem está sem login"),
-          /*#__PURE__*/React.createElement("ul", { style: { paddingLeft: 18, marginTop: 8, display: "flex", flexDirection: "column", gap: 2, fontSize: 12.5, color: "var(--amber-800)", maxHeight: 220, overflow: "auto" } },
+          /*#__PURE__*/React.createElement("ul", { style: { paddingLeft: 18, marginTop: 8, display: "flex", flexDirection: "column", gap: 2, fontSize: 13, color: "var(--amber-800)", maxHeight: 220, overflow: "auto" } },
             funcionariosAdmin.filter(f => !f.auth_user_id).sort((a, b) => (a.nome || "").localeCompare(b.nome || "", "pt-BR", { sensitivity: "base" })).map(f =>
               /*#__PURE__*/React.createElement("li", { key: f.id }, f.nome, " — mat. ", f.matricula)))
         ),
@@ -13473,7 +13397,7 @@ function ArvoreHierarquia({ pode = () => true, ocorrencias = [], funcionariosUni
       totaisAdmin.revogados > 0 && /*#__PURE__*/React.createElement("details", null,
         /*#__PURE__*/React.createElement("summary", { style: { fontSize: 12, fontWeight: 700, color: "var(--vermelho-600)", cursor: "pointer" } },
           "Ver quem está com acesso inativo"),
-        /*#__PURE__*/React.createElement("ul", { style: { paddingLeft: 18, marginTop: 8, display: "flex", flexDirection: "column", gap: 2, fontSize: 12.5, color: "var(--vermelho-600)", maxHeight: 220, overflow: "auto" } },
+        /*#__PURE__*/React.createElement("ul", { style: { paddingLeft: 18, marginTop: 8, display: "flex", flexDirection: "column", gap: 2, fontSize: 13, color: "var(--vermelho-600)", maxHeight: 220, overflow: "auto" } },
           funcionariosAdmin.filter(f => !!f.auth_user_id && !!f.acesso_revogado).sort((a, b) => (a.nome || "").localeCompare(b.nome || "", "pt-BR", { sensitivity: "base" })).map(f =>
             /*#__PURE__*/React.createElement("li", { key: f.id }, f.nome, " — mat. ", f.matricula)))
       )
@@ -13660,7 +13584,7 @@ function AvisoSemConexao() {
     style: {
       position: "fixed", top: 0, left: 0, right: 0, zIndex: 3000,
       background: "var(--vermelho-600)", color: "var(--cor-branco)",
-      padding: "10px 16px", fontSize: 12.5, fontWeight: 600, textAlign: "center",
+      padding: "10px 16px", fontSize: 13, fontWeight: 600, textAlign: "center",
       boxShadow: "0 2px 10px var(--sombra-media)"
     }
   }, "Sem conexão com a internet — o que você fizer agora pode não ser salvo. Aguarde a conexão voltar antes de continuar.");
