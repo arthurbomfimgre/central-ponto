@@ -9813,6 +9813,8 @@ function PortalFuncionario({
   const [erroEasymob, setErroEasymob] = useState(null);
   const [trocandoTipo, setTrocandoTipo] = useState(null); // id da ocorrência com a grade de tipo reaberta
   const easyRef = useRef(null);
+  const [previaEasymob, setPreviaEasymob] = useState(null); // { ocId, dataUrl } — imagem escolhida, aguardando confirmação
+  const [verEasymob, setVerEasymob] = useState(null); // { dataUrl, titulo } — print já enviado, ampliado
 
   // Notificações para este funcionário — com auto-dismiss para verificadas
   const minhasNotifs = notifs.filter(n => n.paraFunc === funcLogado.id);
@@ -9898,11 +9900,13 @@ function PortalFuncionario({
       ts: agora
     });
   }
-  async function uploadEasyMob(e, ocId) {
-    const file = e.target.files[0];
+  // Etapa 1: lê e comprime a imagem escolhida e mostra a PRÉVIA — nada é
+  // gravado ainda. A imagem da prévia é exatamente a que será salva.
+  async function escolherEasyMob(e, ocId) {
+    const input = e.target;
+    const file = input.files[0];
     if (!file) return;
     setErroEasymob(null);
-    setEnviandoEasymob(ocId);
     try {
       const dataUrlOriginal = await new Promise((resolve, reject) => {
         const r = new FileReader();
@@ -9913,9 +9917,25 @@ function PortalFuncionario({
       // Reduz o tamanho da imagem antes de enviar — fotos de celular sem
       // compressão (vários MB) podiam falhar ao salvar sem nenhum aviso.
       const dataUrlComprimido = await comprimirImagem(dataUrlOriginal);
+      setPreviaEasymob({ ocId, dataUrl: dataUrlComprimido });
+    } catch (err) {
+      setErroEasymob("Não foi possível processar a imagem. Tente outra foto ou tente novamente.");
+    } finally {
+      // Permite escolher de novo o mesmo arquivo (sem isso o onChange não dispara).
+      input.value = "";
+    }
+  }
+  // Etapa 2: o funcionário confirmou a prévia — só agora grava.
+  async function confirmarEasyMob() {
+    if (!previaEasymob) return;
+    const { ocId, dataUrl } = previaEasymob;
+    setPreviaEasymob(null);
+    setErroEasymob(null);
+    setEnviandoEasymob(ocId);
+    try {
       const resultado = await setEasymobMap(prev => ({
         ...prev,
-        [`${funcLogado.id}_${ocId}`]: dataUrlComprimido
+        [`${funcLogado.id}_${ocId}`]: dataUrl
       }));
       if (!resultado.ok) {
         // Reverte o print do estado local: sem isso, a tela continuava
@@ -9931,7 +9951,7 @@ function PortalFuncionario({
         setErroEasymob("Não foi possível enviar o print. Verifique sua conexão e tente novamente.");
       }
     } catch (err) {
-      setErroEasymob("Não foi possível processar a imagem. Tente outra foto ou tente novamente.");
+      setErroEasymob("Não foi possível enviar o print. Verifique sua conexão e tente novamente.");
     } finally {
       setEnviandoEasymob(null);
     }
@@ -10395,7 +10415,7 @@ function PortalFuncionario({
       style: {
         display: "none"
       },
-      onChange: e => uploadEasyMob(e, o.id),
+      onChange: e => escolherEasyMob(e, o.id),
       id: `easy_${o.id}`
     }), /*#__PURE__*/React.createElement("label", {
       htmlFor: `easy_${o.id}`,
@@ -10412,7 +10432,16 @@ function PortalFuncionario({
         alignItems: "center",
         gap: 6
       }
-    }, enviandoEasymob === o.id ? "📱 Enviando…" : easymob ? "📱 Print enviado ✓" : "📱 Enviar print EasyMob"), erroEasymob && enviandoEasymob === null && /*#__PURE__*/React.createElement("span", {
+    }, enviandoEasymob === o.id ? "📱 Enviando…" : easymob ? "📱 Print enviado ✓" : "📱 Enviar print EasyMob"), easymob && /*#__PURE__*/React.createElement("button", {
+      type: "button",
+      title: "Ver print enviado",
+      "aria-label": "Ver print enviado",
+      onClick: () => setVerEasymob({ dataUrl: easymob, titulo: o.tipo + " · " + fmtDate(o.data) }),
+      style: { padding: 0, width: 36, height: 36, overflow: "hidden", borderRadius: 8, border: "1px solid var(--verde-200)", background: "none", cursor: "pointer", flexShrink: 0 }
+    }, /*#__PURE__*/React.createElement("img", {
+      src: easymob, alt: "Print enviado",
+      style: { width: "100%", height: "100%", objectFit: "cover", display: "block" }
+    })), erroEasymob && enviandoEasymob === null && /*#__PURE__*/React.createElement("span", {
       style: {
         fontSize: 11,
         color: "var(--vermelho-600)",
@@ -10461,7 +10490,26 @@ function PortalFuncionario({
   }))), modal?.acao === "avisar" && /*#__PURE__*/React.createElement(ModalAvisarGestor, {
     onCriar: criarAvisoGestor,
     onClose: () => setModal(null)
-  }));
+  }), previaEasymob && /*#__PURE__*/React.createElement(Modal, {
+    title: "📱 Conferir print antes de enviar",
+    onClose: () => setPreviaEasymob(null),
+    maxWidth: 520
+  }, /*#__PURE__*/React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 14 } },
+    /*#__PURE__*/React.createElement("p", { style: { fontSize: 13, color: "var(--cinza-600)", lineHeight: 1.5 } },
+      "Confira se a imagem mostra a tela “Consultar Marcações” do EasyMob e se está legível. Ela só será enviada ao clicar em “Enviar print”."),
+    /*#__PURE__*/React.createElement("img", { src: previaEasymob.dataUrl, alt: "Prévia do print", style: { width: "100%", maxHeight: 460, objectFit: "contain", borderRadius: 12, border: "1px solid var(--cinza-200)", background: "var(--cinza-50)" } }),
+    /*#__PURE__*/React.createElement("div", { style: { display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" } },
+      /*#__PURE__*/React.createElement("button", { type: "button", onClick: () => document.getElementById("easy_" + previaEasymob.ocId)?.click(), style: { padding: "10px 20px", borderRadius: 12, border: "1px solid var(--cinza-200)", background: "var(--cor-branco)", fontSize: 13, cursor: "pointer", color: "var(--cinza-500)", fontWeight: 600 } }, "Escolher outra"),
+      /*#__PURE__*/React.createElement("button", { type: "button", onClick: confirmarEasyMob, style: { padding: "10px 20px", borderRadius: 12, border: "none", background: "var(--marca-gradiente)", fontSize: 13, cursor: "pointer", color: "var(--branco-fixo)", fontWeight: 700 } }, "Enviar print")))),
+  verEasymob && /*#__PURE__*/React.createElement(Modal, {
+    title: "📱 Print enviado",
+    onClose: () => setVerEasymob(null),
+    maxWidth: 520
+  }, /*#__PURE__*/React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 14 } },
+    /*#__PURE__*/React.createElement("div", { style: { background: "var(--cinza-50)", borderRadius: 12, padding: "10px 14px", fontSize: 13, color: "var(--cinza-500)" } }, verEasymob.titulo),
+    /*#__PURE__*/React.createElement("img", { src: verEasymob.dataUrl, alt: "Print enviado", style: { width: "100%", maxHeight: 460, objectFit: "contain", borderRadius: 12, border: "1px solid var(--cinza-200)", background: "var(--cinza-50)" } }),
+    /*#__PURE__*/React.createElement("div", { style: { display: "flex", justifyContent: "flex-end" } },
+      /*#__PURE__*/React.createElement("button", { type: "button", onClick: () => setVerEasymob(null), style: { padding: "10px 20px", borderRadius: 12, border: "1px solid var(--cinza-200)", background: "var(--cor-branco)", fontSize: 13, cursor: "pointer", color: "var(--cinza-500)", fontWeight: 600 } }, "Fechar")))));
 }
 
 // ─── APP PRINCIPAL ────────────────────────────────────────────────────────────
