@@ -5611,7 +5611,10 @@ function analisarImportacaoHierarquia(linhasExcel, banco) {
   );
 
   const funcionariosNovos = [];
-  const funcionariosAtualizados = []; // { id, campos: {...} }
+  const funcionariosAtualizados = []; // { id, campos: {...}, mudancas: [...] } — SÓ quem tem diferença real
+  const funcionariosSemAlteracao = []; // existe no banco e já está igual à planilha
+  const funcionariosCasados = []; // { existente, l, item } — decidido depois que os resolvedores de vínculo existem
+  const idsCasados = new Set(); // ids de quem casou com alguma linha (por matrícula OU e-mail)
   const matriculasNaPlanilha = new Set();
 
   linhasComSup.forEach(l => {
@@ -5646,13 +5649,17 @@ function analisarImportacaoHierarquia(linhasExcel, banco) {
     };
 
     if (existente) {
-      funcionariosAtualizados.push({
-        id: existente.id,
-        matriculaAnterior: existente.matricula,
-        matriculaMudou: String(existente.matricula).trim() !== l.matricula,
-        nome: l.nomeCompleto,
-        campos: existente.situacao !== "ATIVO" ? { ...camposPreenchidos, situacao: "ATIVO" } : camposPreenchidos,
-        ...refs
+      idsCasados.add(existente.id);
+      funcionariosCasados.push({
+        existente, l,
+        item: {
+          id: existente.id,
+          matriculaAnterior: existente.matricula,
+          matriculaMudou: String(existente.matricula).trim() !== l.matricula,
+          nome: l.nomeCompleto,
+          campos: existente.situacao !== "ATIVO" ? { ...camposPreenchidos, situacao: "ATIVO" } : camposPreenchidos,
+          ...refs
+        }
       });
     } else {
       funcionariosNovos.push({
@@ -5713,6 +5720,62 @@ function analisarImportacaoHierarquia(linhasExcel, banco) {
     return gerPorChave.get(`${dirId}::${l.gerenciaNome.toUpperCase()}`)?.id ?? null;
   }
 
+  // ── Diff real: "atualizado" = pelo menos uma diferença de fato ─────────
+  // Antes, toda pessoa da planilha que já existia no banco entrava como
+  // "atualizada", mesmo sem nada mudar (400 pessoas = "400 atualizados").
+  // Agora compara campo a campo, com normalização para não gerar diferença
+  // falsa (caixa, espaços, pontuação do CPF, null x vazio). Só os campos
+  // preenchidos na planilha entram (regra 5: célula vazia nunca apaga).
+  const ROTULOS_CAMPO = { matricula: "matrícula", nome_completo: "nome", apelido: "apelido", email: "e-mail", cpf: "CPF", cargo_origem: "cargo", nivel: "nível", vinculo: "vínculo" };
+  function normalizarParaComparar(campo, v) {
+    const t = String(v ?? "").trim();
+    if (campo === "cpf") return t.replace(/\D/g, "");
+    if (campo === "email" || campo === "nivel") return t.toLowerCase();
+    return t.toUpperCase();
+  }
+  const mesmoId = (a, b) => String(a) === String(b);
+  function calcularMudancas(existente, l, campos) {
+    const mud = [];
+    Object.entries(campos).forEach(([k, novo]) => {
+      if (k === "situacao") return; // tratada abaixo
+      if (normalizarParaComparar(k, existente[k]) !== normalizarParaComparar(k, novo)) {
+        mud.push({ campo: ROTULOS_CAMPO[k] || k, de: existente[k] ?? "", para: novo });
+      }
+    });
+    if ((existente.situacao || "ATIVO").toUpperCase() !== "ATIVO") {
+      mud.push({ campo: "situação", de: existente.situacao, para: "ATIVO (reativação)" });
+    }
+    // Vínculo hierárquico: só compara quando o vínculo atual do banco pode
+    // ser resolvido com segurança (gerencia_id ausente ou existente na
+    // tabela). Se aponta para uma gerência que não veio do banco, não chuta.
+    const vinculoResolvivel = existente.gerencia_id == null || gerenciaPorId.has(existente.gerencia_id);
+    if (vinculoResolvivel) {
+      const supLinha = resolverSuperintendencia(l);
+      const supAtual = resolverSuperintendenciaIdDoFuncionario(existente);
+      if (supLinha && supAtual != null && !mesmoId(supAtual, supLinha.id)) {
+        mud.push({ campo: "superintendência", de: banco.superintendencias.find(x => mesmoId(x.id, supAtual))?.nome || "?", para: supLinha.nome });
+      }
+      if (l.diretoriaNome) {
+        const dirLinha = resolverDiretoriaIdDaLinha(l);
+        const dirAtual = resolverDiretoriaIdDoFuncionario(existente);
+        if (dirLinha == null) mud.push({ campo: "diretoria", de: diretoriaPorId.get(dirAtual)?.nome || "(nenhuma)", para: l.diretoriaNome + " (nova)" });
+        else if (dirAtual == null || !mesmoId(dirAtual, dirLinha)) mud.push({ campo: "diretoria", de: diretoriaPorId.get(dirAtual)?.nome || "(nenhuma)", para: l.diretoriaNome });
+        if (l.gerenciaNome) {
+          const gerLinha = resolverGerenciaIdDaLinha(l);
+          const nomeGerAtual = gerenciaPorId.get(existente.gerencia_id)?.nome || "(sem gerência)";
+          if (gerLinha == null) mud.push({ campo: "gerência", de: nomeGerAtual, para: l.gerenciaNome + " (nova)" });
+          else if (existente.gerencia_id == null || !mesmoId(existente.gerencia_id, gerLinha)) mud.push({ campo: "gerência", de: nomeGerAtual, para: l.gerenciaNome });
+        }
+      }
+    }
+    return mud;
+  }
+  funcionariosCasados.forEach(({ existente, l, item }) => {
+    const mudancas = calcularMudancas(existente, l, item.campos);
+    if (mudancas.length > 0) funcionariosAtualizados.push({ ...item, mudancas });
+    else funcionariosSemAlteracao.push({ id: existente.id, nome: l.nomeCompleto, matricula: existente.matricula });
+  });
+
   // Três conjuntos de escopo, do mais específico para o mais amplo.
   const gerenciaIdsNaPlanilha = new Set(
     linhasComSup.map(l => resolverGerenciaIdDaLinha(l)).filter(id => id != null)
@@ -5754,26 +5817,30 @@ function analisarImportacaoHierarquia(linhasExcel, banco) {
   // Lago como "fora do escopo mais específico" e cair direto no escopo de
   // superintendência, inativando-a por engano.
   function funcionarioEstaNoEscopoDaPlanilha(f) {
+    const dirId = resolverDiretoriaIdDoFuncionario(f);
+    const planilhaFiltrouGerenciasDestaDiretoria = dirId != null && [...gerenciaIdsNaPlanilha].some(
+      gid => gerenciaPorId.get(gid)?.diretoria_id === dirId
+    );
     if (f.gerencia_id != null) {
       if (gerenciaIdsNaPlanilha.has(f.gerencia_id)) return true;
       // A gerência dele existe mas não é nenhuma das que a planilha citou.
-      // Só ainda é candidato a "sumiu" se a planilha nem chegou a filtrar
-      // por gerência dentro da diretoria dele (planilha genérica); se a
-      // planilha listou gerências específicas daquela diretoria e a dele
-      // não está entre elas, ele está fora do escopo importado e não deve
-      // ser tocado.
-      const dirId = resolverDiretoriaIdDoFuncionario(f);
-      const planilhaFiltrouGerenciasDestaDiretoria = [...gerenciaIdsNaPlanilha].some(
-        gid => gerenciaPorId.get(gid)?.diretoria_id === dirId
-      );
+      // Se a planilha listou gerências específicas daquela diretoria e a
+      // dele não está entre elas, ele está fora do escopo importado.
       if (planilhaFiltrouGerenciasDestaDiretoria) return false;
+    } else if (planilhaFiltrouGerenciasDestaDiretoria && !diretoriaIdsCobertasPorCompleto.has(dirId)) {
+      // SEM gerencia_id = topo da diretoria (o próprio diretor) ou vendedor
+      // ligado direto à diretoria. Se a planilha só tocou GERÊNCIAS desta
+      // diretoria e não trouxe a linha do diretor (diretoria "coberta por
+      // completo"), essa pessoa está fora do escopo importado. Sem esta
+      // checagem, citar a diretoria (AYA) em qualquer linha colocava a
+      // diretora (Lara Reis) no escopo e ela era inativada por "não vir".
+      return false;
     }
-    const dirId = resolverDiretoriaIdDoFuncionario(f);
     if (dirId != null) {
       if (diretoriaIdsNaPlanilha.has(dirId) || diretoriaIdsCobertasPorCompleto.has(dirId)) return true;
-      const supId = diretoriaPorId.get(dirId)?.superintendencia_id;
+      const supIdDaDir = diretoriaPorId.get(dirId)?.superintendencia_id;
       const planilhaFiltrouDiretoriasDestaSup = [...diretoriaIdsNaPlanilha].some(
-        did => diretoriaPorId.get(did)?.superintendencia_id === supId
+        did => diretoriaPorId.get(did)?.superintendencia_id === supIdDaDir
       );
       if (planilhaFiltrouDiretoriasDestaSup) return false;
     }
@@ -5781,17 +5848,24 @@ function analisarImportacaoHierarquia(linhasExcel, banco) {
     return superintendenciaIdsCobertasPorCompleto.has(supId);
   }
 
-  const funcionariosInativados = banco.funcionariosTodos.filter(f =>
+  const candidatosInativacao = banco.funcionariosTodos.filter(f =>
     (f.situacao || "ATIVO").toUpperCase() === "ATIVO" &&
     funcionarioEstaNoEscopoDaPlanilha(f) &&
     !matriculasNaPlanilha.has(String(f.matricula).trim())
-  ).filter(f => {
-    // Se o funcionário foi "recasado" por e-mail em alguma linha da
-    // planilha (matrícula mudou), ele não deve ser tratado como inativado
-    // — já foi contemplado como atualização acima.
-    const foiRecasadoPorEmail = funcionariosAtualizados.some(a => a.id === f.id);
-    return !foiRecasadoPorEmail;
-  });
+  ).filter(f => !idsCasados.has(f.id)); // recasado por e-mail (matrícula mudou) já foi contemplado acima
+
+  // Rede de proteção: quem é CITADO como superintendente/diretor/gerente nas
+  // colunas de hierarquia da própria planilha, mas não tem linha própria,
+  // não é inativado automaticamente (perderia o acesso por engano). Vai para
+  // uma lista à parte, exibida no resumo como aviso.
+  const nomesLideresCitados = new Set(
+    linhasComSup.flatMap(l => [l.superintendenteNome, l.diretorNome, l.gerenteNome])
+      .filter(Boolean).map(n => String(n).trim().toUpperCase())
+  );
+  const ehLiderCitado = f => f.nivel !== "vendedor" &&
+    [f.apelido, f.nome_completo].filter(Boolean).some(n => nomesLideresCitados.has(String(n).trim().toUpperCase()));
+  const funcionariosInativados = candidatosInativacao.filter(f => !ehLiderCitado(f));
+  const funcionariosProtegidos = candidatosInativacao.filter(ehLiderCitado);
 
   return {
     erros,
@@ -5801,7 +5875,9 @@ function analisarImportacaoHierarquia(linhasExcel, banco) {
     gerenciasNovas: [...gerenciasNovas.values()],
     funcionariosNovos,
     funcionariosAtualizados,
-    funcionariosInativados
+    funcionariosSemAlteracao,
+    funcionariosInativados,
+    funcionariosProtegidos
   };
 }
 
@@ -6719,6 +6795,11 @@ function ModalImportarEquipeAdministrativa({ onClose, onConcluido }) {
   );
 }
 
+// Texto curto das mudanças de uma pessoa: "apelido: A → B; cargo: X → Y".
+function textoMudancas(mudancas) {
+  return (mudancas || []).map(m => `${m.campo}: ${m.de === "" || m.de == null ? "(vazio)" : m.de} → ${m.para}`).join("; ");
+}
+
 function ModalImportarHierarquia({ onClose, onConcluido }) {
   const [arquivo, setArquivo] = useState(null);
   const [carregandoBanco, setCarregandoBanco] = useState(false);
@@ -6795,6 +6876,7 @@ function ModalImportarHierarquia({ onClose, onConcluido }) {
         detalhe: {
           novos: planoFiltrado.funcionariosNovos.length,
           atualizados: planoFiltrado.funcionariosAtualizados.length,
+          semAlteracao: (planoFiltrado.funcionariosSemAlteracao || []).length,
           inativados: planoFiltrado.funcionariosInativados.length,
           diretoriasCriadas: planoFiltrado.diretoriasNovas.length,
           gerenciasCriadas: planoFiltrado.gerenciasNovas.length
@@ -6804,6 +6886,7 @@ function ModalImportarHierarquia({ onClose, onConcluido }) {
       setConcluido({
         novos: planoFiltrado.funcionariosNovos.length,
         atualizados: planoFiltrado.funcionariosAtualizados.length,
+        semAlteracao: (planoFiltrado.funcionariosSemAlteracao || []).length,
         inativados: planoFiltrado.funcionariosInativados.length,
         diretoriasCriadas: planoFiltrado.diretoriasNovas.length,
         gerenciasCriadas: planoFiltrado.gerenciasNovas.length,
@@ -6814,7 +6897,7 @@ function ModalImportarHierarquia({ onClose, onConcluido }) {
         // Listas com nome + matrícula de cada pessoa afetada, para exibir o
         // resumo detalhado após a importação (não só a contagem).
         listaNovos: planoFiltrado.funcionariosNovos.map(f => ({ nome: nomeParaLog(f), matricula: f.matricula })),
-        listaAtualizados: planoFiltrado.funcionariosAtualizados.map(f => ({ nome: f.nome, matricula: f.matriculaAnterior })),
+        listaAtualizados: planoFiltrado.funcionariosAtualizados.map(f => ({ nome: f.nome, matricula: f.matriculaAnterior, detalhe: textoMudancas(f.mudancas) })),
         listaInativados: planoFiltrado.funcionariosInativados.map(f => ({ nome: nomeParaLog(f), matricula: f.matricula })),
         linhasIgnoradas: (plano.erros || []).map(e => ({ linha: e.linha, nome: e.nome || "", matricula: e.matricula || "", motivo: e.motivo }))
       });
@@ -6897,7 +6980,8 @@ function ModalImportarHierarquia({ onClose, onConcluido }) {
 
         /*#__PURE__*/React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 } },
           linhaResumo("Funcionários novos", planoFiltrado.funcionariosNovos.length, "verde"),
-          linhaResumo("Funcionários atualizados", planoFiltrado.funcionariosAtualizados.length, "azul"),
+          linhaResumo("Funcionários atualizados (com mudança)", planoFiltrado.funcionariosAtualizados.length, "azul"),
+          linhaResumo("Sem alteração (já iguais ao banco)", (planoFiltrado.funcionariosSemAlteracao || []).length, "cinza"),
           linhaResumo("Funcionários inativados", planoFiltrado.funcionariosInativados.length, "amber"),
           linhaResumo("Diretorias novas", planoFiltrado.diretoriasNovas.length, "roxo"),
           linhaResumo("Gerências novas", planoFiltrado.gerenciasNovas.length, "roxo"),
@@ -6951,8 +7035,9 @@ function ModalImportarHierarquia({ onClose, onConcluido }) {
         // que perdem o acesso: conferir aqui evita revogar login por engano.
         [
           ["Novos", planoFiltrado.funcionariosNovos.map(f => nomeParaLog(f) + " — mat. " + f.matricula), "var(--verde-50)", "var(--verde-800)"],
-          ["Atualizados", planoFiltrado.funcionariosAtualizados.map(f => f.nome + " — mat. " + f.matriculaAnterior), "var(--azul-50)", "var(--azul-700)"],
-          ["Inativados (perdem o acesso)", planoFiltrado.funcionariosInativados.map(f => nomeParaLog(f) + " — mat. " + f.matricula), "var(--amber-50)", "var(--amber-800)"]
+          ["Atualizados", planoFiltrado.funcionariosAtualizados.map(f => f.nome + " — mat. " + f.matriculaAnterior + " — " + textoMudancas(f.mudancas)), "var(--azul-50)", "var(--azul-700)"],
+          ["Sem alteração", (planoFiltrado.funcionariosSemAlteracao || []).map(f => f.nome + " — mat. " + f.matricula), "var(--cinza-50)", "var(--cinza-600)"],
+          ["Inativados (perdem o acesso)", planoFiltrado.funcionariosInativados.map(f => nomeParaLog(f) + " — mat. " + f.matricula + (f.nivel && f.nivel !== "vendedor" ? " ⚠ " + f.nivel : "")), "var(--amber-50)", "var(--amber-800)"]
         ].filter(([, itens]) => itens.length > 0).map(([titulo, itens, bg, cor]) => /*#__PURE__*/React.createElement("details", {
           key: titulo, style: { background: bg, borderRadius: 12, padding: "10px 14px", fontSize: 13 }
         },
@@ -6960,6 +7045,15 @@ function ModalImportarHierarquia({ onClose, onConcluido }) {
           /*#__PURE__*/React.createElement("ul", { style: { paddingLeft: 18, marginTop: 8, display: "flex", flexDirection: "column", gap: 2, maxHeight: 200, overflow: "auto" } },
             itens.map((t, i) => /*#__PURE__*/React.createElement("li", { key: i }, t)))
         )),
+
+        (plano.funcionariosProtegidos || []).length > 0 && /*#__PURE__*/React.createElement("div", {
+          style: { background: "var(--amber-100)", color: "var(--amber-800)", borderRadius: 12, padding: "10px 14px", fontSize: 13 }
+        },
+          /*#__PURE__*/React.createElement("div", { style: { fontWeight: 700, marginBottom: 4 } },
+            "🛡️ ", plano.funcionariosProtegidos.length, " líder(es) fora da planilha, mas citado(s) nas colunas de hierarquia — NÃO serão inativados:"),
+          /*#__PURE__*/React.createElement("ul", { style: { paddingLeft: 18 } },
+            plano.funcionariosProtegidos.map((f, i) => /*#__PURE__*/React.createElement("li", { key: i }, nomeParaLog(f), " — mat. ", f.matricula, f.nivel ? " (" + f.nivel + ")" : "")))
+        ),
 
         plano.erros.length > 0 && /*#__PURE__*/React.createElement("div", null,
           /*#__PURE__*/React.createElement("p", { style: { fontSize: 13, fontWeight: 700, color: "var(--vermelho-700)", marginBottom: 6 } }, "Linhas ignoradas (não serão importadas):"),
@@ -6996,6 +7090,7 @@ function ModalImportarHierarquia({ onClose, onConcluido }) {
       /*#__PURE__*/React.createElement("div", {
         style: { background: "var(--verde-100)", color: "var(--verde-800)", borderRadius: 12, padding: "12px 16px", fontSize: 13, fontWeight: 600 }
       }, "✓ Importação concluída: ", concluido.novos, " novo(s), ", concluido.atualizados, " atualizado(s), ",
+        concluido.semAlteracao ?? 0, " sem alteração, ",
         concluido.inativados, " inativado(s), ", concluido.diretoriasCriadas, " diretoria(s) nova(s), ", concluido.gerenciasCriadas, " gerência(s) nova(s)."),
       concluido.logFalhou && /*#__PURE__*/React.createElement("div", {
         style: { background: "var(--amber-100)", color: "var(--amber-800)", borderRadius: 12, padding: "10px 14px", fontSize: 13, fontWeight: 600 }
@@ -7025,7 +7120,7 @@ function ModalImportarHierarquia({ onClose, onConcluido }) {
         /*#__PURE__*/React.createElement("summary", { style: { fontWeight: 700, color: "var(--azul-700)", cursor: "pointer" } },
           "Ver ", concluido.listaAtualizados.length, " funcionário(s) atualizado(s)"),
         /*#__PURE__*/React.createElement("ul", { style: { paddingLeft: 18, marginTop: 8, display: "flex", flexDirection: "column", gap: 2, maxHeight: 200, overflow: "auto" } },
-          concluido.listaAtualizados.map((f, i) => /*#__PURE__*/React.createElement("li", { key: i }, f.nome, " — mat. ", f.matricula)))
+          concluido.listaAtualizados.map((f, i) => /*#__PURE__*/React.createElement("li", { key: i }, f.nome, " — mat. ", f.matricula, f.detalhe ? " — " + f.detalhe : "")))
       ),
       concluido.listaInativados?.length > 0 && /*#__PURE__*/React.createElement("details", {
         style: { background: "var(--amber-50)", borderRadius: 12, padding: "10px 14px", fontSize: 13 }
@@ -7062,7 +7157,7 @@ function ModalImportarHierarquia({ onClose, onConcluido }) {
           try {
             const linhas = [
               ...(concluido.listaNovos || []).map(f => ({ Situação: "Novo", Nome: f.nome, Matrícula: f.matricula, Detalhe: "" })),
-              ...(concluido.listaAtualizados || []).map(f => ({ Situação: "Atualizado", Nome: f.nome, Matrícula: f.matricula, Detalhe: "" })),
+              ...(concluido.listaAtualizados || []).map(f => ({ Situação: "Atualizado", Nome: f.nome, Matrícula: f.matricula, Detalhe: f.detalhe || "" })),
               ...(concluido.listaInativados || []).map(f => ({ Situação: "Inativado", Nome: f.nome, Matrícula: f.matricula, Detalhe: "Acesso revogado" })),
               ...(concluido.revogadosRetroativos || []).map(f => ({ Situação: "Acesso revogado (já inativo)", Nome: f.nome, Matrícula: f.matricula, Detalhe: "" })),
               ...(concluido.falhasRevogacao || []).map(f => ({ Situação: "Falha ao revogar login", Nome: f.nome, Matrícula: f.matricula, Detalhe: f.motivo })),
