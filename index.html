@@ -2231,7 +2231,9 @@ function Modal({
     };
   }, [tituloId]);
 
-  return /*#__PURE__*/React.createElement("div", {
+  // Portal em document.body: o overlay position:fixed fica imune a qualquer
+  // ancestral com transform/filter/animação (que o deslocaria para o fim da página).
+  return ReactDOM.createPortal(/*#__PURE__*/React.createElement("div", {
     style: {
       position: "fixed",
       inset: 0,
@@ -2301,7 +2303,7 @@ function Modal({
     style: {
       padding: "24px 28px"
     }
-  }, children)));
+  }, children))), document.body);
 }
 function Toast({
   toasts,
