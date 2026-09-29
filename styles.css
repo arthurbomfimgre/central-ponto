@@ -12,7 +12,7 @@
   --marca-800: #0a2552;
   --marca-900: #081d42;
   --marca-ciano: #0780ad;
-  --marca-gradiente: linear-gradient(135deg, var(--marca-600), var(--marca-ciano));
+  --marca-gradiente: linear-gradient(135deg, var(--marca-700) 0%, var(--marca-500) 48%, var(--marca-ciano) 100%);
   --marca-transparente: rgba(13,79,158,.12);
   --sombra-marca-media: rgba(10,61,128,.3);
   --sombra-marca-forte: rgba(10,61,128,.35);
@@ -149,7 +149,11 @@
     html, body { height: 100%; }
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-      background: var(--fundo-pagina);
+      background:
+        radial-gradient(900px 420px at 8% -10%, var(--marca-transparente), transparent 70%),
+        radial-gradient(700px 380px at 100% 0%, rgba(7,128,173,.09), transparent 70%),
+        var(--fundo-pagina);
+      background-attachment: fixed;
       -webkit-font-smoothing: antialiased;
       font-feature-settings: "tnum" 1, "cv05" 1; /* dígitos de largura fixa: colunas de horas alinhadas */
       font-variant-numeric: tabular-nums;
@@ -238,7 +242,7 @@
   --marca-800: #166aa0;
   --marca-900: #0f5481;
   --marca-ciano: #0f7fa3;
-  --marca-gradiente: linear-gradient(135deg, var(--marca-700), var(--marca-ciano));
+  --marca-gradiente: linear-gradient(135deg, var(--marca-800) 0%, var(--marca-700) 48%, var(--marca-ciano) 100%);
   --marca-transparente: rgba(74,179,232,.18);
   --sombra-marca-media: rgba(47,196,240,.25);
   --sombra-marca-forte: rgba(47,196,240,.3);
@@ -314,10 +318,6 @@
   --subequipe-texto-alerta: var(--amarelo-700);
   --subequipe-badge-fundo:  var(--cinza-100);
   --subequipe-badge-texto:  var(--cinza-500);
-}
-
-[data-theme="dark"] body {
-  background: var(--cinza-50);
 }
 
 [data-theme="dark"] #loading {
@@ -401,3 +401,79 @@ tbody tr:hover { background-color: var(--superficie-2); }
   body { background: #fff !important; }
   * { box-shadow: none !important; }
 }
+
+/* ═══ DEGRADÊS ═════════════════════════════════════════════════════════════
+   Tokens novos para código futuro + degradês aplicados por atributo nos
+   fundos "suaves" que o app já usa inline (chips, badges, alertas). */
+:root {
+  --grad-marca-suave:   linear-gradient(135deg, var(--marca-50), var(--marca-100));
+  --grad-sucesso-suave: linear-gradient(135deg, var(--verde-50), var(--verde-200));
+  --grad-alerta-suave:  linear-gradient(135deg, var(--amber-100), var(--amber-200));
+  --grad-perigo-suave:  linear-gradient(135deg, var(--vermelho-100), #fecaca);
+}
+[data-theme="dark"] { --grad-perigo-suave: linear-gradient(135deg, var(--vermelho-100), #5c1a1a); }
+
+[style*="background: var(--marca-50)"]     { background-image: linear-gradient(135deg, var(--marca-50), var(--marca-100)) !important; }
+[style*="background: var(--marca-100)"]    { background-image: linear-gradient(135deg, var(--marca-100), var(--marca-200)) !important; }
+[style*="background: var(--verde-100)"]    { background-image: linear-gradient(135deg, var(--verde-100), var(--verde-200)) !important; }
+[style*="background: var(--vermelho-100)"] { background-image: var(--grad-perigo-suave) !important; }
+[style*="background: var(--amber-100)"]    { background-image: linear-gradient(135deg, var(--amber-100), var(--amber-200)) !important; }
+[style*="background: var(--amarelo-100)"]  { background-image: linear-gradient(135deg, var(--amarelo-50), var(--amarelo-100)) !important; }
+[style*="background: var(--excedido-100)"] { background-image: linear-gradient(135deg, var(--excedido-50), var(--excedido-100)) !important; }
+
+/* Botões e faixas em degradê de marca: ampliados para o brilho "deslizar"
+   no hover (posição do degradê muda, sem trocar de cor). */
+[style*="var(--marca-gradiente)"],
+[style*="linear-gradient(135deg,var(--indigo-500)"] {
+  background-size: 170% 170% !important;
+  background-position: 0% 50% !important;
+  transition: background-position .55s var(--ease-saida), box-shadow .25s ease, filter .15s ease, transform .12s var(--ease-saida);
+}
+[style*="var(--marca-gradiente)"]:not(:disabled):hover,
+[style*="linear-gradient(135deg,var(--indigo-500)"]:not(:disabled):hover {
+  background-position: 100% 50% !important;
+}
+button[style*="var(--marca-gradiente)"]:not(:disabled):hover,
+button[style*="linear-gradient(135deg,var(--indigo-500)"]:not(:disabled):hover {
+  box-shadow: 0 8px 20px -6px var(--sombra-marca-forte) !important;
+}
+
+/* ═══ ANIMAÇÕES ════════════════════════════════════════════════════════════
+   Regra: movimento só onde responde a uma ação ou marca uma entrada única.
+   Curva de saída suave (ease-saida) em tudo, durações entre 150 e 400 ms. */
+@keyframes cp-entra  { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@keyframes cp-modal  { from { opacity: 0; transform: translateY(10px) scale(.97); } to { opacity: 1; transform: none; } }
+@keyframes cp-linha  { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+/* Entrada da tela ao carregar o app (uma vez) */
+#root > * { animation: cp-entra .4s var(--ease-saida) both; }
+
+/* Janelas de diálogo: sobem e ganham escala junto com o fade do fundo */
+[role="dialog"][style*="max-height"] { animation: cp-modal .26s var(--ease-saida) both; }
+
+/* Elementos fixos (menus, painéis) entram com fade; toasts já têm animação própria inline */
+[style*="position: fixed"]:not([style*="var(--overlay-modal)"]):not([role="dialog"]) { animation: cp-fade .2s ease-out; }
+
+/* Linhas de tabela: entrada escalonada nas 10 primeiras (a lista "monta" em vez de piscar) */
+tbody tr { animation: cp-linha .3s var(--ease-saida) both; }
+tbody tr:nth-child(2)  { animation-delay: .02s; }  tbody tr:nth-child(3)  { animation-delay: .04s; }
+tbody tr:nth-child(4)  { animation-delay: .06s; }  tbody tr:nth-child(5)  { animation-delay: .08s; }
+tbody tr:nth-child(6)  { animation-delay: .10s; }  tbody tr:nth-child(7)  { animation-delay: .12s; }
+tbody tr:nth-child(8)  { animation-delay: .14s; }  tbody tr:nth-child(9)  { animation-delay: .16s; }
+tbody tr:nth-child(n+10) { animation-delay: .18s; }
+
+/* Itens clicáveis (cards, linhas, chips): sobem 2px e ganham sombra no hover */
+[style*="cursor: pointer"]:not(button):not(tr):not(input):not(select) {
+  transition: transform .18s var(--ease-saida), box-shadow .18s ease, background-color .15s ease, border-color .15s ease;
+}
+[style*="cursor: pointer"]:not(button):not(tr):not(input):not(select):hover {
+  transform: translateY(-2px);
+  box-shadow: var(--elev-2);
+}
+[style*="cursor: pointer"]:not(button):not(tr):not(input):not(select):active {
+  transform: translateY(0);
+  box-shadow: var(--elev-1);
+}
+
+/* Foco: o anel "cresce" em vez de aparecer de repente */
+input:focus-visible, select:focus-visible, textarea:focus-visible { transition: box-shadow .18s ease; }
