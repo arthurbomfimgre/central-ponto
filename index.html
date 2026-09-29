@@ -2083,6 +2083,27 @@ function SeletorData({
     }, dia);
   }))));
 }
+// Contagem animada para números dos KPIs (ease-out, ~700 ms).
+// Só anima valores numéricos; textos passam direto. Respeita reduced-motion.
+function useContagem(alvo) {
+  const numerico = typeof alvo === "number" && isFinite(alvo);
+  const [atual, setAtual] = useState(numerico ? 0 : alvo);
+  useEffect(() => {
+    if (!numerico) { setAtual(alvo); return; }
+    if (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) { setAtual(alvo); return; }
+    let raf, ini = null;
+    const dur = 700;
+    const passo = t => {
+      if (ini === null) ini = t;
+      const k = Math.min((t - ini) / dur, 1);
+      setAtual(Math.round(alvo * (1 - Math.pow(1 - k, 3))));
+      if (k < 1) raf = requestAnimationFrame(passo);
+    };
+    raf = requestAnimationFrame(passo);
+    return () => cancelAnimationFrame(raf);
+  }, [alvo]);
+  return atual;
+}
 function KpiCard({
   label,
   value,
@@ -2091,6 +2112,7 @@ function KpiCard({
   icon,
   comparativo // { atual, anterior, menorMelhor }
 }) {
+  const valorAnimado = useContagem(value);
   return /*#__PURE__*/React.createElement("div", {
     style: {
       background: "var(--cor-branco)",
@@ -2127,7 +2149,7 @@ function KpiCard({
       color: accent || "var(--cinza-900)",
       lineHeight: 1
     }
-  }, value), sub && /*#__PURE__*/React.createElement("div", {
+  }, valorAnimado), sub && /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 12,
       color: "var(--texto-fraco)"
@@ -3811,7 +3833,9 @@ comparativo: temAnterior ? { atual: excedido, anterior: antExcedido, menorMelhor
           height: "100%",
           borderRadius: 8,
           background: "linear-gradient(90deg,var(--indigo-500),var(--roxo-500))",
-          width: `${pct}%`
+          width: `${pct}%`,
+          transformOrigin: "left",
+          animation: "cp-barra .8s var(--ease-saida) both"
         }
       })));
     }));
