@@ -2083,6 +2083,21 @@ function SeletorData({
     }, dia);
   }))));
 }
+// Intenção de navegação: o Dashboard grava um filtro inicial e a tela de
+// destino o consome UMA vez ao montar (lazy useState), sem prop drilling.
+let _intencaoNav = null;
+function irComFiltro(setView, view, filtros) {
+  _intencaoNav = { view, filtros: filtros || {} };
+  setView(view);
+}
+function consumirIntencao(view) {
+  if (_intencaoNav && _intencaoNav.view === view) {
+    const f = _intencaoNav.filtros;
+    _intencaoNav = null;
+    return f;
+  }
+  return {};
+}
 // Contagem animada para números dos KPIs (ease-out, ~700 ms).
 // Só anima valores numéricos; textos passam direto. Respeita reduced-motion.
 function useContagem(alvo) {
@@ -2110,11 +2125,20 @@ function KpiCard({
   sub,
   accent,
   icon,
-  comparativo // { atual, anterior, menorMelhor }
+  comparativo, // { atual, anterior, menorMelhor }
+  onClick,
+  titulo
 }) {
   const valorAnimado = useContagem(value);
   return /*#__PURE__*/React.createElement("div", {
+    className: onClick ? "cp-kpi-link" : undefined,
+    onClick: onClick,
+    title: onClick ? titulo : undefined,
+    role: onClick ? "button" : undefined,
+    tabIndex: onClick ? 0 : undefined,
+    onKeyDown: onClick ? (e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onClick(); } }) : undefined,
     style: {
+      cursor: onClick ? "pointer" : undefined,
       background: "var(--cor-branco)",
       border: "1px solid var(--cinza-100)",
       borderRadius: 20,
@@ -3639,41 +3663,53 @@ function Dashboard({
     label: "Ativos",
     value: ativos,
     sub: `${funcionarios.length} total`,
-    icon: "👥"
+    icon: "👥",
+    onClick: () => irComFiltro(setView, "funcionarios"),
+    titulo: "Ver lista de funcionários"
   }), /*#__PURE__*/React.createElement(KpiCard, {
     label: "Pendentes",
     value: pendentes,
 comparativo: temAnterior ? { atual: pendentes, anterior: antPendentes, menorMelhor: true } : undefined,
     sub: "Aguardando colaborador",
     accent: pendentes > 0 ? "var(--vermelho-600)" : undefined,
-    icon: "⏳"
+    icon: "⏳",
+    onClick: () => irComFiltro(setView, "relatorios", { status: "Pendente" }),
+    titulo: "Ver pendências em Situação"
   }), /*#__PURE__*/React.createElement(KpiCard, {
     label: "Verificados",
     value: verif,
 comparativo: temAnterior ? { atual: verif, anterior: antVerif, menorMelhor: false } : undefined,
     sub: "Concluídos",
-    icon: "✅"
+    icon: "✅",
+    onClick: () => irComFiltro(setView, "relatorios", { status: "Verificado" }),
+    titulo: "Ver verificados em Situação"
   }), /*#__PURE__*/React.createElement(KpiCard, {
     label: "Atenção",
     value: alerta,
 comparativo: temAnterior ? { atual: alerta, anterior: antAlerta, menorMelhor: true } : undefined,
     sub: "2 esquecimentos",
     accent: "var(--amber-600)",
-    icon: "🟡"
+    icon: "🟡",
+    onClick: () => irComFiltro(setView, "funcionarios", { esq: "2" }),
+    titulo: "Ver funcionários com 2 esquecimentos"
   }), /*#__PURE__*/React.createElement(KpiCard, {
     label: "Limite",
     value: limite,
 comparativo: temAnterior ? { atual: limite, anterior: antLimite, menorMelhor: true } : undefined,
     sub: "3 esquecimentos",
     accent: "var(--vermelho-600)",
-    icon: "🔴"
+    icon: "🔴",
+    onClick: () => irComFiltro(setView, "funcionarios", { esq: "3" }),
+    titulo: "Ver funcionários com 3 esquecimentos"
   }), /*#__PURE__*/React.createElement(KpiCard, {
     label: "Excedido",
     value: excedido,
 comparativo: temAnterior ? { atual: excedido, anterior: antExcedido, menorMelhor: true } : undefined,
     sub: "4+ esquecimentos",
     accent: "var(--excedido-600)",
-    icon: "🟣"
+    icon: "🟣",
+    onClick: () => irComFiltro(setView, "funcionarios", { esq: "4+" }),
+    titulo: "Ver funcionários com 4 ou mais esquecimentos"
   })), /*#__PURE__*/React.createElement("div", {
     style: {
       display: "grid",
@@ -4011,6 +4047,9 @@ function ListaFuncionarios({
   // vínculo é uma informação mais estável e direta para localizar
   // funcionários do que a contagem de esquecimentos do mês.
   const [vinculoFiltro, setVinculoFiltro] = useState("Todos");
+  // Filtro por faixa de esquecimentos no mês ("Todos" | "2" | "3" | "4+"),
+  // preenchido pelos cards do Dashboard (ver irComFiltro).
+  const [esqFiltro, setEsqFiltro] = useState(() => consumirIntencao("funcionarios").esq || "Todos");
   // Filtro adicional de sub-unidade. Diretor: um único nível (gerência
   // dentro da sua diretoria). Superintendente: cascata de dois níveis —
   // primeiro escolhe a diretoria, depois (opcional) a gerência dentro dela.
@@ -4030,7 +4069,7 @@ function ListaFuncionarios({
   // refletia mais a seleção atual).
   useEffect(() => {
     setEstadoAberto({});
-  }, [buscaAdiada, cargoFiltro, vinculoFiltro]);
+  }, [buscaAdiada, cargoFiltro, vinculoFiltro, esqFiltro]);
   // Diretor e superintendente têm acesso de visão à hierarquia, mas não
   // podem criar, editar ou excluir funcionários — só admin_geral e gerente
   // (dentro da própria equipe) podem.
@@ -4082,16 +4121,18 @@ function ListaFuncionarios({
     const ok1 = nomeBusca.includes(buscaNorm) || matriculaBusca.includes(buscaNorm);
     const ok2 = cargoFiltro === "Todos" || f.cargo === cargoFiltro;
     const ok3 = vinculoFiltro === "Todos" || (vinculoFiltro === "Comercial") === !!f.origemComercial;
-    return ok1 && ok2 && ok3;
+    const esq = contagens[f.id]?.esquecimentos ?? 0;
+    const ok4 = esqFiltro === "Todos" || (esqFiltro === "4+" ? esq >= 4 : esq === Number(esqFiltro));
+    return ok1 && ok2 && ok3 && ok4;
   }).sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR", {
     sensitivity: "base"
-  })), [buscaAdiada, cargoFiltro, vinculoFiltro, funcionarios]);
+  })), [buscaAdiada, cargoFiltro, vinculoFiltro, esqFiltro, contagens, funcionarios]);
   // Paginação incremental: com ~620 funcionários, renderizar a tabela inteira
   // de uma vez trava a tela no celular a cada re-render. Mostra 50 e vai
   // ampliando sob demanda; qualquer mudança de filtro volta ao início.
   const POR_PAGINA = 50;
   const [visiveis, setVisiveis] = useState(POR_PAGINA);
-  useEffect(() => { setVisiveis(POR_PAGINA); }, [buscaAdiada, cargoFiltro, vinculoFiltro]);
+  useEffect(() => { setVisiveis(POR_PAGINA); }, [buscaAdiada, cargoFiltro, vinculoFiltro, esqFiltro]);
   const listaVisivel = useMemo(() => lista.slice(0, visiveis), [lista, visiveis]);
   // Agrupa `lista` (já filtrada por busca/setor/situação) em árvore
   // Diretoria → Gerência para a visão expansível de superintendente/diretor.
@@ -4345,7 +4386,21 @@ function ListaFuncionarios({
     }
   }, ["Todos", "Administrativo", "Comercial"].map(s => /*#__PURE__*/React.createElement("option", {
     key: s
-  }, s))))
+  }, s)))), /*#__PURE__*/React.createElement("div", {
+    style: { display: "flex", flexDirection: "column", gap: 4 }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: { fontSize: 11, fontWeight: 700, color: "var(--texto-fraco)", letterSpacing: 0 }
+  }, "Esquecimentos"), /*#__PURE__*/React.createElement("select", {
+    value: esqFiltro,
+    onChange: e => setEsqFiltro(e.target.value),
+    style: {
+      padding: "9px 14px", borderRadius: 14, border: "1px solid var(--cinza-200)",
+      fontSize: 13, background: "var(--cor-branco)", cursor: "pointer"
+    }
+  }, [["Todos", "Todos"], ["2", "2 esquecimentos"], ["3", "3 esquecimentos"], ["4+", "4 ou mais"]].map(([v, r]) => /*#__PURE__*/React.createElement("option", {
+    key: v,
+    value: v
+  }, r))))
   ),
   usaVisaoArvore ? /*#__PURE__*/React.createElement("div", {
     key: "arvore-funcionarios",
@@ -4579,9 +4634,9 @@ function ListaFuncionarios({
   },
     /*#__PURE__*/React.createElement("div", { style: { fontSize: 28, marginBottom: 8 } }, "🔍"),
     /*#__PURE__*/React.createElement("div", null, "Nenhum funcionário encontrado."),
-    (busca || cargoFiltro !== "Todos" || vinculoFiltro !== "Todos") && /*#__PURE__*/React.createElement("button", {
+    (busca || cargoFiltro !== "Todos" || vinculoFiltro !== "Todos" || esqFiltro !== "Todos") && /*#__PURE__*/React.createElement("button", {
       type: "button",
-      onClick: () => { setBusca(""); setCargoFiltro("Todos"); setVinculoFiltro("Todos"); },
+      onClick: () => { setBusca(""); setCargoFiltro("Todos"); setVinculoFiltro("Todos"); setEsqFiltro("Todos"); },
       style: {
         marginTop: 14, padding: "8px 18px", borderRadius: 12, border: "1px solid var(--cinza-200)",
         background: "var(--cor-branco)", fontSize: 13, fontWeight: 600,
@@ -8201,7 +8256,7 @@ function PainelOcorrencias({
 }) {
   const [modal, setModal] = useState(null);
   const [obs, setObs] = useState("");
-  const [filtroStatus, setFiltroStatus] = useState("Pendente");
+  const [filtroStatus, setFiltroStatus] = useState(() => consumirIntencao("relatorios").status || "Pendente");
   const [filtroTipo, setFiltroTipo] = useState("Todos");
   const [buscaTexto, setBuscaTexto] = useState("");
   const buscaTextoAdiada = useValorAdiado(buscaTexto);
