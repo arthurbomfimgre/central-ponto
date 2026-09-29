@@ -1572,7 +1572,16 @@ function mesesDisponiveis() {
   // Mais recente primeiro (melhor pra dropdown de relatórios)
   return lista.reverse();
 }
+// Rótulo exibido para cada status. O valor gravado no banco continua "Pendente";
+// só o texto na tela muda, para dar senso de urgência.
+function rotuloStatus(s) {
+  return s === "Pendente" ? "Correção necessária" : s;
+}
 function statusColor(s) {
+  if (s === "Pendente") return {
+    bg: "var(--vermelho-100)",
+    color: "var(--vermelho-600)"
+  };
   if (s === "Verificado") return {
     bg: "var(--verde-100)",
     color: "var(--verde-700)"
@@ -1723,7 +1732,7 @@ function Badge({
       borderRadius: 16,
       whiteSpace: "nowrap"
     }
-  }, status);
+  }, rotuloStatus(status));
 }
 // ─── LOGO DA MARCA — troca sozinha entre variação clara/escura via CSS ───────
 function Logo({
@@ -7954,21 +7963,37 @@ function PerfilFuncionario({
 // ─── PENDÊNCIAS RECENTES (SEMANA) — bloco exibido no topo da aba Situação ───
 // Movido do Dashboard. Só aparece se houver alguma pendência (Pendente ou
 // Corrigido) movimentada nos últimos 7 dias; sem nenhuma, não renderiza nada.
+// Pendentes/Corrigidos movimentados nos últimos 7 dias. O mais antigo primeiro
+// (é o que está há mais tempo esperando), Correção necessária antes de Corrigido.
+function selecionarPendenciasDaSemana(lista) {
+  const limite = new Date(Date.now() - 6 * 86400000).toISOString().slice(0, 10);
+  const dataRef = o => String(o.atualizadoEm || o.data || "").slice(0, 10);
+  return lista.filter(o => (o.status === "Pendente" || o.status === "Corrigido") && dataRef(o) >= limite).sort((a, b) => {
+    if (a.status !== b.status) return a.status === "Pendente" ? -1 : 1;
+    return String(a.data || "").localeCompare(String(b.data || ""));
+  });
+}
+function diasDesde(dataISO) {
+  const d = String(dataISO || "").slice(0, 10);
+  if (!d) return 0;
+  const ini = new Date(d + "T00:00:00Z").getTime();
+  const fim = new Date(hoje() + "T00:00:00Z").getTime();
+  return Math.max(0, Math.round((fim - ini) / 86400000));
+}
+function textoIdade(dias) {
+  return dias === 0 ? "Hoje" : dias === 1 ? "Há 1 dia" : `Há ${dias} dias`;
+}
 function BlocoPendenciasRecentes({
-  ocorrencias,
+  itens,
   funcionarios,
-  onSelecionar
+  onAcao
 }) {
-  const recentes = useMemo(() => {
-    // mesmo critério de hoje()/agoraISO(): datas em ISO/UTC
-    const limite = new Date(Date.now() - 6 * 86400000).toISOString().slice(0, 10);
-    return [...ocorrencias].filter(o => (o.status === "Pendente" || o.status === "Corrigido") && String(o.atualizadoEm || o.data || "").slice(0, 10) >= limite).sort((a, b) => (b.atualizadoEm || b.data || "").localeCompare(a.atualizadoEm || a.data || "")).slice(0, 6);
-  }, [ocorrencias]);
-  if (recentes.length === 0) return null;
+  if (itens.length === 0) return null;
+  const qtdCorrecao = itens.filter(o => o.status === "Pendente").length;
   return /*#__PURE__*/React.createElement("div", {
     style: {
       background: "var(--cor-branco)",
-      border: "1px solid var(--cinza-100)",
+      border: "1px solid var(--vermelho-600)",
       borderRadius: 16,
       padding: 22,
       boxShadow: "0 1px 3px var(--sombra-leve)",
@@ -7979,29 +8004,48 @@ function BlocoPendenciasRecentes({
       display: "flex",
       justifyContent: "space-between",
       alignItems: "center",
-      marginBottom: 16
+      marginBottom: 16,
+      gap: 8,
+      flexWrap: "wrap"
     }
   }, /*#__PURE__*/React.createElement("h3", {
     style: {
       fontSize: 15,
       fontWeight: 700,
       color: "var(--texto)",
-      margin: 0
+      margin: 0,
+      display: "flex",
+      alignItems: "center",
+      gap: 8
     }
-  }, "Pendências recentes"), /*#__PURE__*/React.createElement("span", {
+  }, "⚠️ Correções necessárias da semana", qtdCorrecao > 0 && /*#__PURE__*/React.createElement("span", {
+    style: {
+      background: "var(--vermelho-600)",
+      color: "#fff",
+      fontSize: 11,
+      fontWeight: 700,
+      padding: "1px 8px",
+      borderRadius: 16
+    }
+  }, qtdCorrecao)), /*#__PURE__*/React.createElement("span", {
     style: {
       fontSize: 12,
       color: "var(--texto-fraco)"
     }
-  }, "Últimos 7 dias")), /*#__PURE__*/React.createElement("div", {
+  }, "Últimos 7 dias · mais antigas primeiro")), /*#__PURE__*/React.createElement("div", {
     style: {
       display: "flex",
       flexDirection: "column",
-      gap: 8
+      gap: 8,
+      maxHeight: 420,
+      overflowY: "auto"
     }
-  }, recentes.map(o => {
+  }, itens.map(o => {
     const func = resolverFuncionarioDaOcorrencia(funcionarios, o);
     if (!func) return null;
+    const urgente = o.status === "Pendente";
+    const dias = diasDesde(o.data);
+    const podeVerif = o.status === "Corrigido" || (o.status === "Pendente" && o.criadoPor === "funcionario");
     return /*#__PURE__*/React.createElement("div", {
       key: o.id,
       style: {
@@ -8012,10 +8056,8 @@ function BlocoPendenciasRecentes({
         borderRadius: 12,
         background: o.novo ? "var(--amarelo-100)" : "var(--cinza-50)",
         border: `1px solid ${o.novo ? "var(--amber-200)" : "var(--cinza-100)"}`,
-        cursor: "pointer"
-      },
-      onClick: () => onSelecionar(func),
-      title: "Filtrar a tabela por este colaborador"
+        borderLeft: `4px solid ${urgente ? "var(--vermelho-600)" : "var(--amber-400)"}`
+      }
     }, /*#__PURE__*/React.createElement("span", {
       style: {
         fontSize: 18
@@ -8033,7 +8075,7 @@ function BlocoPendenciasRecentes({
       style: {
         fontSize: 13,
         fontWeight: 600,
-        color: "var(--cinza-900)",
+        color: "var(--texto)",
         whiteSpace: "nowrap",
         overflow: "hidden",
         textOverflow: "ellipsis"
@@ -8041,9 +8083,13 @@ function BlocoPendenciasRecentes({
     }, func.nome.split(" ").slice(0, 2).join(" ")), /*#__PURE__*/React.createElement("div", {
       style: {
         fontSize: 12,
-        color: "var(--cinza-500)"
+        color: "var(--texto-fraco)"
       }
-    }, o.tipo, " · ", fmtDate(o.data)), o.criadoPor === "funcionario" && /*#__PURE__*/React.createElement("span", {
+    }, o.tipo, " · ", fmtDate(o.data), " · ", /*#__PURE__*/React.createElement("strong", {
+      style: {
+        color: urgente && dias >= 3 ? "var(--vermelho-600)" : "inherit"
+      }
+    }, textoIdade(dias))), o.criadoPor === "funcionario" && /*#__PURE__*/React.createElement("span", {
       style: {
         fontSize: 11,
         background: "var(--roxo-100)",
@@ -8072,7 +8118,38 @@ function BlocoPendenciasRecentes({
         borderRadius: 16,
         fontWeight: 700
       }
-    }, "NOVO")));
+    }, "NOVO")), podeVerif && /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: "flex",
+        gap: 6
+      }
+    }, /*#__PURE__*/React.createElement("button", {
+      onClick: () => onAcao(o, "verificar"),
+      title: "Verificar",
+      style: {
+        background: "var(--verde-100)",
+        color: "var(--verde-600)",
+        border: "none",
+        borderRadius: 8,
+        padding: "6px 10px",
+        fontSize: 12,
+        fontWeight: 700,
+        cursor: "pointer"
+      }
+    }, "✓"), /*#__PURE__*/React.createElement("button", {
+      onClick: () => onAcao(o, "rejeitar"),
+      title: "Rejeitar",
+      style: {
+        background: "var(--vermelho-100)",
+        color: "var(--vermelho-600)",
+        border: "none",
+        borderRadius: 8,
+        padding: "6px 10px",
+        fontSize: 12,
+        fontWeight: 700,
+        cursor: "pointer"
+      }
+    }, "✕")));
   })));
 }
 
@@ -8117,7 +8194,7 @@ function PainelOcorrencias({
   // ligeiramente diferentes; foram unificados numa tabela só, com os
   // botões de ação (verificar/rejeitar/excluir) direto na linha.
   const buscaNorm = normalizarBusca(buscaTextoAdiada.trim());
-  const ocorrenciasFiltradas = ocorrencias.filter(o => {
+  const ocorrenciasFiltradasBase = ocorrencias.filter(o => {
     const func = resolverFuncionarioDaOcorrencia(funcionarios, o);
     if (!func) return false;
     if (filtroStatus !== "Todos" && o.status !== filtroStatus) return false;
@@ -8153,6 +8230,12 @@ function PainelOcorrencias({
     ...porStatus
   };
   const novosCorrigidos = ocorrenciasParaContagem.filter(o => o.status === "Corrigido" && o.novo).length;
+
+  // Bloco da semana (só no filtro Pendente) respeita tipo + busca. O que
+  // aparece nele sai da tabela, para não ficar duplicado.
+  const pendenciasSemana = filtroStatus === "Pendente" ? selecionarPendenciasDaSemana(ocorrenciasParaContagem) : [];
+  const idsSemana = new Set(pendenciasSemana.map(o => o.id));
+  const ocorrenciasFiltradas = idsSemana.size ? ocorrenciasFiltradasBase.filter(o => !idsSemana.has(o.id)) : ocorrenciasFiltradasBase;
 
   useEffect(() => {
     const novos = ocorrencias.filter(o => o.novo).map(o => o.id);
@@ -8290,7 +8373,7 @@ function PainelOcorrencias({
       color: filtroStatus === s ? "var(--cor-branco)" : "var(--cinza-600)",
       display: "flex", alignItems: "center", gap: 6
     }
-  }, s, /*#__PURE__*/React.createElement("span", {
+  }, rotuloStatus(s), /*#__PURE__*/React.createElement("span", {
     style: {
       background: filtroStatus === s ? "var(--branco-transparente)" : "var(--cinza-200)",
       color: filtroStatus === s ? "var(--cor-branco)" : "var(--cinza-500)",
@@ -8392,7 +8475,7 @@ function PainelOcorrencias({
     )));
   }))), ocorrenciasFiltradas.length === 0 && /*#__PURE__*/React.createElement("div", {
     style: { padding: 40, textAlign: "center", color: "var(--texto-fraco)", fontSize: 13 }
-  }, "Nenhuma pendência encontrada com esses filtros.",
+  }, pendenciasSemana.length > 0 ? "Não há outras correções além das da semana, acima." : "Nenhuma pendência encontrada com esses filtros.",
     (filtroTipo !== "Todos" || buscaTexto.trim() || filtroStatus !== "Pendente") && /*#__PURE__*/React.createElement("button", {
       type: "button",
       onClick: () => { setFiltroStatus("Pendente"); setFiltroTipo("Todos"); setBuscaTexto(""); },
@@ -8446,9 +8529,9 @@ function PainelOcorrencias({
     cabecalho,
     filtros,
     filtroStatus === "Pendente" && /*#__PURE__*/React.createElement(BlocoPendenciasRecentes, {
-      ocorrencias: ocorrencias,
+      itens: pendenciasSemana,
       funcionarios: funcionarios,
-      onSelecionar: func => setBuscaTexto(String(func.matricula || func.nome || ""))
+      onAcao: (o, acao) => setModal({ ...o, acao })
     }),
     tabela,
     modalAcao,
