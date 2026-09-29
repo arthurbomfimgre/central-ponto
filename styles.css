@@ -443,6 +443,7 @@ button[style*="linear-gradient(135deg,var(--indigo-500)"]:not(:disabled):hover {
    Curva de saída suave (ease-saida) em tudo, durações entre 150 e 400 ms. */
 @keyframes cp-entra  { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 @keyframes cp-modal  { from { opacity: 0; transform: translateY(10px) scale(.97); } to { opacity: 1; transform: none; } }
+@keyframes cp-barra  { from { transform: scaleX(0); } to { transform: none; } }
 @keyframes cp-linha  { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 
 /* Entrada da tela ao carregar o app (uma vez) */
@@ -477,3 +478,14 @@ tbody tr:nth-child(n+10) { animation-delay: .18s; }
 
 /* Foco: o anel "cresce" em vez de aparecer de repente */
 input:focus-visible, select:focus-visible, textarea:focus-visible { transition: box-shadow .18s ease; }
+
+/* Cards de KPI clicáveis (Dashboard): barra de degradê que corre no topo,
+   borda tingida e ícone que cresce no hover. Foco visível para teclado. */
+.cp-kpi-link { position: relative; overflow: hidden; transition: transform .2s var(--ease-saida), box-shadow .2s ease, border-color .2s ease; }
+.cp-kpi-link::before { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 3px; background: var(--marca-gradiente); transform: scaleX(0); transform-origin: left; transition: transform .35s var(--ease-saida); }
+.cp-kpi-link:hover, .cp-kpi-link:focus-visible { transform: translateY(-3px); border-color: var(--marca-300) !important; box-shadow: var(--elev-2) !important; }
+.cp-kpi-link:hover::before, .cp-kpi-link:focus-visible::before { transform: scaleX(1); }
+.cp-kpi-link:active { transform: translateY(-1px) scale(.99); }
+.cp-kpi-link > div:first-child > span:last-child { transition: transform .25s var(--ease-saida); }
+.cp-kpi-link:hover > div:first-child > span:last-child { transform: scale(1.18) rotate(-6deg); }
+.cp-kpi-link:focus-visible { outline: 2px solid var(--marca-500); outline-offset: 2px; }
