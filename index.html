@@ -4403,7 +4403,8 @@ function ListaFuncionarios({
   }, r))))
   ),
   usaVisaoArvore ? /*#__PURE__*/React.createElement("div", {
-    key: "arvore-funcionarios",
+    key: "arvore-" + cargoFiltro + "|" + vinculoFiltro + "|" + esqFiltro,
+    className: "cp-aba",
     style: { display: "flex", flexDirection: "column", gap: 10 }
   },
     arvoreFuncionarios.length === 0
@@ -4452,7 +4453,7 @@ function ListaFuncionarios({
       
       whiteSpace: "nowrap"
     }
-  }, h)))), /*#__PURE__*/React.createElement("tbody", null, listaVisivel.map((f, i) => {
+  }, h)))), /*#__PURE__*/React.createElement("tbody", { key: cargoFiltro + "|" + vinculoFiltro + "|" + esqFiltro }, listaVisivel.map((f, i) => {
     const al = getAlert(contagens[f.id].esquecimentos);
     return /*#__PURE__*/React.createElement("tr", {
       key: f.id,
@@ -7532,6 +7533,8 @@ function PerfilFuncionario({
     }
   }, ["Todos", ...STATUS_LIST].map(s => /*#__PURE__*/React.createElement("button", {
     key: s,
+    className: "cp-pill" + (filtroStatus === s ? " cp-pill-ativa" : ""),
+    "aria-pressed": filtroStatus === s,
     onClick: () => setFiltroStatus(s),
     style: {
       padding: "5px 12px",
@@ -7564,7 +7567,7 @@ function PerfilFuncionario({
       letterSpacing: 0,
       
     }
-  }, h)))), /*#__PURE__*/React.createElement("tbody", null, ocsFilt.map(o => {
+  }, h)))), /*#__PURE__*/React.createElement("tbody", { key: "f-" + filtroStatus }, ocsFilt.map(o => {
     const easymob = easymobMap[`${func.id}_${o.id}`];
     return /*#__PURE__*/React.createElement("tr", {
       key: o.id,
@@ -8453,6 +8456,8 @@ function PainelOcorrencias({
     style: { display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap" }
   }, ["Pendente", "Corrigido", "Verificado", "Rejeitado"].map(s => /*#__PURE__*/React.createElement("button", {
     key: s,
+    className: "cp-pill" + (filtroStatus === s ? " cp-pill-ativa" : ""),
+    "aria-pressed": filtroStatus === s,
     onClick: () => setFiltroStatus(s),
     style: {
       padding: "7px 16px", borderRadius: 16, fontSize: 12, fontWeight: 700, cursor: "pointer", border: "none",
@@ -8500,7 +8505,7 @@ function PainelOcorrencias({
   }, ["Data", "Funcionário", "Matrícula", "Setor", "Tipo", "Status", "Observação", "Ações"].map(h => /*#__PURE__*/React.createElement("th", {
     key: h,
     style: { padding: "11px 16px", fontSize: 11, fontWeight: 700, color: "var(--texto-fraco)", textAlign: "left", letterSpacing: 0, whiteSpace: "nowrap" }
-  }, h)))), /*#__PURE__*/React.createElement("tbody", null, ocorrenciasFiltradas.map((o, i) => {
+  }, h)))), /*#__PURE__*/React.createElement("tbody", { key: filtroStatus + "|" + filtroTipo }, ocorrenciasFiltradas.map((o, i) => {
     const func = resolverFuncionarioDaOcorrencia(funcionarios, o);
     const podeVerif = o.status === "Corrigido" || (o.status === "Pendente" && o.criadoPor === "funcionario");
     const ehErroReg = o.tipo === TIPO_EXIGE_EASYMOB;
@@ -13485,6 +13490,8 @@ function ArvoreHierarquia({ pode = () => true, ocorrencias = [], funcionariosUni
     /*#__PURE__*/React.createElement("div", { style: { display: "flex", gap: 8, flexWrap: "wrap" } },
       ["estrutura", "permissoes"].map(a => /*#__PURE__*/React.createElement("button", {
         key: a,
+        className: "cp-pill" + (aba === a ? " cp-pill-ativa" : ""),
+        "aria-pressed": aba === a,
         onClick: () => setAba(a),
         style: {
           padding: "8px 16px", borderRadius: 12, border: "none", cursor: "pointer",
@@ -13494,7 +13501,7 @@ function ArvoreHierarquia({ pode = () => true, ocorrencias = [], funcionariosUni
         }
       }, a === "estrutura" ? "🌳 Estrutura" : "🛡️ Permissões"))
     ),
-    aba === "permissoes" && /*#__PURE__*/React.createElement(PainelPermissoes, null),
+    aba === "permissoes" && /*#__PURE__*/React.createElement("div", { key: "permissoes", className: "cp-aba" }, /*#__PURE__*/React.createElement(PainelPermissoes, null)),
     modalLog && /*#__PURE__*/React.createElement(ModalLogAcessos, {
       onClose: () => setModalLog(false)
     }),
@@ -13519,7 +13526,7 @@ function ArvoreHierarquia({ pode = () => true, ocorrencias = [], funcionariosUni
       onConcluido: () => {}
     }),
 
-    aba === "estrutura" && /*#__PURE__*/React.createElement(React.Fragment, null,
+    aba === "estrutura" && /*#__PURE__*/React.createElement("div", { key: "estrutura", className: "cp-aba", style: { display: "flex", flexDirection: "column", gap: 18 } },
     // ── Card de resumo de acesso ──────────────────────────────────────────
     // Ponto central da tela: em vez da árvore organizacional ser o primeiro
     // assunto ao abrir (como na antiga "Hierarquia Comercial"), o status de
@@ -14690,7 +14697,7 @@ ocorrenciasTodasDatas: ocorrenciasRelatorioTodasDatas,
   }, /*#__PURE__*/React.createElement(LimiteDeErro, {
     chave: view,
     onVoltarInicio: () => setView("mural")
-  }, renderView()), !temAcessoGestao && /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("div", { key: view, className: "cp-tela" }, renderView())), !temAcessoGestao && /*#__PURE__*/React.createElement("div", {
     style: {
       marginTop: 32,
       paddingTop: 16,
