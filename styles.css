@@ -378,7 +378,7 @@ p, li { text-wrap: pretty; }
    transform, que não conflitam com as cores definidas inline. */
 input, select, textarea { transition: border-color .15s ease, box-shadow .15s ease; }
 input:disabled, select:disabled, textarea:disabled { opacity: .6; cursor: not-allowed; }
-button { transition: filter .15s ease, transform .12s var(--ease-saida), box-shadow .15s ease; }
+button { transition: filter .15s ease, transform .12s var(--ease-saida), box-shadow .15s ease, background-color .25s var(--ease-saida), color .25s var(--ease-saida), border-color .25s var(--ease-saida), opacity .2s ease; }
 button:not(:disabled):hover  { filter: brightness(1.06) saturate(1.05); }
 button:not(:disabled):active { transform: translateY(1px) scale(.985); filter: brightness(.97); }
 button:disabled { cursor: not-allowed; opacity: .55; }
@@ -489,3 +489,26 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { transition: 
 .cp-kpi-link > div:first-child > span:last-child { transition: transform .25s var(--ease-saida); }
 .cp-kpi-link:hover > div:first-child > span:last-child { transform: scale(1.18) rotate(-6deg); }
 .cp-kpi-link:focus-visible { outline: 2px solid var(--marca-500); outline-offset: 2px; }
+
+/* ─── Aba Situação: troca de filtros ────────────────────────────────────────
+   Pílulas de status: cor e fundo em transição, a ativa dá um pequeno "pop"
+   e o contador acompanha. A tabela reentra em cascata (tbody remonta a cada
+   troca de status/tipo, ver key em PainelOcorrencias). */
+@keyframes cp-pop { 0% { transform: scale(.94); } 60% { transform: scale(1.04); } 100% { transform: none; } }
+.cp-pill { transition: background-color .28s var(--ease-saida), color .28s var(--ease-saida), transform .15s var(--ease-saida), filter .15s ease; }
+.cp-pill > span { transition: background-color .28s var(--ease-saida), color .28s var(--ease-saida); }
+.cp-pill:not(.cp-pill-ativa):hover { background-color: var(--cinza-200) !important; }
+.cp-pill:not(:disabled):active { transform: scale(.96); }
+.cp-pill-ativa { animation: cp-pop .32s var(--ease-saida); box-shadow: 0 2px 8px -2px var(--sombra-indigo-media, rgba(13,79,158,.35)); }
+.cp-pill:focus-visible { outline: 2px solid var(--marca-500); outline-offset: 2px; }
+/* Selects e busca dos filtros: borda e anel respondem suavemente */
+select, input:not([type="checkbox"]):not([type="radio"]) { transition: border-color .2s ease, box-shadow .2s ease, background-color .2s ease; }
+
+/* ─── Transições entre telas e abas ─────────────────────────────────────────
+   .cp-tela: troca de tela do menu. .cp-aba: troca de aba/filtro dentro da tela.
+   Só opacidade e uma subida curta; "backwards" evita deixar transform ativo
+   depois do fim (não interfere em modais position:fixed). */
+@keyframes cp-tela { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+@keyframes cp-aba  { from { opacity: 0; transform: translateY(6px); }  to { opacity: 1; transform: none; } }
+.cp-tela { animation: cp-tela .32s var(--ease-saida) backwards; }
+.cp-aba  { animation: cp-aba .26s var(--ease-saida) backwards; }
