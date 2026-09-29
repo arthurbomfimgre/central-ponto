@@ -1,4 +1,5 @@
 :root {
+  color-scheme: light;
   /* ─── MARCA — Porto Vale Consórcio (azul-marinho → ciano) ─────────────────── */
   --marca-50:  #eef4ff;
   --marca-100: #dce9ff;
@@ -77,12 +78,12 @@
   --roxo-50: #f1f0ff;
   --roxo-500: var(--marca-ciano);
   --roxo-600: var(--marca-600);
-  --sombra-forte: rgba(0,0,0,.25);
+  --sombra-forte: rgba(16,24,40,.28);
   --sombra-indigo-forte: var(--sombra-marca-forte);
   --sombra-indigo-media: var(--sombra-marca-media);
-  --sombra-leve: rgba(15,23,42,.08);
-  --sombra-media: rgba(15,23,42,.22);
-  --sombra-suave: rgba(15,23,42,.12);
+  --sombra-leve: rgba(16,24,40,.07);
+  --sombra-media: rgba(16,24,40,.20);
+  --sombra-suave: rgba(16,24,40,.12);
   --sombra-verde: rgba(13,110,118,.25);
   --teal-50: #f0fdfa;
   --teal-500: #14b8a6;
@@ -103,7 +104,7 @@
   /* Fundo da página — um pouco mais acinzentado que --cinza-50, para criar
      separação visual real entre o fundo e os cards brancos por cima (sem
      isso, os dois ficavam quase indistinguíveis e a tela parecia "lavada"). */
-  --fundo-pagina: #eef1f6;
+  --fundo-pagina: #f3f5f9;
 
   /* ─── TOKENS SEMÂNTICOS ─────────────────────────────────────────────────
      Aliases sobre as variáveis existentes, para dar nome ao PAPEL de cada
@@ -114,9 +115,15 @@
      incremental e separada. */
   --superficie:      var(--cor-branco); /* fundo de cards, modais, dropdowns — "elevado" sobre a página */
   --superficie-2:     var(--cinza-50);   /* um nível abaixo da superfície: agrupadores, nós de árvore, hover sutil */
-  --borda:            var(--cinza-100);  /* borda padrão de cartões e inputs */
+  --borda:            #e3e8f0;  /* borda padrão de cartões e inputs — antes cinza-100, quase igual ao fundo */
   --texto:            var(--cinza-900);  /* texto principal */
-  --texto-fraco:       #64748b;  /* texto secundário/legendas — 4.7:1 sobre branco (WCAG AA) */
+  --texto-fraco:       #5b6b82;  /* texto secundário/legendas — 5.3:1 sobre branco (WCAG AA) */
+
+  /* Escala de elevação: 1 = cartão, 2 = dropdown/hover, 3 = modal */
+  --elev-1: 0 1px 2px rgba(16,24,40,.05), 0 1px 3px rgba(16,24,40,.06);
+  --elev-2: 0 4px 8px -2px rgba(16,24,40,.08), 0 2px 4px -2px rgba(16,24,40,.05);
+  --elev-3: 0 20px 40px -12px rgba(16,24,40,.22), 0 6px 12px -6px rgba(16,24,40,.10);
+  --ease-saida: cubic-bezier(.2,.7,.2,1);
 
   /* Branco literal — para texto/ícones sobre fundo de marca fixo (banner
      hero, botões com --marca-gradiente) que NÃO deve responder ao tema
@@ -144,6 +151,11 @@
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
       background: var(--fundo-pagina);
       -webkit-font-smoothing: antialiased;
+      font-feature-settings: "tnum" 1, "cv05" 1; /* dígitos de largura fixa: colunas de horas alinhadas */
+      font-variant-numeric: tabular-nums;
+      letter-spacing: -0.006em;
+      line-height: 1.45;
+      text-rendering: optimizeLegibility;
     }
     /* Campos de formulário herdam cor de texto E fundo do tema em vez dos
        padrões do navegador. Sem o background explícito, no tema escuro a cor
@@ -155,8 +167,8 @@
       font-family: inherit;
     }
     input::placeholder, textarea::placeholder {
-      color: var(--cinza-400);
-      opacity: 1;
+      color: var(--texto-fraco);
+      opacity: .7;
     }
     select option {
       color: var(--cinza-900);
@@ -168,7 +180,8 @@
       display: flex; flex-direction: column; align-items: center; justify-content: center;
       gap: 16px; z-index: 9999; transition: opacity .4s;
     }
-    #loading p { font-size: 14px; color: #94a3b8; font-weight: 500; }
+    #loading p { font-size: 14px; color: var(--texto-fraco); font-weight: 500; display: inline-flex; align-items: center; gap: 10px; }
+    #loading p::before { content: ""; width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--cinza-200); border-top-color: var(--marca-500); animation: cp-giro .8s linear infinite; }
     #loading.hide { opacity: 0; pointer-events: none; }
     #error-box {
       display: none; position: fixed; inset: 0; background: #fff;
@@ -179,10 +192,10 @@
     #error-box h2 { color: #dc2626; font-size: 18px; }
     #error-box p { color: #64748b; font-size: 13px; max-width: 480px; line-height: 1.6; }
     #error-box pre { background: #f1f5f9; border-radius: 8px; padding: 12px 16px; font-size: 11px; color: #374151; text-align: left; max-width: 560px; overflow: auto; }
-    ::-webkit-scrollbar { width: 6px; height: 6px; }
-    ::-webkit-scrollbar-track { background: #f1f5f9; }
-    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
-    ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+    ::-webkit-scrollbar { width: 10px; height: 10px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--cinza-300); border-radius: 999px; border: 2px solid transparent; background-clip: padding-box; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--cinza-400); background-clip: padding-box; }
     @keyframes slideIn { from { transform: translateX(110%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
     button, a { -webkit-tap-highlight-color: transparent; }
     html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
@@ -192,11 +205,14 @@
    status (verde, vermelho, âmbar) para manter contraste e legibilidade sobre
    fundo escuro. O significado de cada cor continua o mesmo. */
 [data-theme="dark"] {
-  --cor-branco: #1e293b;
-  --cinza-50: #0f172a;
-  --cinza-100: #1e293b;
-  --cinza-200: #334155;
-  --cinza-300: #475569;
+  color-scheme: dark; /* date pickers, selects e scrollbars nativos acompanham o tema */
+  /* Três degraus de superfície bem distintos: página < card < realce.
+     Antes --borda == cor do card e nenhuma borda aparecia no escuro. */
+  --cor-branco: #141d31;
+  --cinza-50: #0b1120;
+  --cinza-100: #1d2942;
+  --cinza-200: #2b3a58;
+  --cinza-300: #41537a;
   --cinza-400: #94a3b8;
   --cinza-500: #cbd5e1;
   --cinza-600: #e2e8f0;
@@ -278,9 +294,13 @@
      e botões de marca fixos continuam precisando de contraste garantido). */
   --superficie:  var(--cor-branco);
   --superficie-2: var(--cinza-50);
-  --borda:        var(--cinza-100);
+  --borda:        #26344f;
   --texto:        var(--cinza-900);
-  --texto-fraco:   var(--cinza-400);
+  --texto-fraco:   #9fb0c8;
+
+  --elev-1: 0 1px 2px rgba(0,0,0,.4);
+  --elev-2: 0 6px 14px -4px rgba(0,0,0,.5);
+  --elev-3: 0 24px 48px -12px rgba(0,0,0,.65);
 
   /* NoSubequipe — no tema claro original usava amarelo-50/100/700 direto;
      no escuro, --amarelo-50/100 já são fundos escurecidos com texto claro
@@ -304,10 +324,6 @@
   background: var(--cinza-50);
 }
 
-[data-theme="dark"] #loading p {
-  color: var(--cinza-400);
-}
-
 [data-theme="dark"] #error-box {
   background: var(--cor-branco);
 }
@@ -323,18 +339,6 @@
 [data-theme="dark"] #error-box pre {
   background: var(--cinza-100);
   color: var(--cinza-700);
-}
-
-[data-theme="dark"] ::-webkit-scrollbar-track {
-  background: var(--cinza-100);
-}
-
-[data-theme="dark"] ::-webkit-scrollbar-thumb {
-  background: var(--cinza-300);
-}
-
-[data-theme="dark"] ::-webkit-scrollbar-thumb:hover {
-  background: var(--cinza-400);
 }
 
 /* ─── LOGO — alterna automaticamente entre variação clara/escura ─────────── */
@@ -362,4 +366,38 @@ body, #root {
 input:focus-visible, select:focus-visible, textarea:focus-visible {
   outline-offset: 0;
   box-shadow: 0 0 0 3px var(--marca-transparente);
+}
+
+/* ─── TIPOGRAFIA E SELEÇÃO ─────────────────────────────────────────────── */
+h1, h2, h3 { letter-spacing: -0.02em; line-height: 1.2; text-wrap: balance; }
+p, li { text-wrap: pretty; }
+::selection { background: var(--marca-transparente); color: var(--texto); }
+
+/* ─── CAMPOS E BOTÕES ──────────────────────────────────────────────────────
+   Estados que faltavam: hover, pressionado e desabilitado. Usam filter e
+   transform, que não conflitam com as cores definidas inline. */
+input, select, textarea { transition: border-color .15s ease, box-shadow .15s ease; }
+input:disabled, select:disabled, textarea:disabled { opacity: .6; cursor: not-allowed; }
+button { transition: filter .15s ease, transform .12s var(--ease-saida), box-shadow .15s ease; }
+button:not(:disabled):hover  { filter: brightness(1.06) saturate(1.05); }
+button:not(:disabled):active { transform: translateY(1px) scale(.985); filter: brightness(.97); }
+button:disabled { cursor: not-allowed; opacity: .55; }
+
+/* ─── TABELAS ──────────────────────────────────────────────────────────── */
+tbody tr { transition: background-color .12s ease; }
+tbody tr:hover { background-color: var(--superficie-2); }
+
+/* ─── MODAIS ───────────────────────────────────────────────────────────────
+   Todo overlay usa var(--overlay-modal) inline: desfoque + fade curto ao abrir. */
+[style*="var(--overlay-modal)"] { backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px); animation: cp-fade .16s ease-out; }
+@keyframes cp-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes cp-giro { to { transform: rotate(360deg); } }
+
+/* ─── ACESSIBILIDADE E IMPRESSÃO ───────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
+}
+@media print {
+  body { background: #fff !important; }
+  * { box-shadow: none !important; }
 }
