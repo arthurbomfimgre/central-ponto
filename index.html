@@ -39,7 +39,7 @@
 
 <div id="error-box">
   <h2>&#9888;&#65039; Erro ao inicializar</h2>
-  <p>O app nao conseguiu carregar. Verifique sua conexao com a internet (os CDNs do React precisam ser acessiveis) e tente recarregar a pagina.</p>
+  <p>O app não conseguiu carregar. Verifique sua conexão com a internet (os CDNs do React precisam estar acessíveis) e tente recarregar a página.</p>
   <pre id="error-detail"></pre>
   <button onclick="location.reload()" style="margin-top:8px;padding:10px 24px;border-radius:10px;border:none;background:var(--indigo-500);color:var(--cor-branco);font-size:14px;font-weight:700;cursor:pointer;">Recarregar</button>
 </div>
@@ -51,7 +51,7 @@
 window.__cdnCheck = function() {
   if (typeof React === 'undefined' || typeof ReactDOM === 'undefined') {
     document.getElementById('error-detail').textContent =
-      'React ou ReactDOM nao carregaram. Verifique a conexao com a internet.';
+      'React ou ReactDOM não carregaram. Verifique a conexão com a internet.';
     document.getElementById('error-box').classList.add('show');
     document.getElementById('loading').classList.add('hide');
     return false;
@@ -356,7 +356,7 @@ async function lerSupa(key, fb, filtroFuncionarioId) {
 async function salvarSupa(key, val) {
   try {
 if (typeof navigator !== "undefined" && navigator.onLine === false) {
-return { ok: false, erro: "Sem conexão com a internet — alteração não foi salva." };
+return { ok: false, erro: "Sem conexão com a internet — a alteração não foi salva." };
 }
 _cache[key] = val;
 salvarLS(key, val); // cache local imediato
@@ -1267,7 +1267,7 @@ const NIVEIS_CONFIGURAVEIS_ADMINISTRATIVO = ["admin_membro", "admin_coordenador"
 const PERMISSOES_CATALOGO = [
   { chave: "ver_dashboard", label: "Ver Dashboard", grupo: "Abas" },
   { chave: "ver_funcionarios", label: "Ver Funcionários", grupo: "Abas" },
-  { chave: "ver_relatorios", label: "Ver Relatórios", grupo: "Abas" },
+  { chave: "ver_relatorios", label: "Ver Situação", grupo: "Abas" },
   { chave: "pendencias", label: "Criar / excluir pendência", grupo: "Ações" },
   { chave: "editar_perfil", label: "Editar perfil", grupo: "Ações" },
   { chave: "importar_planilha", label: "Importar planilha", grupo: "Ações" },
@@ -3009,7 +3009,7 @@ function ModalCriarPendencia({
   }, "(opcional)")), /*#__PURE__*/React.createElement("textarea", {
     value: obs,
     onChange: e => setObs(e.target.value),
-    placeholder: "Ex: Verificar registro de ponto do dia informado.",
+    placeholder: "Ex.: Verificar registro de ponto do dia informado.",
     style: {
       width: "100%",
       minHeight: 80,
@@ -3190,7 +3190,7 @@ function ModalAvisarGestor({
     type: "text",
     value: outroDescricao,
     onChange: e => setOutroDescricao(e.target.value),
-    placeholder: "Ex: Licença para casamento, doação de sangue...",
+    placeholder: "Ex.: Licença para casamento, doação de sangue...",
     style: {
       width: "100%",
       padding: "10px 14px",
@@ -3233,7 +3233,7 @@ function ModalAvisarGestor({
   }, "(opcional)")), /*#__PURE__*/React.createElement("textarea", {
     value: obs,
     onChange: e => setObs(e.target.value),
-    placeholder: "Ex: Consulta marcada às 14h, já avisei o supervisor.",
+    placeholder: "Ex.: Consulta marcada às 14h, já avisei o supervisor.",
     style: {
       width: "100%",
       minHeight: 80,
@@ -4576,7 +4576,7 @@ function ListaFuncionarios({
       flexDirection: "column",
       gap: 16
     }
-  }, [["Nome completo", "nome", "Ex: JOAO SILVA"]].map(([lbl, field, ph]) => /*#__PURE__*/React.createElement("div", {
+  }, [["Nome completo", "nome", "Ex.: JOAO SILVA"]].map(([lbl, field, ph]) => /*#__PURE__*/React.createElement("div", {
     key: field
   }, /*#__PURE__*/React.createElement("label", {
     style: {
@@ -4972,7 +4972,7 @@ function lerPlanilhaPontoDP(file) {
         const linhasCruas = XLSX.utils.sheet_to_json(wb.Sheets[aba], { header: 1, defval: "" });
         const idxCabecalho = linhasCruas.findIndex(l => String(l[0] ?? "").trim() === "Nome");
         if (idxCabecalho === -1) {
-          reject(new Error("Não encontrei a linha de cabeçalho (\"Nome\", \"Data\", \"Tipo de Pendência\"...) nesta planilha. Confirme se é o relatório de pendências de ponto do DP."));
+          reject(new Error("Não foi encontrada a linha de cabeçalho (\"Nome\", \"Data\", \"Tipo de Pendência\"...) nesta planilha. Confirme se é o relatório de pendências de ponto do DP."));
           return;
         }
         const cabecalho = linhasCruas[idxCabecalho].map(c => String(c ?? "").trim());
@@ -5230,7 +5230,7 @@ function ModalImportarPontoDP({ funcionarios, ocorrencias, setOcorrencias, addNo
 
       plano.duplicadas.length > 0 && /*#__PURE__*/React.createElement("div", {
         style: { background: "var(--cinza-50)", color: "var(--cinza-600)", borderRadius: 12, padding: "10px 14px", fontSize: 12, marginBottom: 8 }
-      }, "⏭️ ", plano.duplicadas.length, " linha(s) já haviam sido importadas antes e foram ignoradas (sem duplicar)."),
+      }, "⏭️ ", plano.duplicadas.length, " linha(s) já haviam sido importadas e foram ignoradas (sem duplicar)."),
 
       plano.semData.length > 0 && /*#__PURE__*/React.createElement("div", {
         style: { background: "var(--vermelho-100)", color: "var(--vermelho-800)", borderRadius: 12, padding: "10px 14px", fontSize: 12, marginBottom: 8 }
@@ -7464,7 +7464,7 @@ function PerfilFuncionario({
       background: filtroStatus === s ? "var(--indigo-500)" : "var(--cor-branco)",
       color: filtroStatus === s ? "var(--cor-branco)" : "var(--cinza-500)"
     }
-  }, s)))), ocsFilt.length === 0 ? /*#__PURE__*/React.createElement(EstadoVazio, { icone: "🗂️", titulo: "Nenhuma ocorrência nesse filtro", acaoLabel: filtroStatus !== "Todos" ? "Mostrar todas" : undefined, onAcao: () => setFiltroStatus("Todos"), padding: 40 }) : /*#__PURE__*/React.createElement("table", {
+  }, s)))), ocsFilt.length === 0 ? /*#__PURE__*/React.createElement(EstadoVazio, { icone: "🗂️", titulo: "Nenhuma ocorrência neste filtro", acaoLabel: filtroStatus !== "Todos" ? "Mostrar todas" : undefined, onAcao: () => setFiltroStatus("Todos"), padding: 40 }) : /*#__PURE__*/React.createElement("table", {
     style: {
       width: "100%",
       minWidth: 700,
@@ -7791,7 +7791,7 @@ function PerfilFuncionario({
       value: editandoOc.observacaoAdmin,
       onChange: e => setEditandoOc(p => ({ ...p, observacaoAdmin: e.target.value })),
       rows: 2,
-      placeholder: "Ex: Foi outro motivo, print enviado no WhatsApp, etc.",
+      placeholder: "Ex.: Foi outro motivo, print enviado no WhatsApp, etc.",
       style: { width: "100%", padding: "10px 14px", borderRadius: 12, border: "1px solid var(--cinza-200)", fontSize: 13, outline: "none", background: "var(--cor-branco)", boxSizing: "border-box", resize: "vertical", fontFamily: "inherit" }
     })),
 
@@ -7802,7 +7802,7 @@ function PerfilFuncionario({
       value: editandoOc.resposta,
       onChange: e => setEditandoOc(p => ({ ...p, resposta: e.target.value })),
       rows: 2,
-      placeholder: "Ex: Print enviado, corrigido no Vibe em 03/07, etc.",
+      placeholder: "Ex.: Print enviado, corrigido no Vibe em 03/07, etc.",
       style: { width: "100%", padding: "10px 14px", borderRadius: 12, border: "1px solid var(--cinza-200)", fontSize: 13, outline: "none", background: "var(--cor-branco)", boxSizing: "border-box", resize: "vertical", fontFamily: "inherit" }
     })),
 
@@ -7856,7 +7856,7 @@ function PerfilFuncionario({
   /*#__PURE__*/React.createElement("div", null,
     /*#__PURE__*/React.createElement("label", { style: { fontSize: 13, fontWeight: 600, color: "var(--cinza-700)", display: "block", marginBottom: 4 } }, "E-mail de login (opcional)"),
     /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, color: "var(--texto-fraco)", marginBottom: 6 } },
-      "Preencha su00f3 se o e-mail nu00e3o seguir o padru00e3o nome.sobrenome@portovale.com.br"
+      "Preencha só se o e-mail não seguir o padrão nome.sobrenome@portovale.com.br"
     ),
     /*#__PURE__*/React.createElement("input", {
       type: "email",
@@ -8439,11 +8439,7 @@ function PainelOcorrencias({
     )),
     /*#__PURE__*/React.createElement("td", { style: { padding: "10px 16px", fontSize: 12, color: "var(--cinza-500)", fontFamily: "monospace" } }, func?.matricula || "—"),
     /*#__PURE__*/React.createElement("td", { style: { padding: "10px 16px", fontSize: 12, color: "var(--cinza-500)" } }, func?.setor || "—"),
-    /*#__PURE__*/React.createElement("td", { style: { padding: "10px 16px", fontSize: 12, fontWeight: 600, color: "var(--cinza-900)" } }, tipoIcon(o.tipo), " ", o.tipo),
-    /*#__PURE__*/React.createElement("td", { style: { padding: "10px 16px" } }, /*#__PURE__*/React.createElement(Badge, { status: o.status })),
-    /*#__PURE__*/React.createElement("td", { style: { padding: "10px 16px", fontSize: 12, color: "var(--cinza-500)", maxWidth: 200 } },
-      o.observacaoAdmin || /*#__PURE__*/React.createElement("span", { style: { color: "var(--texto-fraco)" } }, "—"),
-      o.resposta && o.resposta !== "Corrigido no sistema Vibe." && /*#__PURE__*/React.createElement("div", { style: { marginTop: 4, fontStyle: "italic", color: "var(--cinza-600)" } }, "\"", o.resposta, "\""),
+    /*#__PURE__*/React.createElement("td", { style: { padding: "10px 16px", fontSize: 12, fontWeight: 600, color: "var(--cinza-900)" } }, tipoIcon(o.tipo), " ", o.tipo,
       ehErroReg && (easymob ? /*#__PURE__*/React.createElement("button", {
         onClick: () => {
           const win = window.open("", "_blank");
@@ -8456,7 +8452,12 @@ function PainelOcorrencias({
           win.document.close();
         },
         style: { display: "block", marginTop: 4, background: "var(--verde-100)", color: "var(--verde-700)", border: "none", borderRadius: 8, padding: "3px 8px", fontSize: 11, fontWeight: 600, cursor: "pointer" }
-      }, "📱 Ver print") : /*#__PURE__*/React.createElement("span", { style: { display: "block", marginTop: 4, fontSize: 11, color: o.easymobEnviado ? "var(--verde-700)" : "var(--amber-600)", fontWeight: 600 } }, o.easymobEnviado ? "✅ Print enviado" : "⚠️ Sem print"))
+      }, "📱 Ver print") : /*#__PURE__*/React.createElement("span", { style: { display: "block", marginTop: 4, fontSize: 11, color: o.easymobEnviado ? "var(--verde-700)" : "var(--amber-600)", fontWeight: 600 } }, o.easymobEnviado ? "✅ Print enviado" : "⚠️ Sem print"))),
+    /*#__PURE__*/React.createElement("td", { style: { padding: "10px 16px" } }, /*#__PURE__*/React.createElement(Badge, { status: o.status })),
+    /*#__PURE__*/React.createElement("td", { style: { padding: "10px 16px", fontSize: 12, color: "var(--cinza-500)", maxWidth: 200 } },
+      o.observacaoAdmin || /*#__PURE__*/React.createElement("span", { style: { color: "var(--texto-fraco)" } }, "—"),
+      o.resposta && o.resposta !== "Corrigido no sistema Vibe." && /*#__PURE__*/React.createElement("div", { style: { marginTop: 4, fontStyle: "italic", color: "var(--cinza-600)" } }, "\"", o.resposta, "\"")
+
     ),
     /*#__PURE__*/React.createElement("td", { style: { padding: "10px 16px" } }, /*#__PURE__*/React.createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
       podeVerif && /*#__PURE__*/React.createElement(React.Fragment, null,
@@ -9222,7 +9223,7 @@ function DuvidasProcessos({ setView }) {
         },
         {
           subtitulo: "Regra do DP",
-          texto: "Pela regra do Departamento Pessoal, o máximo permitido é 3 esquecimentos por mês. A partir do 4º, desconto em folha pode ser aplicado. Acompanhe seu contador no Portal."
+          texto: "Pela regra do Departamento Pessoal, o máximo permitido é 3 esquecimentos por mês. A partir do 4º, pode haver desconto em folha. Acompanhe seu contador no Portal."
         },
         {
           subtitulo: "Como resolver?",
@@ -9246,8 +9247,8 @@ function DuvidasProcessos({ setView }) {
           texto: "Erros de registro só são aceitos com comprovação. Você precisa enviar um print da tela 'Consultar Marcações' do aplicativo EasyMob diretamente na justificativa do Portal. Sem o print, a ocorrência não será aprovada."
         },
         {
-          subtitulo: "Atenção ao delay do sistema",
-          texto: "Antes de subir qualquer correção, atualize seu ponto no EasyMob. O sistema tem um delay e o registro pode simplesmente não ter sido contabilizado ainda. Só abra a correção se o problema persistir após a atualização."
+          subtitulo: "Atenção ao atraso do sistema",
+          texto: "Antes de subir qualquer correção, atualize seu ponto no EasyMob. O sistema tem um atraso e o registro pode simplesmente não ter sido contabilizado ainda. Só abra a correção se o problema persistir após a atualização."
         }
       ]
     }
@@ -10017,7 +10018,7 @@ function PortalFuncionario({
       const dataUrlComprimido = await comprimirImagem(dataUrlOriginal);
       setPreviaEasymob({ ocId, dataUrl: dataUrlComprimido });
     } catch (err) {
-      setErroEasymob("Não foi possível processar a imagem. Tente outra foto ou tente novamente.");
+      setErroEasymob("Não foi possível processar a imagem. Tente novamente ou escolha outra foto.");
     } finally {
       // Permite escolher de novo o mesmo arquivo (sem isso o onChange não dispara).
       input.value = "";
