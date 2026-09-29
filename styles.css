@@ -447,7 +447,7 @@ button[style*="linear-gradient(135deg,var(--indigo-500)"]:not(:disabled):hover {
 @keyframes cp-linha  { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 
 /* Entrada da tela ao carregar o app (uma vez) */
-#root > * { animation: cp-entra .4s var(--ease-saida) both; }
+#root > * { animation: cp-entra .4s var(--ease-saida) backwards; }
 
 /* Janelas de diálogo: sobem e ganham escala junto com o fade do fundo */
 [role="dialog"][style*="max-height"] { animation: cp-modal .26s var(--ease-saida) both; }
