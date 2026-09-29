@@ -2344,11 +2344,12 @@ padding: "14px 18px",
 // ─── TELA DE LOGIN ────────────────────────────────────────────────────────────
 function TelaLogin({
   funcionarios,
-  onLogin
+  onLogin,
+  avisoInicial = ""
 }) {
   const [usuario, setUsuario] = useState("");
   const [senha, setSenha] = useState("");
-  const [erro, setErro] = useState("");
+  const [erro, setErro] = useState(avisoInicial);
   const [loading, setLoading] = useState(false);
   const [show, setShow] = useState(false);
   // Recuperação de senha: tela de login alterna para um pequeno formulário
@@ -13856,13 +13857,49 @@ function App() {
   // PASSWORD_RECOVERY. Capturamos isso para mostrar a tela de nova senha em
   // vez do login normal ou do app — sem precisar parsear a URL manualmente.
   const [modoRecuperacao, setModoRecuperacao] = useState(false);
+  // A sessão do Supabase fica no localStorage, compartilhado entre TODAS as
+  // abas do mesmo navegador. Se em outra aba alguém entra com outra conta ou
+  // sai, a sessão desta aba some/troca por baixo: a tela continua aberta, mas
+  // as consultas passam a rodar sem o login certo (RLS devolve vazio) e os
+  // dados "somem". Aqui detectamos isso e devolvemos esta aba ao login, com
+  // aviso, em vez de deixá-la num estado quebrado.
+  const usuarioRef = useRef(null);
+  usuarioRef.current = usuario;
+  const [avisoSessao, setAvisoSessao] = useState("");
   useEffect(() => {
-    const { data: listener } = supa.auth.onAuthStateChange((event) => {
+    function sessaoMudouEmOutraAba(emailNovo) {
+      const atual = usuarioRef.current;
+      if (!atual) return;
+      if (emailNovo && emailNovo === atual.email) return; // mesma conta: nada a fazer
+      usuarioRef.current = null;
+      desativarContaTeste();
+      setUsuario(null);
+      setAvisoSessao(emailNovo ? "A conta foi trocada em outra aba deste navegador. Entre novamente." : "Sua sessão foi encerrada em outra aba deste navegador. Entre novamente.");
+    }
+    const { data: listener } = supa.auth.onAuthStateChange((event, session) => {
       if (event === "PASSWORD_RECOVERY") setModoRecuperacao(true);
+      else if (event === "SIGNED_OUT") sessaoMudouEmOutraAba(null);
+      else if (event === "SIGNED_IN" && session?.user?.email) sessaoMudouEmOutraAba(session.user.email);
     });
-    return () => listener?.subscription?.unsubscribe();
+    // Reforço: o evento "storage" só dispara em OUTRAS abas quando a chave da
+    // sessão do Supabase (sb-…-auth-token) muda.
+    function aoMudarStorage(e) {
+      if (!e.key || !/^sb-.*-auth-token$/.test(e.key)) return;
+      if (!e.newValue) return sessaoMudouEmOutraAba(null);
+      try {
+        const em = JSON.parse(e.newValue)?.user?.email;
+        if (em) sessaoMudouEmOutraAba(em);
+      } catch (_) {}
+    }
+    window.addEventListener("storage", aoMudarStorage);
+    return () => {
+      listener?.subscription?.unsubscribe();
+      window.removeEventListener("storage", aoMudarStorage);
+    };
   }, []);
   function sair() {
+    usuarioRef.current = null;
+    setAvisoSessao("");
     supa.auth.signOut();
     desativarContaTeste();
     setUsuario(null);
@@ -14141,7 +14178,9 @@ function App() {
   });
   if (!usuario) return /*#__PURE__*/React.createElement(TelaLogin, {
     funcionarios: funcionarios,
+    avisoInicial: avisoSessao,
     onLogin: u => {
+      setAvisoSessao("");
       setUsuario(u);
       setView("mural"); // Processos é a introdução, tanto para admin quanto para funcionário
     }
