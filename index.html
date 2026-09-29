@@ -2146,6 +2146,10 @@ function Modal({
 }) {
   const tituloId = useRef(`modal-titulo-${Math.random().toString(36).slice(2, 9)}`).current;
   const caixaRef = useRef(null);
+  // onClose muda de identidade a cada render do pai (arrow inline); guardar em
+  // ref evita re-executar o efeito abaixo e roubar o foco de campos digitáveis.
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
 
   // Esc fecha o modal + trava o scroll do fundo enquanto ele está aberto.
   useEffect(() => {
@@ -2155,7 +2159,7 @@ function Modal({
     const aoTeclar = e => {
       if (e.key !== "Escape") return;
       if (_pilhaModais[_pilhaModais.length - 1] !== tituloId) return;
-      if (typeof onClose === "function") onClose();
+      if (typeof onCloseRef.current === "function") onCloseRef.current();
     };
     document.addEventListener("keydown", aoTeclar);
     _pilhaModais.push(tituloId);
@@ -2163,14 +2167,14 @@ function Modal({
     document.body.style.overflow = "hidden";
     // Move o foco para dentro do modal ao abrir (sem isso o teclado continua
     // navegando a página de trás).
-    if (caixaRef.current) caixaRef.current.focus();
+    if (caixaRef.current && !caixaRef.current.contains(document.activeElement)) caixaRef.current.focus();
     return () => {
       document.removeEventListener("keydown", aoTeclar);
       const i = _pilhaModais.lastIndexOf(tituloId);
       if (i >= 0) _pilhaModais.splice(i, 1);
       if (_pilhaModais.length === 0) document.body.style.overflow = overflowAnterior || "";
     };
-  }, [onClose, tituloId]);
+  }, [tituloId]);
 
   return /*#__PURE__*/React.createElement("div", {
     style: {
@@ -3476,7 +3480,6 @@ function Dashboard({
   const alerta = funcionarios.filter(f => contagens[f.id].esquecimentos === 2).length;
   const limite = funcionarios.filter(f => contagens[f.id].esquecimentos === 3).length;
   const excedido = funcionarios.filter(f => contagens[f.id].esquecimentos >= 4).length;
-  const recentes = [...ocorrenciasMes].filter(o => o.status === "Pendente" || o.status === "Corrigido").sort((a, b) => (b.atualizadoEm || b.data || "").localeCompare(a.atualizadoEm || a.data || "")).slice(0, 6);
   function criarPendencia({
     funcionario_id,
     origemFuncionario,
@@ -3642,7 +3645,7 @@ comparativo: temAnterior ? { atual: excedido, anterior: antExcedido, menorMelhor
   })), /*#__PURE__*/React.createElement("div", {
     style: {
       display: "grid",
-      gridTemplateColumns: "1fr 1.6fr",
+      gridTemplateColumns: "1fr",
       gap: 20
     }
   }, /*#__PURE__*/React.createElement("div", {
@@ -3726,120 +3729,6 @@ comparativo: temAnterior ? { atual: excedido, anterior: antExcedido, menorMelhor
         fontWeight: 600
       }
     }, contagens[f.id].esquecimentos));
-  }))), /*#__PURE__*/React.createElement("div", {
-    style: {
-      background: "var(--cor-branco)",
-      border: "1px solid var(--cinza-100)",
-      borderRadius: 16,
-      padding: 22,
-      boxShadow: "0 1px 3px var(--sombra-leve)"
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: "flex",
-      justifyContent: "space-between",
-      alignItems: "center",
-      marginBottom: 16
-    }
-  }, /*#__PURE__*/React.createElement("h3", {
-    style: {
-      fontSize: 15,
-      fontWeight: 700,
-      color: "var(--cinza-900)",
-      margin: 0
-    }
-  }, "Pendências recentes"), /*#__PURE__*/React.createElement("button", {
-    onClick: () => setView("relatorios"),
-    style: {
-      background: "none",
-      border: "none",
-      fontSize: 12,
-      color: "var(--indigo-500)",
-      cursor: "pointer",
-      fontWeight: 600
-    }
-  }, "Ver todas →")), recentes.length === 0 ? /*#__PURE__*/React.createElement(EstadoVazio, { icone: "✅", titulo: "Nenhuma pendência em aberto", texto: "Tudo em dia neste mês.", acaoLabel: "Registrar pendência do dia", onAcao: () => setModalCriar(true) }) : /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: "flex",
-      flexDirection: "column",
-      gap: 8
-    }
-  }, recentes.map(o => {
-    const func = resolverFuncionarioDaOcorrencia(funcionarios, o);
-    if (!func) return null;
-    return /*#__PURE__*/React.createElement("div", {
-      key: o.id,
-      style: {
-        display: "flex",
-        alignItems: "center",
-        gap: 12,
-        padding: "10px 12px",
-        borderRadius: 12,
-        background: o.novo ? "var(--amarelo-100)" : "var(--cinza-50)",
-        border: `1px solid ${o.novo ? "var(--amber-200)" : "var(--cinza-100)"}`,
-        cursor: "pointer"
-      },
-      onClick: () => {
-        setFuncSelecionado(func);
-        setView("perfil");
-      }
-    }, /*#__PURE__*/React.createElement("span", {
-      style: {
-        fontSize: 18
-      }
-    }, tipoIcon(o.tipo)), /*#__PURE__*/React.createElement(Avatar, {
-      nome: func.nome,
-      id: func.id,
-      size: 30
-    }), /*#__PURE__*/React.createElement("div", {
-      style: {
-        flex: 1,
-        minWidth: 0
-      }
-    }, /*#__PURE__*/React.createElement("div", {
-      style: {
-        fontSize: 13,
-        fontWeight: 600,
-        color: "var(--cinza-900)",
-        whiteSpace: "nowrap",
-        overflow: "hidden",
-        textOverflow: "ellipsis"
-      }
-    }, func.nome.split(" ").slice(0, 2).join(" ")), /*#__PURE__*/React.createElement("div", {
-      style: {
-        fontSize: 12,
-        color: "var(--cinza-500)"
-      }
-    }, o.tipo, " · ", fmtDate(o.data)), o.criadoPor === "funcionario" && /*#__PURE__*/React.createElement("span", {
-      style: {
-        fontSize: 11,
-        background: "var(--roxo-100)",
-        color: "var(--roxo-600)",
-        padding: "1px 7px",
-        borderRadius: 16,
-        fontWeight: 700,
-        display: "inline-block",
-        marginTop: 3
-      }
-    }, "👤 Aviso do colaborador")), /*#__PURE__*/React.createElement("div", {
-      style: {
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "flex-end",
-        gap: 3
-      }
-    }, /*#__PURE__*/React.createElement(Badge, {
-      status: o.status
-    }), o.novo && /*#__PURE__*/React.createElement("span", {
-      style: {
-        fontSize: 11,
-        background: "var(--amber-400)",
-        color: "var(--amber-900)",
-        padding: "1px 6px",
-        borderRadius: 16,
-        fontWeight: 700
-      }
-    }, "NOVO")));
   })))), /*#__PURE__*/React.createElement("div", {
     style: {
       display: "grid",
@@ -8062,6 +7951,131 @@ function PerfilFuncionario({
 // ─── OCORRÊNCIAS (admin) — unifica antigo PainelAprovacao (fila de
 // verificação) + Relatorios (análise/exportação) numa única view, com
 // toggle entre os dois modos. Rota/label pública continua "Relatórios".
+// ─── PENDÊNCIAS RECENTES (SEMANA) — bloco exibido no topo da aba Situação ───
+// Movido do Dashboard. Só aparece se houver alguma pendência (Pendente ou
+// Corrigido) movimentada nos últimos 7 dias; sem nenhuma, não renderiza nada.
+function BlocoPendenciasRecentes({
+  ocorrencias,
+  funcionarios,
+  onSelecionar
+}) {
+  const recentes = useMemo(() => {
+    // mesmo critério de hoje()/agoraISO(): datas em ISO/UTC
+    const limite = new Date(Date.now() - 6 * 86400000).toISOString().slice(0, 10);
+    return [...ocorrencias].filter(o => (o.status === "Pendente" || o.status === "Corrigido") && String(o.atualizadoEm || o.data || "").slice(0, 10) >= limite).sort((a, b) => (b.atualizadoEm || b.data || "").localeCompare(a.atualizadoEm || a.data || "")).slice(0, 6);
+  }, [ocorrencias]);
+  if (recentes.length === 0) return null;
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: "var(--cor-branco)",
+      border: "1px solid var(--cinza-100)",
+      borderRadius: 16,
+      padding: 22,
+      boxShadow: "0 1px 3px var(--sombra-leve)",
+      marginBottom: 20
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      justifyContent: "space-between",
+      alignItems: "center",
+      marginBottom: 16
+    }
+  }, /*#__PURE__*/React.createElement("h3", {
+    style: {
+      fontSize: 15,
+      fontWeight: 700,
+      color: "var(--texto)",
+      margin: 0
+    }
+  }, "Pendências recentes"), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 12,
+      color: "var(--texto-fraco)"
+    }
+  }, "Últimos 7 dias")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      flexDirection: "column",
+      gap: 8
+    }
+  }, recentes.map(o => {
+    const func = resolverFuncionarioDaOcorrencia(funcionarios, o);
+    if (!func) return null;
+    return /*#__PURE__*/React.createElement("div", {
+      key: o.id,
+      style: {
+        display: "flex",
+        alignItems: "center",
+        gap: 12,
+        padding: "10px 12px",
+        borderRadius: 12,
+        background: o.novo ? "var(--amarelo-100)" : "var(--cinza-50)",
+        border: `1px solid ${o.novo ? "var(--amber-200)" : "var(--cinza-100)"}`,
+        cursor: "pointer"
+      },
+      onClick: () => onSelecionar(func),
+      title: "Filtrar a tabela por este colaborador"
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 18
+      }
+    }, tipoIcon(o.tipo)), /*#__PURE__*/React.createElement(Avatar, {
+      nome: func.nome,
+      id: func.id,
+      size: 30
+    }), /*#__PURE__*/React.createElement("div", {
+      style: {
+        flex: 1,
+        minWidth: 0
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 13,
+        fontWeight: 600,
+        color: "var(--cinza-900)",
+        whiteSpace: "nowrap",
+        overflow: "hidden",
+        textOverflow: "ellipsis"
+      }
+    }, func.nome.split(" ").slice(0, 2).join(" ")), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 12,
+        color: "var(--cinza-500)"
+      }
+    }, o.tipo, " · ", fmtDate(o.data)), o.criadoPor === "funcionario" && /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 11,
+        background: "var(--roxo-100)",
+        color: "var(--roxo-600)",
+        padding: "1px 7px",
+        borderRadius: 16,
+        fontWeight: 700,
+        display: "inline-block",
+        marginTop: 3
+      }
+    }, "👤 Aviso do colaborador")), /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "flex-end",
+        gap: 3
+      }
+    }, /*#__PURE__*/React.createElement(Badge, {
+      status: o.status
+    }), o.novo && /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 11,
+        background: "var(--amber-400)",
+        color: "var(--amber-900)",
+        padding: "1px 6px",
+        borderRadius: 16,
+        fontWeight: 700
+      }
+    }, "NOVO")));
+  })));
+}
+
 function PainelOcorrencias({
   ocorrencias,
   ocorrenciasParaExportar,
@@ -8078,7 +8092,7 @@ function PainelOcorrencias({
 }) {
   const [modal, setModal] = useState(null);
   const [obs, setObs] = useState("");
-  const [filtroStatus, setFiltroStatus] = useState("Todos");
+  const [filtroStatus, setFiltroStatus] = useState("Pendente");
   const [filtroTipo, setFiltroTipo] = useState("Todos");
   const [buscaTexto, setBuscaTexto] = useState("");
   const buscaTextoAdiada = useValorAdiado(buscaTexto);
@@ -8267,7 +8281,7 @@ function PainelOcorrencias({
   // ── Filtros: status (pills com contador) + tipo + busca ──────────────────
   const filtros = /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     style: { display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap" }
-  }, ["Todos", "Pendente", "Corrigido", "Verificado", "Rejeitado"].map(s => /*#__PURE__*/React.createElement("button", {
+  }, ["Pendente", "Corrigido", "Verificado", "Rejeitado"].map(s => /*#__PURE__*/React.createElement("button", {
     key: s,
     onClick: () => setFiltroStatus(s),
     style: {
@@ -8305,8 +8319,8 @@ function PainelOcorrencias({
     placeholder: "Nome ou matrícula…",
     style: { padding: "9px 14px", borderRadius: 12, border: "1px solid var(--cinza-200)", fontSize: 13, background: "var(--cor-branco)", outline: "none", boxSizing: "border-box" }
   })),
-  (filtroTipo !== "Todos" || buscaTexto.trim() || filtroStatus !== "Todos") && /*#__PURE__*/React.createElement("button", {
-    onClick: () => { setFiltroStatus("Todos"); setFiltroTipo("Todos"); setBuscaTexto(""); },
+  (filtroTipo !== "Todos" || buscaTexto.trim() || filtroStatus !== "Pendente") && /*#__PURE__*/React.createElement("button", {
+    onClick: () => { setFiltroStatus("Pendente"); setFiltroTipo("Todos"); setBuscaTexto(""); },
     style: { padding: "9px 14px", borderRadius: 12, border: "1px solid var(--cinza-200)", background: "var(--cinza-50)", fontSize: 12, fontWeight: 600, color: "var(--cinza-500)", cursor: "pointer" }
   }, "✕ Limpar filtros")));
 
@@ -8379,9 +8393,9 @@ function PainelOcorrencias({
   }))), ocorrenciasFiltradas.length === 0 && /*#__PURE__*/React.createElement("div", {
     style: { padding: 40, textAlign: "center", color: "var(--texto-fraco)", fontSize: 13 }
   }, "Nenhuma pendência encontrada com esses filtros.",
-    (filtroTipo !== "Todos" || buscaTexto.trim() || filtroStatus !== "Todos") && /*#__PURE__*/React.createElement("button", {
+    (filtroTipo !== "Todos" || buscaTexto.trim() || filtroStatus !== "Pendente") && /*#__PURE__*/React.createElement("button", {
       type: "button",
-      onClick: () => { setFiltroStatus("Todos"); setFiltroTipo("Todos"); setBuscaTexto(""); },
+      onClick: () => { setFiltroStatus("Pendente"); setFiltroTipo("Todos"); setBuscaTexto(""); },
       style: {
         display: "block", margin: "14px auto 0", padding: "8px 18px", borderRadius: 12,
         border: "1px solid var(--cinza-200)", background: "var(--cor-branco)",
@@ -8431,6 +8445,11 @@ function PainelOcorrencias({
   return /*#__PURE__*/React.createElement("div", null,
     cabecalho,
     filtros,
+    filtroStatus === "Pendente" && /*#__PURE__*/React.createElement(BlocoPendenciasRecentes, {
+      ocorrencias: ocorrencias,
+      funcionarios: funcionarios,
+      onSelecionar: func => setBuscaTexto(String(func.matricula || func.nome || ""))
+    }),
     tabela,
     modalAcao,
     modalExportar && /*#__PURE__*/React.createElement(ModalExportarRelatorio, {
