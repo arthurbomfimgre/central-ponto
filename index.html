@@ -1575,7 +1575,7 @@ function mesesDisponiveis() {
 // Rótulo exibido para cada status. O valor gravado no banco continua "Pendente";
 // só o texto na tela muda, para dar senso de urgência.
 function rotuloStatus(s) {
-  return s === "Pendente" ? "Correção necessária" : s;
+  return s;
 }
 function statusColor(s) {
   if (s === "Pendente") return {
@@ -7963,12 +7963,12 @@ function PerfilFuncionario({
 // ─── PENDÊNCIAS RECENTES (SEMANA) — bloco exibido no topo da aba Situação ───
 // Movido do Dashboard. Só aparece se houver alguma pendência (Pendente ou
 // Corrigido) movimentada nos últimos 7 dias; sem nenhuma, não renderiza nada.
-// Pendentes/Corrigidos movimentados nos últimos 7 dias. O mais antigo primeiro
-// (é o que está há mais tempo esperando), Correção necessária antes de Corrigido.
-function selecionarPendenciasDaSemana(lista) {
+// Ocorrências dos status pedidos movimentadas nos últimos 7 dias. O mais antigo
+// primeiro (é o que está há mais tempo esperando), Pendente antes de Corrigido.
+function selecionarPendenciasDaSemana(lista, statuses) {
   const limite = new Date(Date.now() - 6 * 86400000).toISOString().slice(0, 10);
   const dataRef = o => String(o.atualizadoEm || o.data || "").slice(0, 10);
-  return lista.filter(o => (o.status === "Pendente" || o.status === "Corrigido") && dataRef(o) >= limite).sort((a, b) => {
+  return lista.filter(o => statuses.includes(o.status) && dataRef(o) >= limite).sort((a, b) => {
     if (a.status !== b.status) return a.status === "Pendente" ? -1 : 1;
     return String(a.data || "").localeCompare(String(b.data || ""));
   });
@@ -7983,17 +7983,24 @@ function diasDesde(dataISO) {
 function textoIdade(dias) {
   return dias === 0 ? "Hoje" : dias === 1 ? "Há 1 dia" : `Há ${dias} dias`;
 }
+const TITULO_BLOCO_SEMANA = {
+  Pendente: "⚠️ Pendentes da semana",
+  Corrigido: "Corrigidos da semana",
+  Verificado: "Verificados da semana",
+  Rejeitado: "Rejeitados da semana"
+};
 function BlocoPendenciasRecentes({
   itens,
   funcionarios,
-  onAcao
+  onAcao,
+  filtro
 }) {
   if (itens.length === 0) return null;
-  const qtdCorrecao = itens.filter(o => o.status === "Pendente").length;
+  const qtdCorrecao = filtro === "Pendente" ? itens.filter(o => o.status === "Pendente").length : 0;
   return /*#__PURE__*/React.createElement("div", {
     style: {
       background: "var(--cor-branco)",
-      border: "1px solid var(--vermelho-600)",
+      border: `1px solid ${filtro === "Pendente" ? "var(--vermelho-600)" : "var(--cinza-100)"}`,
       borderRadius: 16,
       padding: 22,
       boxShadow: "0 1px 3px var(--sombra-leve)",
@@ -8018,7 +8025,7 @@ function BlocoPendenciasRecentes({
       alignItems: "center",
       gap: 8
     }
-  }, "⚠️ Correções necessárias da semana", qtdCorrecao > 0 && /*#__PURE__*/React.createElement("span", {
+  }, TITULO_BLOCO_SEMANA[filtro] || "Ocorrências da semana", qtdCorrecao > 0 && /*#__PURE__*/React.createElement("span", {
     style: {
       background: "var(--vermelho-600)",
       color: "#fff",
@@ -8231,9 +8238,9 @@ function PainelOcorrencias({
   };
   const novosCorrigidos = ocorrenciasParaContagem.filter(o => o.status === "Corrigido" && o.novo).length;
 
-  // Bloco da semana (só no filtro Pendente) respeita tipo + busca. O que
+  // Bloco da semana (em todos os filtros) respeita tipo + busca. O que
   // aparece nele sai da tabela, para não ficar duplicado.
-  const pendenciasSemana = filtroStatus === "Pendente" ? selecionarPendenciasDaSemana(ocorrenciasParaContagem) : [];
+  const pendenciasSemana = selecionarPendenciasDaSemana(ocorrenciasParaContagem, [filtroStatus]);
   const idsSemana = new Set(pendenciasSemana.map(o => o.id));
   const ocorrenciasFiltradas = idsSemana.size ? ocorrenciasFiltradasBase.filter(o => !idsSemana.has(o.id)) : ocorrenciasFiltradasBase;
 
@@ -8401,11 +8408,7 @@ function PainelOcorrencias({
     onChange: e => setBuscaTexto(e.target.value),
     placeholder: "Nome ou matrícula…",
     style: { padding: "9px 14px", borderRadius: 12, border: "1px solid var(--cinza-200)", fontSize: 13, background: "var(--cor-branco)", outline: "none", boxSizing: "border-box" }
-  })),
-  (filtroTipo !== "Todos" || buscaTexto.trim() || filtroStatus !== "Pendente") && /*#__PURE__*/React.createElement("button", {
-    onClick: () => { setFiltroStatus("Pendente"); setFiltroTipo("Todos"); setBuscaTexto(""); },
-    style: { padding: "9px 14px", borderRadius: 12, border: "1px solid var(--cinza-200)", background: "var(--cinza-50)", fontSize: 12, fontWeight: 600, color: "var(--cinza-500)", cursor: "pointer" }
-  }, "✕ Limpar filtros")));
+  }))));
 
   // ── Tabela única, com ações (verificar/rejeitar/excluir) inline ──────────
   const tabela = /*#__PURE__*/React.createElement("div", {
@@ -8475,16 +8478,7 @@ function PainelOcorrencias({
     )));
   }))), ocorrenciasFiltradas.length === 0 && /*#__PURE__*/React.createElement("div", {
     style: { padding: 40, textAlign: "center", color: "var(--texto-fraco)", fontSize: 13 }
-  }, pendenciasSemana.length > 0 ? "Não há outras correções além das da semana, acima." : "Nenhuma pendência encontrada com esses filtros.",
-    (filtroTipo !== "Todos" || buscaTexto.trim() || filtroStatus !== "Pendente") && /*#__PURE__*/React.createElement("button", {
-      type: "button",
-      onClick: () => { setFiltroStatus("Pendente"); setFiltroTipo("Todos"); setBuscaTexto(""); },
-      style: {
-        display: "block", margin: "14px auto 0", padding: "8px 18px", borderRadius: 12,
-        border: "1px solid var(--cinza-200)", background: "var(--cor-branco)",
-        fontSize: 13, fontWeight: 600, color: "var(--cinza-700)", cursor: "pointer"
-      }
-    }, "Limpar filtros")
+  }, pendenciasSemana.length > 0 ? "Não há outras ocorrências além das da semana, acima." : "Nenhuma pendência encontrada com esses filtros."
   ));
 
   // ── Modal de ação (verificar/rejeitar/excluir) ───────────────────────────
@@ -8528,7 +8522,8 @@ function PainelOcorrencias({
   return /*#__PURE__*/React.createElement("div", null,
     cabecalho,
     filtros,
-    filtroStatus === "Pendente" && /*#__PURE__*/React.createElement(BlocoPendenciasRecentes, {
+    /*#__PURE__*/React.createElement(BlocoPendenciasRecentes, {
+      filtro: filtroStatus,
       itens: pendenciasSemana,
       funcionarios: funcionarios,
       onAcao: (o, acao) => setModal({ ...o, acao })
