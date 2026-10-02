@@ -1234,6 +1234,41 @@ const ADMIN_EMAILS_FIXO = [
 function ehAdminFuncionario(func) {
   return ADMIN_EMAILS_FIXO.includes(emailFuncionario(func || {}));
 }
+// Primeiro acesso (Fase 0): resolve o funcionário a partir do usuário do
+// Supabase Auth pelo `auth_user_id` (vínculo estável, que não depende de
+// e-mail) e só então cai no casamento por e-mail (comportamento antigo,
+// mantido para quem já tem login). Assim, trocar o e-mail da tabela deixa
+// de quebrar o login. `funcionarios` é a lista administrativa em memória
+// (pode estar vazia/desatualizada); `lerAtualizada` é opcional e devolve a
+// lista mais recente do Supabase.
+async function resolverFuncionarioDoAuth(authUser, funcionarios, lerAtualizada) {
+  const uid = authUser?.id || null;
+  const email = String(authUser?.email || "").trim().toLowerCase();
+  let func = null;
+  if (uid) {
+    func = (funcionarios || []).find(f => f.auth_user_id === uid) || null;
+    if (!func) {
+      const { data: fa } = await supa.from("funcionarios_administrativo").select("*").eq("auth_user_id", uid).maybeSingle();
+      if (fa) func = fa;
+    }
+    if (!func) {
+      const { data: fc } = await supa.from("funcionarios_comercial").select("*").eq("auth_user_id", uid).maybeSingle();
+      if (fc) func = normalizarFuncComercial(fc);
+    }
+  }
+  if (!func && email) {
+    func = (funcionarios || []).find(f => emailFuncionario(f) === email) || null;
+    if (!func && lerAtualizada) {
+      const atualizados = await lerAtualizada();
+      func = (atualizados || []).find(f => emailFuncionario(f) === email) || null;
+    }
+    if (!func) {
+      const { data: fc } = await supa.from("funcionarios_comercial").select("*").eq("email", email).maybeSingle();
+      if (fc) func = normalizarFuncComercial(fc);
+    }
+  }
+  return func;
+}
 
 
 // ─── PERMISSÕES POR PAPEL ───────────────────────────────────────────────────
@@ -2476,18 +2511,13 @@ function TelaLogin({
       setLoading(false);
       return;
     }
-    let func = funcionarios.find(f => emailFuncionario(f) === email);
-    if (!func) {
-      const funcsAtualizados = await lerSupa(SK_FUNCS, FUNCIONARIOS_BASE);
-      func = funcsAtualizados.find(f => emailFuncionario(f) === email);
-    }
-    // Não achou no administrativo (funcionarios_administrativo): tenta a
-    // hierarquia comercial (funcionarios_comercial), onde estão os 581
-    // vendedores/gestores.
-    if (!func) {
-      const { data: funcComercial } = await supa.from("funcionarios_comercial").select("*").eq("email", email).maybeSingle();
-      if (funcComercial) func = normalizarFuncComercial(funcComercial);
-    }
+    // Resolve por auth_user_id (estável) e, só se não achar, por e-mail —
+    // administrativo primeiro, depois a hierarquia comercial.
+    const func = await resolverFuncionarioDoAuth(
+      data?.user || { email },
+      funcionarios,
+      () => lerSupa(SK_FUNCS, FUNCIONARIOS_BASE)
+    );
     if (!func) {
       setErro("Login válido, porém nenhum funcionário corresponde a este e-mail. Avise o administrador.");
       await supa.auth.signOut();
@@ -14119,13 +14149,8 @@ function App() {
           previewHierarquia: true
         });
       } else if (email) {
-        let func = funcionarios.find(f => emailFuncionario(f) === email);
-        // Não achou no administrativo: tenta a hierarquia comercial
-        // (funcionarios_comercial), igual ao fluxo de login.
-        if (!func) {
-          const { data: funcComercial } = await supa.from("funcionarios_comercial").select("*").eq("email", email).maybeSingle();
-          if (funcComercial) func = normalizarFuncComercial(funcComercial);
-        }
+        // Mesmo critério do login: auth_user_id primeiro, e-mail como reserva.
+        const func = await resolverFuncionarioDoAuth(data.session.user, funcionarios);
         if (func && ativo) {
           const nivel = resolverNivel(func);
           setUsuario({
