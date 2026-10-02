@@ -2923,7 +2923,7 @@ function MedidorForcaSenha({ senha }) {
     /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, marginTop: 4, color: cores[nivel], fontWeight: 600 } }, "Força da senha: " + rotulos[nivel]));
 }
 
-function TelaNovaSenha({ onConcluido }) {
+function TelaNovaSenha({ onConcluido, obrigatoria = false }) {
   const [senha, setSenha] = useState("");
   const [confirmar, setConfirmar] = useState("");
   const [erro, setErro] = useState("");
@@ -2940,7 +2940,7 @@ function TelaNovaSenha({ onConcluido }) {
       return;
     }
     setLoading(true);
-    const { error } = await supa.auth.updateUser({ password: senha });
+    const { error } = await supa.auth.updateUser({ password: senha, data: { trocar_senha: false } });
     setLoading(false);
     if (error) {
       setErro(error.message || "Não foi possível atualizar a senha. Tente novamente.");
@@ -2993,7 +2993,7 @@ function TelaNovaSenha({ onConcluido }) {
       lineHeight: 1.6,
       marginBottom: 20
     }
-  }, "✅ Senha atualizada com sucesso! Use-a no próximo login."), /*#__PURE__*/React.createElement("button", {
+  }, obrigatoria ? "✅ Senha definida com sucesso! Use-a nos próximos acessos." : "✅ Senha atualizada com sucesso! Use-a no próximo login."), /*#__PURE__*/React.createElement("button", {
     onClick: onConcluido,
     style: {
       width: "100%",
@@ -3006,7 +3006,7 @@ function TelaNovaSenha({ onConcluido }) {
       fontWeight: 700,
       cursor: "pointer"
     }
-  }, "Ir para o login")) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("h2", {
+  }, obrigatoria ? "Entrar no sistema" : "Ir para o login")) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("h2", {
     style: { fontSize: 15, fontWeight: 700, color: "var(--cinza-900)", margin: "0 0 24px" }
   }, "Criar nova senha"), /*#__PURE__*/React.createElement("div", {
     style: { display: "flex", flexDirection: "column", gap: 16 }
@@ -14091,6 +14091,17 @@ function App() {
   const telaEstreita = useTelaEstreita();
   const [menuMobileAberto, setMenuMobileAberto] = useState(false);
   const [usuario, setUsuario] = useState(null);
+  // Primeiro acesso: a Edge Function marca user_metadata.trocar_senha = true.
+  // Enquanto estiver marcado, o app só mostra a tela de nova senha.
+  const [trocarSenha, setTrocarSenha] = useState(false);
+  useEffect(() => {
+    if (!usuario) { setTrocarSenha(false); return; }
+    let vivo = true;
+    supa.auth.getUser().then(({ data }) => {
+      if (vivo) setTrocarSenha(data?.user?.user_metadata?.trocar_senha === true);
+    }).catch(() => {});
+    return () => { vivo = false; };
+  }, [usuario?.funcionario_id, usuario?.email]);
   const [verificandoSessao, setVerificandoSessao] = useState(true);
   // Quando o usuário clica no link de "redefinir senha" recebido por e-mail,
   // o Supabase Auth cria uma sessão temporária e dispara o evento
@@ -14410,6 +14421,10 @@ function App() {
       supa.auth.signOut();
       setUsuario(null);
     }
+  });
+  if (usuario && trocarSenha) return /*#__PURE__*/React.createElement(TelaNovaSenha, {
+    obrigatoria: true,
+    onConcluido: () => setTrocarSenha(false)
   });
   if (!usuario) return /*#__PURE__*/React.createElement(TelaLogin, {
     funcionarios: funcionarios,
