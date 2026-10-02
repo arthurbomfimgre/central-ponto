@@ -2425,6 +2425,122 @@ padding: "14px 18px",
 }
 
 // ─── TELA DE LOGIN ────────────────────────────────────────────────────────────
+// ─── PRIMEIRO ACESSO (assistente na tela de login) ──────────────────────────
+// Roda antes de existir login. Nada é gravado até a etapa final ("concluir").
+// Fala só com a Edge Function pública `primeiro-acesso` (ações: consultar, concluir).
+const EDGE_PRIMEIRO_ACESSO = `${SUPA_URL}/functions/v1/primeiro-acesso`;
+async function chamarPrimeiroAcesso(corpo) {
+  const r = await fetch(EDGE_PRIMEIRO_ACESSO, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", apikey: SUPA_KEY, Authorization: `Bearer ${SUPA_KEY}` },
+    body: JSON.stringify(corpo)
+  });
+  let d = {};
+  try { d = await r.json(); } catch (e) {}
+  if (!r.ok || d.ok === false || d.erro || d.error) {
+    throw new Error(d.erro || d.error || d.mensagem || "Não foi possível continuar. Confira a matrícula ou fale com o administrativo.");
+  }
+  return d;
+}
+function PrimeiroAcessoAssistente({ onVoltar }) {
+  const h = React.createElement;
+  const [etapa, setEtapa] = useState(1); // 1 matrícula · 2 LGPD · 3 dados · 4 e-mail/apelido · 5 modalidade · 6 senha
+  const [matricula, setMatricula] = useState("");
+  const [dados, setDados] = useState(null);
+  const [aceite, setAceite] = useState(false);
+  const [email, setEmail] = useState("");
+  const [apelido, setApelido] = useState("");
+  const [modalidade, setModalidade] = useState("presencial");
+  const [senha, setSenha] = useState("");
+  const [copiado, setCopiado] = useState(false);
+  const [erro, setErro] = useState("");
+  const [loading, setLoading] = useState(false);
+  const DOMINIO = "@portovaleconsorcios.com.br";
+  const emailLimpo = email.trim().toLowerCase();
+  const emailOk = /^[^\s@]+@portovaleconsorcios\.com\.br$/.test(emailLimpo);
+  const inp = { padding: "12px 14px", borderRadius: 14, border: "1.5px solid var(--cinza-200)", fontSize: 14, width: "100%", boxSizing: "border-box", background: "var(--cor-branco)" };
+  const lbl = { fontSize: 12, fontWeight: 700, color: "var(--cinza-700)", marginBottom: 4, display: "block" };
+  const btn = (ok) => ({ padding: 13, borderRadius: 14, border: "none", fontSize: 15, fontWeight: 700, cursor: ok ? "pointer" : "not-allowed",
+    background: ok ? "linear-gradient(135deg,var(--indigo-500),var(--roxo-500))" : "var(--cinza-200)", color: ok ? "var(--cor-branco)" : "var(--cinza-400)" });
+  const link = { background: "none", border: "none", cursor: "pointer", fontSize: 12, color: "var(--marca-500)", fontWeight: 600, padding: "2px 0" };
+
+  async function consultar() {
+    setErro(""); setLoading(true);
+    try {
+      const d = await chamarPrimeiroAcesso({ acao: "consultar", matricula: matricula.trim() });
+      const f = d.dados || {};
+      setDados(f);
+      const ep = String(f.email_planilha || "").trim().toLowerCase();
+      setEmail(ep.endsWith(DOMINIO) ? ep : "");
+      setApelido(f.apelido || "");
+      setModalidade(f.modalidade === "home_office" ? "home_office" : "presencial");
+      setEtapa(2);
+    } catch (e) { setErro(e.message); }
+    setLoading(false);
+  }
+  async function concluir() {
+    setErro(""); setLoading(true);
+    try {
+      const d = await chamarPrimeiroAcesso({ acao: "concluir", matricula: matricula.trim(), email: emailLimpo, apelido: apelido.trim(), modalidade, aceite_lgpd: true });
+      const s = d.senha;
+      if (!s) throw new Error("Login criado, mas a senha não foi retornada. Peça um reset ao administrativo.");
+      setSenha(s); setEtapa(6);
+    } catch (e) { setErro(e.message); }
+    setLoading(false);
+  }
+  async function copiar() {
+    try { await navigator.clipboard.writeText(senha); setCopiado(true); } catch (e) { setErro("Não consegui copiar. Anote a senha manualmente."); }
+  }
+  const campo = (rotulo, valor) => h("div", { key: rotulo }, h("span", { style: lbl }, rotulo),
+    h("div", { style: { ...inp, background: "var(--cinza-50)", color: "var(--cinza-700)" } }, valor || "—"));
+  const aviso = erro && h("div", { role: "alert", style: { background: "var(--vermelho-100)", border: "1px solid var(--vermelho-300)", borderRadius: 14, padding: "10px 14px", fontSize: 13, color: "var(--vermelho-600)" } }, erro);
+  const f = dados || {};
+  const col = { display: "flex", flexDirection: "column", gap: 16 };
+  let corpo;
+  if (etapa === 1) corpo = h("div", { style: col },
+    h("div", { style: { fontSize: 13, color: "var(--cinza-600)" } }, "Para criar seu acesso, informe sua matrícula. Ela será seu usuário de login."),
+    h("div", null, h("label", { style: lbl }, "Matrícula"),
+      h("input", { style: inp, value: matricula, inputMode: "numeric", autoFocus: true, onChange: e => setMatricula(e.target.value), onKeyDown: e => { if (e.key === "Enter" && matricula.trim() && !loading) consultar(); } })),
+    aviso,
+    h("button", { style: btn(!!matricula.trim() && !loading), disabled: !matricula.trim() || loading, onClick: consultar }, loading ? "Verificando…" : "Continuar"));
+  else if (etapa === 2) corpo = h("div", { style: col },
+    h("div", { style: { fontSize: 13, color: "var(--cinza-700)", lineHeight: 1.5 } }, "Este sistema guarda dados de ponto, incluindo prints do EasyMob, para controle de jornada. Seus dados são tratados conforme a LGPD e acessados apenas por quem tem permissão para isso."),
+    h("label", { style: { display: "flex", gap: 8, alignItems: "flex-start", fontSize: 13, cursor: "pointer" } },
+      h("input", { type: "checkbox", checked: aceite, onChange: e => setAceite(e.target.checked), style: { marginTop: 3 } }), "Li e estou ciente."),
+    h("button", { style: btn(aceite), disabled: !aceite, onClick: () => setEtapa(3) }, "Continuar"));
+  else if (etapa === 3) corpo = h("div", { style: col },
+    h("div", { style: { fontSize: 12, color: "var(--cinza-500)" } }, "Dados definidos pelo RH. Não podem ser alterados aqui."),
+    campo("Nome", f.nome), campo("Matrícula", f.matricula || matricula), campo("Cargo", f.cargo),
+    campo("Tipo", f.tipo), campo("Nível / papel", f.nivel), campo("Situação", f.situacao),
+    h("button", { style: btn(true), onClick: () => setEtapa(4) }, "Os dados estão corretos"),
+    h("div", { style: { fontSize: 12, color: "var(--cinza-500)" } }, "Algo errado? Fale com o administrativo antes de continuar."));
+  else if (etapa === 4) corpo = h("div", { style: col },
+    h("div", null, h("label", { style: lbl }, "E-mail corporativo"),
+      h("input", { style: inp, type: "email", value: email, placeholder: "nome" + DOMINIO, onChange: e => setEmail(e.target.value) }),
+      email && !emailOk && h("div", { style: { fontSize: 12, color: "var(--vermelho-600)", marginTop: 4 } }, "Use um e-mail " + DOMINIO)),
+    h("div", null, h("label", { style: lbl }, "Como quer ser chamado(a)? (opcional)"),
+      h("input", { style: inp, value: apelido, maxLength: 30, onChange: e => setApelido(e.target.value) })),
+    h("button", { style: btn(emailOk), disabled: !emailOk, onClick: () => setEtapa(5) }, "Continuar"));
+  else if (etapa === 5) corpo = h("div", { style: col },
+    h("div", { style: { fontSize: 13, color: "var(--cinza-600)" } }, "Como você trabalha?"),
+    [["presencial", "Presencial"], ["home_office", "Home office"]].map(([v, t]) =>
+      h("button", { key: v, type: "button", onClick: () => setModalidade(v), style: { ...inp, textAlign: "left", cursor: "pointer", fontWeight: 600,
+        borderColor: modalidade === v ? "var(--marca-500)" : "var(--cinza-200)", background: modalidade === v ? "var(--marca-100)" : "var(--cor-branco)" } }, t)),
+    aviso,
+    h("button", { style: btn(!loading), disabled: loading, onClick: concluir }, loading ? "Criando seu acesso…" : "Concluir e criar meu acesso"));
+  else corpo = h("div", { style: col },
+    h("div", { style: { fontSize: 13, color: "var(--cinza-700)" } }, "Acesso criado! Entre com a matrícula e esta senha. Ela aparece só desta vez; anote ou copie agora."),
+    h("div", { style: { ...inp, fontFamily: "monospace", fontSize: 18, textAlign: "center", letterSpacing: 1, userSelect: "all" } }, senha),
+    aviso,
+    h("button", { style: btn(true), onClick: copiar }, copiado ? "Copiado ✓" : "Copiar senha"),
+    h("button", { style: btn(copiado), disabled: !copiado, onClick: onVoltar }, "Ir para o login"));
+
+  return h("div", { style: col },
+    h("div", { style: { fontSize: 15, fontWeight: 700, color: "var(--cinza-900)" } }, "Primeiro acesso" + (etapa < 6 ? ` · etapa ${etapa} de 5` : "")),
+    corpo,
+    etapa < 6 && h("button", { type: "button", style: link, onClick: () => (etapa > 1 && etapa < 6 && !loading ? setEtapa(etapa - 1) : onVoltar()) }, etapa > 1 ? "Voltar" : "Voltar ao login"));
+}
+
 function TelaLogin({
   funcionarios,
   onLogin,
@@ -2439,6 +2555,7 @@ function TelaLogin({
   // de "esqueci minha senha" (só e-mail), que dispara o link via Supabase
   // Auth (entregue por Resend). Nenhuma senha é manipulada aqui.
   const [modoEsqueci, setModoEsqueci] = useState(false);
+  const [modoPrimeiro, setModoPrimeiro] = useState(false);
   const [emailRecuperar, setEmailRecuperar] = useState("");
   const [statusRecuperar, setStatusRecuperar] = useState(null); // null | "enviando" | "enviado" | erro string
   async function enviarRecuperacao() {
@@ -2599,7 +2716,7 @@ function TelaLogin({
       color: "var(--cinza-900)",
       margin: "0 0 24px"
     }
-  }, modoEsqueci ? "Recuperar senha" : "Entrar na sua conta"), modoEsqueci ? /*#__PURE__*/React.createElement("div", {
+  }, modoPrimeiro ? "" : modoEsqueci ? "Recuperar senha" : "Entrar na sua conta"), modoPrimeiro ? /*#__PURE__*/React.createElement(PrimeiroAcessoAssistente, { onVoltar: () => setModoPrimeiro(false) }) : modoEsqueci ? /*#__PURE__*/React.createElement("div", {
     style: {
       display: "flex",
       flexDirection: "column",
@@ -2770,7 +2887,11 @@ style: {
       textAlign: "center",
       padding: "2px 0 0"
     }
-  }, "Esqueci minha senha")), /*#__PURE__*/React.createElement("div", {
+  }, "Esqueci minha senha"), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    onClick: () => setModoPrimeiro(true),
+    style: { background: "none", border: "none", cursor: "pointer", fontSize: 13, color: "var(--marca-500)", fontWeight: 700, textAlign: "center", padding: "6px 0 0" }
+  }, "Primeiro acesso? Crie seu login")), /*#__PURE__*/React.createElement("div", {
     style: {
       textAlign: "center",
       marginTop: 24,
