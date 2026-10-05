@@ -5793,6 +5793,8 @@ function analisarImportacaoHierarquia(linhasExcel, banco) {
         item: {
           id: existente.id,
           matriculaAnterior: existente.matricula,
+          auth_user_id: existente.auth_user_id ?? null,
+          emailAnterior: existente.email ?? null,
           matriculaMudou: String(existente.matricula).trim() !== l.matricula,
           nome: l.nomeCompleto,
           campos: existente.situacao !== "ATIVO" ? { ...camposPreenchidos, situacao: "ATIVO" } : camposPreenchidos,
@@ -6105,7 +6107,7 @@ function filtrarPlanoPorSelecao(plano, diretoriasRejeitadas, gerenciasRejeitadas
 // ser chamada com origem administrativa, senão o vínculo em log_acessos sai
 // vazio do mesmo jeito que o de criarUsuariosAdminEmLote saía antes da
 // correção em registrarLogAcessosClient.
-async function chamarGerenciarAcesso(acao, funcionario, origem) {
+async function chamarGerenciarAcesso(acao, funcionario, origem, extra) {
   if (!funcionario.auth_user_id) {
     // Sem login criado ainda — não há usuário Auth para agir sobre. Não é
     // erro: só não há nada a fazer no Auth (a situacao/acesso_revogado no
@@ -6131,7 +6133,8 @@ async function chamarGerenciarAcesso(acao, funcionario, origem) {
         funcionario_administrativo_id: ehAdministrativo ? funcionario.id : null,
         funcionario_nome: funcionario.nome_completo || funcionario.nome || null,
         funcionario_matricula: funcionario.matricula || null,
-        origem: origem || "manual"
+        origem: origem || "manual",
+        ...(extra || {})
       })
     });
     const json = await res.json();
@@ -6254,6 +6257,7 @@ async function aplicarImportacaoHierarquia(plano, banco, onProgresso) {
 
   // ── 4) Atualiza funcionários existentes ─────────────────────────────────
   progresso(`Atualizando ${plano.funcionariosAtualizados.length} funcionário(s)…`);
+  const falhasEmail = []; // logins cujo e-mail não pôde ser trocado no Auth (cadastro mantém o e-mail antigo)
   for (const at of plano.funcionariosAtualizados) {
     const ids = resolverIds(at);
     const novoNivel = at.campos?.nivel; // presente sempre que a linha trouxe cargo — regra 5 não remove esse campo
@@ -6284,10 +6288,34 @@ async function aplicarImportacaoHierarquia(plano, banco, onProgresso) {
       // (vendedor pode estar vinculado direto à diretoria, sem gerência) —
       // nesses casos os valores já resolvidos ou omitidos acima prevalecem.
     }
+    // E-mail: o login (Auth) e o cadastro precisam andar juntos — o login casa
+    // o usuário autenticado com funcionarios_comercial pelo e-mail. Por isso,
+    // se a pessoa já tem login e o e-mail vai mudar, troca primeiro no Auth
+    // (Edge Function, ação "atualizar_email"). Se falhar, o cadastro mantém o
+    // e-mail antigo (login continua funcionando) e a falha é reportada.
+    const camposUpdate = { ...at.campos };
+    const normEmail = v => String(v ?? "").trim().toLowerCase();
+    const emailMudou = !!camposUpdate.email && normEmail(camposUpdate.email) !== normEmail(at.emailAnterior);
+    const refAuth = { id: at.id, auth_user_id: at.auth_user_id, nome_completo: at.nome, matricula: at.matriculaAnterior };
+    let emailAuthTrocado = false;
+    if (emailMudou && at.auth_user_id) {
+      const r = await chamarGerenciarAcesso("atualizar_email", refAuth, "importacao_planilha", { novo_email: normEmail(camposUpdate.email), email_anterior: normEmail(at.emailAnterior) });
+      if (r.ok) emailAuthTrocado = true;
+      else {
+        falhasEmail.push({ nome: nomeParaLog(at), matricula: at.matriculaAnterior, de: at.emailAnterior || "", para: camposUpdate.email, motivo: r.erro });
+        delete camposUpdate.email;
+      }
+    }
     const { error } = await supa.from("funcionarios_comercial")
-      .update({ ...at.campos, ...idsResolvidos })
+      .update({ ...camposUpdate, ...idsResolvidos })
       .eq("id", at.id);
-    if (error) throw new Error(`Falha ao atualizar funcionário "${at.nome}": ${extrairMensagemErro(error)}`);
+    if (error) {
+      // Cadastro não gravou, mas o Auth já mudou: tenta devolver o e-mail antigo no Auth.
+      if (emailAuthTrocado && at.emailAnterior) {
+        await chamarGerenciarAcesso("atualizar_email", refAuth, "importacao_planilha", { novo_email: normEmail(at.emailAnterior), email_anterior: normEmail(camposUpdate.email) });
+      }
+      throw new Error(`Falha ao atualizar funcionário "${at.nome}": ${extrairMensagemErro(error)}`);
+    }
   }
 
   // ── 5) Inativa quem sumiu da planilha ────────────────────────────────────
@@ -6342,7 +6370,7 @@ async function aplicarImportacaoHierarquia(plano, banco, onProgresso) {
   }
 
   progresso("Concluído.");
-  return { falhasRevogacao, revogadosRetroativos: jaEramInativosComAcessoPendente.map(f => ({ nome: nomeParaLog(f), matricula: f.matricula })) };
+  return { falhasRevogacao, falhasEmail, revogadosRetroativos: jaEramInativosComAcessoPendente.map(f => ({ nome: nomeParaLog(f), matricula: f.matricula })) };
 }
 
 // ─── IMPORTADOR DE EQUIPE ADMINISTRATIVA ──────────────────────────────────
@@ -6936,6 +6964,148 @@ function ModalImportarEquipeAdministrativa({ onClose, onConcluido }) {
 }
 
 // Texto curto das mudanças de uma pessoa: "apelido: A → B; cargo: X → Y".
+// Gera um XLSX com o resumo da PRÉVIA da importação (antes de confirmar), para
+// conferir ou enviar a quem vai revisar. Reflete o que realmente será feito
+// (plano já filtrado pelas diretorias/gerências desmarcadas). Não inclui CPF.
+function gerarResumoPreviaHierarquia(plano, planoFiltrado, banco, nomeArquivo, diretoriasRejeitadas, gerenciasRejeitadas) {
+  const txt = v => (v === null || v === undefined) ? "" : String(v);
+  const normEmail = v => txt(v).trim().toLowerCase();
+  const sim = b => b ? "SIM" : "não";
+  const supPorId = new Map((banco?.superintendencias || []).map(x => [String(x.id), x.nome]));
+  const dirObjPorId = new Map((banco?.diretorias || []).map(x => [String(x.id), x]));
+  const gerPorId = new Map((banco?.gerencias || []).map(x => [String(x.id), x.nome]));
+  const nomeSup = id => id == null ? "" : (supPorId.get(String(id)) || "");
+  const todosBanco = banco?.funcionariosTodos || [];
+  const ativosBanco = todosBanco.filter(f => (f.situacao || "ATIVO").toUpperCase() === "ATIVO").length;
+  const emailsBanco = new Map(todosBanco.filter(f => f.email).map(f => [normEmail(f.email), f]));
+
+  const novos = planoFiltrado.funcionariosNovos || [];
+  const atualizados = planoFiltrado.funcionariosAtualizados || [];
+  const semAlteracao = planoFiltrado.funcionariosSemAlteracao || [];
+  const inativados = planoFiltrado.funcionariosInativados || [];
+  const protegidos = plano.funcionariosProtegidos || [];
+
+  // ── Abas de detalhe ──
+  const linhasNovos = novos.map(f => ({
+    "Matrícula": f.matricula, "Nome": f.nome_completo, "Apelido": txt(f.apelido), "E-mail": txt(f.email),
+    "Nível": txt(f.nivel), "Cargo (planilha)": txt(f.cargo_origem), "Vínculo": txt(f.vinculo),
+    "Superintendência": nomeSup(f._superintendenciaId), "Diretoria": txt(f._diretoriaNome), "Gerência": txt(f._gerenciaNome)
+  }));
+  const trocaEmailAuth = f => !!f.auth_user_id && !!f.campos?.email && normEmail(f.campos.email) !== normEmail(f.emailAnterior);
+  const linhasAtualizados = atualizados.map(f => ({
+    "Matrícula (banco)": f.matriculaAnterior, "Matrícula (planilha)": txt(f.campos?.matricula), "Nome": f.nome,
+    "Mudanças": textoMudancas(f.mudancas), "Tem login (Auth)": sim(!!f.auth_user_id),
+    "E-mail anterior": txt(f.emailAnterior), "E-mail novo": txt(f.campos?.email),
+    "Troca e-mail no Auth": sim(trocaEmailAuth(f)),
+    "Superintendência": nomeSup(f._superintendenciaId), "Diretoria": txt(f._diretoriaNome), "Gerência": txt(f._gerenciaNome)
+  }));
+  const infoPessoaBanco = f => {
+    const dir = dirObjPorId.get(String(f.diretoria_id));
+    return {
+      sup: nomeSup(f.superintendencia_id) || nomeSup(dir?.superintendencia_id),
+      dir: dir?.nome || "", ger: gerPorId.get(String(f.gerencia_id)) || ""
+    };
+  };
+  const linhasInativados = inativados.map(f => {
+    const i = infoPessoaBanco(f);
+    return { "Matrícula": f.matricula, "Nome": txt(f.nome_completo || f.apelido), "Nível": txt(f.nivel), "E-mail": txt(f.email),
+      "Tem login (Auth)": sim(!!f.auth_user_id), "Superintendência": i.sup, "Diretoria": i.dir, "Gerência": i.ger };
+  });
+  const linhasProtegidos = protegidos.map(f => {
+    const i = infoPessoaBanco(f);
+    return { "Matrícula": f.matricula, "Nome": txt(f.nome_completo || f.apelido), "Nível": txt(f.nivel),
+      "Superintendência": i.sup, "Diretoria": i.dir, "Gerência": i.ger };
+  });
+  const linhasSemAlt = semAlteracao.map(f => ({ "Matrícula": f.matricula, "Nome": f.nome }));
+  const linhasEmails = (plano.ajustesEmail || []).map(a => ({
+    "Matrícula": a.matricula, "Nome": a.nome, "Tipo": a.tipo, "E-mail na planilha": txt(a.de),
+    "E-mail resultante": a.mantido ? "(mantido)" : txt(a.para), "Mantido sem correção": sim(!!a.mantido)
+  }));
+  const linhasEstruturaNova = [
+    ...(plano.diretoriasNovas || []).map(d => ({ "Tipo": "Diretoria", "Nome": d.nome, "Diretoria (pai)": "", "Responsável": txt(d.responsavel_nome),
+      "Superintendência": nomeSup(d.superintendencia_id), "Desmarcada (não será criada)": sim(diretoriasRejeitadas?.has(d.chave)) })),
+    ...(plano.gerenciasNovas || []).map(g => ({ "Tipo": "Gerência", "Nome": g.nome, "Diretoria (pai)": g.diretoriaNomeRef, "Responsável": txt(g.responsavel_nome),
+      "Superintendência": "", "Desmarcada (não será criada)": sim(gerenciasRejeitadas?.has(g.chave)) }))
+  ];
+  const linhasErros = (plano.erros || []).map(e => ({ "Linha": e.linha, "Matrícula": txt(e.matricula), "Nome": txt(e.nome), "Motivo": e.motivo }));
+
+  // Novos agrupados por destino (estrutura resultante)
+  const porDestino = new Map();
+  novos.forEach(f => {
+    const k = [nomeSup(f._superintendenciaId), txt(f._diretoriaNome), txt(f._gerenciaNome), txt(f.nivel)].join("||");
+    porDestino.set(k, (porDestino.get(k) || 0) + 1);
+  });
+  const linhasDestino = [...porDestino.entries()].sort((a, b) => a[0].localeCompare(b[0], "pt-BR")).map(([k, n]) => {
+    const [sup, dir, ger, niv] = k.split("||");
+    return { "Superintendência": sup, "Diretoria": dir, "Gerência": ger, "Nível": niv, "Novos": n };
+  });
+
+  // ── Alertas automáticos (pontos que merecem olhar) ──
+  const contagemEmail = new Map();
+  novos.forEach(f => { const e = normEmail(f.email); if (e) contagemEmail.set(e, (contagemEmail.get(e) || 0) + 1); });
+  const alertas = [
+    ["Novos sem e-mail", novos.filter(f => !normEmail(f.email)).length],
+    ["Novos com e-mail repetido entre si", [...contagemEmail.values()].filter(n => n > 1).length],
+    ["Novos cujo e-mail já existe no banco (outra pessoa)", novos.filter(f => emailsBanco.has(normEmail(f.email))).length],
+    ["Novos sem diretoria (esperado só em Vida e Saúde e superintendentes)", novos.filter(f => !f._diretoriaNome).length],
+    ["Atualizados com mudança de matrícula", atualizados.filter(f => f.matriculaMudou).length],
+    ["Atualizados que trocam e-mail e têm login (passam pelo Auth)", atualizados.filter(trocaEmailAuth).length],
+    ["Inativados que têm login (acesso será revogado)", inativados.filter(f => f.auth_user_id).length],
+    ["Inativados que NÃO são vendedor (gestores)", inativados.filter(f => f.nivel && f.nivel !== "vendedor").length],
+    ["Inativados em % dos ativos do banco", ativosBanco ? Math.round((inativados.length / ativosBanco) * 1000) / 10 + "%" : "n/d"],
+    ["Linhas com erro (ignoradas)", (plano.erros || []).length],
+    ["Superintendências não encontradas no sistema", (plano.superintendenciasNaoEncontradas || []).join(", ") || 0]
+  ];
+  const dirRej = (plano.diretoriasNovas || []).filter(d => diretoriasRejeitadas?.has(d.chave)).map(d => d.nome);
+  const gerRej = (plano.gerenciasNovas || []).filter(g => gerenciasRejeitadas?.has(g.chave)).map(g => g.nome);
+
+  const resumo = [
+    ["Resumo da prévia da importação de hierarquia"],
+    ["Gerado em", new Date().toLocaleString("pt-BR")],
+    ["Arquivo", nomeArquivo || ""],
+    ["Linhas na planilha", plano.totalLinhasPlanilha],
+    ["Linhas ignoradas de propósito (ex.: CEO)", plano.linhasIgnoradasIntencionalmente || 0],
+    ["Ativos no banco hoje", ativosBanco],
+    [],
+    ["O QUE SERÁ FEITO"],
+    ["Funcionários novos", novos.length],
+    ["Funcionários atualizados (com mudança)", atualizados.length],
+    ["Sem alteração", semAlteracao.length],
+    ["Funcionários inativados", inativados.length],
+    ["Líderes protegidos (fora da planilha, não serão inativados)", protegidos.length],
+    ["Diretorias novas (marcadas)", (plano.diretoriasNovas || []).length - dirRej.length],
+    ["Gerências novas (marcadas)", (plano.gerenciasNovas || []).length - gerRej.length],
+    ["E-mails ajustados", (plano.ajustesEmail || []).filter(a => !a.mantido).length],
+    ["E-mails mantidos só sinalizados", (plano.ajustesEmail || []).filter(a => a.mantido).length],
+    ["Diretorias desmarcadas pelo usuário", dirRej.join(", ") || "nenhuma"],
+    ["Gerências desmarcadas pelo usuário", gerRej.join(", ") || "nenhuma"],
+    [],
+    ["ALERTAS AUTOMÁTICOS"],
+    ...alertas
+  ];
+
+  const wb = XLSX.utils.book_new();
+  const wsResumo = XLSX.utils.aoa_to_sheet(resumo);
+  wsResumo["!cols"] = [{ wch: 66 }, { wch: 44 }];
+  XLSX.utils.book_append_sheet(wb, wsResumo, "Resumo");
+  const aba = (nome, linhas) => {
+    const ws = XLSX.utils.json_to_sheet(linhas.length ? linhas : [{ Info: "(nenhum)" }]);
+    const cab = Object.keys(linhas[0] || { Info: "" });
+    ws["!cols"] = cab.map(c => ({ wch: Math.min(60, Math.max(12, c.length + 2, ...linhas.slice(0, 200).map(l => txt(l[c]).length + 2))) }));
+    XLSX.utils.book_append_sheet(wb, ws, nome);
+  };
+  aba("Novos por destino", linhasDestino);
+  aba("Novos", linhasNovos);
+  aba("Atualizados", linhasAtualizados);
+  aba("Inativados", linhasInativados);
+  aba("Protegidos", linhasProtegidos);
+  aba("E-mails", linhasEmails);
+  aba("Estrutura nova", linhasEstruturaNova);
+  aba("Erros", linhasErros);
+  aba("Sem alteração", linhasSemAlt);
+  XLSX.writeFile(wb, `previa-importacao-hierarquia-${new Date().toISOString().slice(0, 10)}.xlsx`);
+}
+
 function textoMudancas(mudancas) {
   return (mudancas || []).map(m => `${m.campo}: ${m.de === "" || m.de == null ? "(vazio)" : m.de} → ${m.para}`).join("; ");
 }
@@ -7001,7 +7171,7 @@ function ModalImportarHierarquia({ onClose, onConcluido }) {
     setErro("");
     try {
       const planoFiltrado = filtrarPlanoPorSelecao(plano, diretoriasRejeitadas, gerenciasRejeitadas);
-      const { falhasRevogacao, revogadosRetroativos } = await aplicarImportacaoHierarquia(planoFiltrado, banco, setEtapaAtual);
+      const { falhasRevogacao, falhasEmail, revogadosRetroativos } = await aplicarImportacaoHierarquia(planoFiltrado, banco, setEtapaAtual);
       // IMPORTANTE: este registro precisa ser sempre gravado, mesmo quando a
       // importação só atualizou funcionários existentes (novos=0,
       // inativados=0) — é o único jeito de auditoria/histórico saberem que
@@ -7031,6 +7201,7 @@ function ModalImportarHierarquia({ onClose, onConcluido }) {
         diretoriasCriadas: planoFiltrado.diretoriasNovas.length,
         gerenciasCriadas: planoFiltrado.gerenciasNovas.length,
         falhasRevogacao: falhasRevogacao || [],
+        falhasEmail: falhasEmail || [],
         revogadosRetroativos: revogadosRetroativos || [],
         logFalhou: !resultadoLog.ok,
         logDebug: resultadoLog.debug,
@@ -7224,7 +7395,18 @@ function ModalImportarHierarquia({ onClose, onConcluido }) {
               background: "var(--cinza-100)", color: "var(--cinza-600)", border: "none",
               borderRadius: 10, padding: "10px 20px", fontSize: 13, fontWeight: 600, cursor: "pointer"
             }
-          }, "Cancelar")
+          }, "Cancelar"),
+          /*#__PURE__*/React.createElement("button", {
+            type: "button",
+            onClick: () => {
+              try { gerarResumoPreviaHierarquia(plano, planoFiltrado, banco, arquivo?.name, diretoriasRejeitadas, gerenciasRejeitadas); }
+              catch (e) { setErro("Não foi possível gerar o resumo da prévia: " + (e?.message || e)); }
+            },
+            style: {
+              background: "var(--cor-branco)", color: "var(--marca-700)", border: "1px solid var(--cinza-200)",
+              borderRadius: 10, padding: "10px 20px", fontSize: 13, fontWeight: 600, cursor: "pointer"
+            }
+          }, "⬇ Baixar resumo da prévia (XLSX)")
         )
       );
     })(),
@@ -7296,6 +7478,16 @@ function ModalImportarHierarquia({ onClose, onConcluido }) {
             f.nome, " (mat. ", f.matricula, ") — ", f.motivo))
         )
       ),
+      concluido.falhasEmail?.length > 0 && /*#__PURE__*/React.createElement("div", {
+        style: { background: "var(--amber-100)", color: "var(--amber-800)", borderRadius: 12, padding: "12px 16px", fontSize: 13 }
+      },
+        /*#__PURE__*/React.createElement("div", { style: { fontWeight: 700, marginBottom: 6 } },
+          "⚠️ ", concluido.falhasEmail.length, " e-mail(s) NÃO foram alterados: não foi possível trocar o e-mail do login no Auth, então o cadastro manteve o e-mail antigo (o login continua funcionando). Publique a ação atualizar_email na Edge Function e importe de novo:"),
+        /*#__PURE__*/React.createElement("ul", { style: { paddingLeft: 18, display: "flex", flexDirection: "column", gap: 2 } },
+          concluido.falhasEmail.map((f, i) => /*#__PURE__*/React.createElement("li", { key: i },
+            f.nome, " (mat. ", f.matricula, "): ", f.de, " → ", f.para, " — ", f.motivo))
+        )
+      ),
       concluido.linhasIgnoradas?.length > 0 && /*#__PURE__*/React.createElement("div", {
         style: { background: "var(--vermelho-100)", color: "var(--vermelho-800)", borderRadius: 12, padding: "10px 16px", fontSize: 13 }
       }, concluido.linhasIgnoradas.length, " linha(s) da planilha foram ignoradas por erro — estão no log em XLSX."),
@@ -7309,6 +7501,7 @@ function ModalImportarHierarquia({ onClose, onConcluido }) {
               ...(concluido.listaInativados || []).map(f => ({ Situação: "Inativado", Nome: f.nome, Matrícula: f.matricula, Detalhe: "Acesso revogado" })),
               ...(concluido.revogadosRetroativos || []).map(f => ({ Situação: "Acesso revogado (já inativo)", Nome: f.nome, Matrícula: f.matricula, Detalhe: "" })),
               ...(concluido.falhasRevogacao || []).map(f => ({ Situação: "Falha ao revogar login", Nome: f.nome, Matrícula: f.matricula, Detalhe: f.motivo })),
+              ...(concluido.falhasEmail || []).map(f => ({ Situação: "E-mail não alterado (Auth)", Nome: f.nome, Matrícula: f.matricula, Detalhe: f.de + " → " + f.para + " — " + f.motivo })),
               ...(concluido.linhasIgnoradas || []).map(l => ({ Situação: "Linha ignorada (erro)", Nome: l.nome, Matrícula: l.matricula, Detalhe: "Linha " + l.linha + ": " + l.motivo }))
             ];
             const ws = XLSX.utils.json_to_sheet(linhas);
