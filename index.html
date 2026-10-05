@@ -5416,7 +5416,9 @@ const MAPA_COLUNAS_IMPORT_HIERARQUIA = {
   situacao: "Situacao",
   vinculo: "Vinculo",
   email: "e-mail Profissional",
-  nivelComissao: "Nivel Comissao"
+  nivelComissao: "Nivel Comissao",
+  inicioVendas: "Inicio Vendas",
+  admissao: "Admissao"
 };
 
 // Cargo (texto livre da planilha) -> nivel do schema. Quando o Cargo vier
@@ -5442,6 +5444,139 @@ function normalizarTextoHierarquia(v) {
   return s;
 }
 
+// Matrículas que a importação ignora de propósito (sem erro, sem log de erro).
+// 30000 = Fernando Gianjiope, CEO da empresa.
+const MATRICULAS_IGNORADAS_IMPORTACAO = new Set(["30000"]);
+
+// "COMERCIAL 4" na planilha é a superintendência "VIDA E SAÚDE" no sistema
+// (um único dropdown, no lugar da COMERCIAL 4 inteira). O importador não cria
+// superintendência: ela precisa existir no banco (ver criar_superintendencia_vida_saude.sql).
+const SUPERINTENDENCIAS_ALIAS_IMPORTACAO = { "COMERCIAL 4": "VIDA E SAÚDE" };
+
+// Terceiros (Vinculo = TERCEIRO) que vêm sem diretoria entram numa diretoria
+// especial "TERCEIROS" dentro da própria superintendência, em vez de erro.
+const NOME_DIRETORIA_TERCEIROS = "TERCEIROS";
+
+// ── Regras de e-mail da importação ──────────────────────────────────────────
+// 1) E-mail da planilha é saneado (espaços) e conferido com o nome da pessoa
+//    (primeiro nome + sobrenome, ignorando acentos e "de/da/do/dos/das/e").
+//    Se não confere, é corrigido para nome.sobrenome@portovaleconsorcios.com.br
+//    (todas as palavras do Apelido, separadas por ponto).
+//    Exceções mantidas e sinalizadas para conferência: e-mail pessoal
+//    (gmail, yahoo etc.) e e-mail corporativo só com o primeiro nome.
+// 2) Sem e-mail na planilha: provisório primeironome.ultimosobrenome@portovale.com.br
+//    (a partir do Apelido).
+// 3) Se mais de uma pessoa terminar com o mesmo e-mail, ordena por
+//    "Inicio Vendas" (depois Admissão e matrícula): o mais antigo ganha "1"
+//    antes do @, o seguinte "2", e assim por diante.
+const DOMINIO_EMAIL_CORPORATIVO = "portovaleconsorcios.com.br";
+const DOMINIO_EMAIL_PROVISORIO = "portovale.com.br";
+const DOMINIOS_EMAIL_PESSOAIS = new Set(["gmail.com", "yahoo.com", "yahoo.com.br", "hotmail.com", "outlook.com", "icloud.com", "uol.com.br", "bol.com.br"]);
+const PARTICULAS_NOME_EMAIL = new Set(["de", "da", "do", "das", "dos", "e"]);
+
+function tokensNomeEmail(texto) {
+  return String(texto || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
+    .replace(/[^a-z ]/g, " ").split(/\s+/).filter(t => t && !PARTICULAS_NOME_EMAIL.has(t));
+}
+
+function dataParaTimestampImportacao(v) {
+  if (v instanceof Date) return v.getTime();
+  if (typeof v === "number" && v > 20000) return Math.round((v - 25569) * 86400000);
+  const txt = String(v ?? "").trim();
+  const m = txt.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (m) return Date.UTC(+m[3], +m[2] - 1, +m[1]);
+  const t = txt ? Date.parse(txt) : NaN;
+  return isNaN(t) ? null : t;
+}
+
+function emailConfereComNome(email, l) {
+  const local = String(email).split("@")[0].replace(/[^a-z]/g, "");
+  const c = tokensNomeEmail(l.nomeCompleto);
+  const a = tokensNomeEmail(l.apelido);
+  if (!c.length) return true;
+  const primeiros = [c[0], a[0]].filter(Boolean);
+  const sobrenomes = [...c.slice(1), ...a.slice(1)];
+  return primeiros.some(p => local.startsWith(p)) && sobrenomes.some(sn => local.includes(sn));
+}
+
+function resolverEmailsImportacao(linhas) {
+  const ajustes = [];
+  const REGEX_EMAIL = /^[a-z0-9._%+\-]+@[a-z0-9\-]+(\.[a-z0-9\-]+)+$/;
+  const ref = l => ({ matricula: l.matricula, nome: l.nomeCompleto, de: l.emailOriginal });
+
+  linhas.forEach(l => {
+    const original = l.email || "";
+    l.emailOriginal = original;
+
+    // (2) sem e-mail: provisório
+    if (!original) {
+      const t = tokensNomeEmail(l.apelido).length ? tokensNomeEmail(l.apelido) : tokensNomeEmail(l.nomeCompleto);
+      const base = t.length > 1 ? t[0] + "." + t[t.length - 1] : (t[0] || "");
+      if (base) {
+        l.email = `${base}@${DOMINIO_EMAIL_PROVISORIO}`;
+        ajustes.push({ ...ref(l), para: l.email, tipo: "provisório (sem e-mail na planilha)" });
+      }
+      return;
+    }
+
+    // (1) saneamento de formato + conferência com o nome
+    const partes = original.split("@");
+    const local = (partes[0] || "").replace(/\s+/g, ".").replace(/^\.+|\.+$/g, "");
+    const dominio = partes.length > 1 ? partes.slice(1).join("@").replace(/\s+/g, "") : "";
+    const saneado = dominio ? `${local}@${dominio}` : "";
+    const formatoOk = REGEX_EMAIL.test(saneado);
+
+    if (formatoOk && emailConfereComNome(saneado, l)) {
+      if (saneado !== original) {
+        l.email = saneado;
+        ajustes.push({ ...ref(l), para: saneado, tipo: "formato corrigido (espaços)" });
+      }
+      return;
+    }
+
+    if (formatoOk) {
+      const letras = local.replace(/[^a-z]/g, "");
+      const primeiros = [tokensNomeEmail(l.nomeCompleto)[0], tokensNomeEmail(l.apelido)[0]].filter(Boolean);
+      if (DOMINIOS_EMAIL_PESSOAIS.has(dominio)) {
+        l.email = saneado;
+        ajustes.push({ ...ref(l), para: saneado, tipo: "mantido — e-mail pessoal, conferir", mantido: true });
+        return;
+      }
+      if (dominio === DOMINIO_EMAIL_CORPORATIVO && primeiros.includes(letras)) {
+        l.email = saneado;
+        ajustes.push({ ...ref(l), para: saneado, tipo: "mantido — só o primeiro nome, conferir", mantido: true });
+        return;
+      }
+    }
+
+    const t = tokensNomeEmail(l.apelido).length ? tokensNomeEmail(l.apelido) : tokensNomeEmail(l.nomeCompleto);
+    if (!t.length) return;
+    l.email = `${t.join(".")}@${DOMINIO_EMAIL_CORPORATIVO}`;
+    ajustes.push({ ...ref(l), para: l.email, tipo: "corrigido (não confere com o nome)" });
+  });
+
+  // (3) duplicados: dígito pelo "Inicio Vendas" (mais antigo = 1)
+  const grupos = new Map();
+  linhas.forEach(l => { if (l.email) { if (!grupos.has(l.email)) grupos.set(l.email, []); grupos.get(l.email).push(l); } });
+  const usados = new Set(grupos.keys());
+  const cmp = (a, b) => (a ?? Infinity) - (b ?? Infinity);
+  grupos.forEach((g, email) => {
+    if (g.length < 2) return;
+    g.sort((a, b) => cmp(a.inicioVendasTs, b.inicioVendasTs) || cmp(a.admissaoTs, b.admissaoTs) ||
+      String(a.matricula).localeCompare(String(b.matricula), "pt-BR", { numeric: true }));
+    const [loc, dom] = email.split("@");
+    g.forEach((l, i) => {
+      let n = i + 1;
+      let novo = `${loc}${n}@${dom}`;
+      while (usados.has(novo)) { n++; novo = `${loc}${n}@${dom}`; }
+      usados.add(novo);
+      l.email = novo;
+      ajustes.push({ ...ref(l), para: novo, tipo: "duplicado (dígito por Início Vendas)" });
+    });
+  });
+  return ajustes;
+}
+
 // Monta o plano de sincronização. Não faz nenhuma chamada de rede.
 // Parâmetros:
 //  - linhasExcel: saída crua de lerArquivoExcel() (um objeto por linha)
@@ -5451,32 +5586,47 @@ function normalizarTextoHierarquia(v) {
 function analisarImportacaoHierarquia(linhasExcel, banco) {
   const erros = []; // { linha, motivo }
   const linhasValidas = [];
+  let linhasIgnoradasIntencionalmente = 0; // ex.: CEO (ver MATRICULAS_IGNORADAS_IMPORTACAO)
 
   // ── 1) Parse + validação linha a linha ──────────────────────────────────
   linhasExcel.forEach((linha, idx) => {
     const numeroLinha = idx + 2; // +2: cabeçalho ocupa a linha 1 do Excel
     const matricula = normalizarTextoHierarquia(linha[MAPA_COLUNAS_IMPORT_HIERARQUIA.matricula]);
     const nomeCompleto = normalizarTextoHierarquia(linha[MAPA_COLUNAS_IMPORT_HIERARQUIA.nomeCompleto]);
+    if (MATRICULAS_IGNORADAS_IMPORTACAO.has(matricula)) { linhasIgnoradasIntencionalmente++; return; }
     if (!matricula || !nomeCompleto) {
       erros.push({ linha: numeroLinha, motivo: "Matrícula ou nome do colaborador ausente." });
       return;
     }
-    const nivel = inferirNivelHierarquia(
+    let nivel = inferirNivelHierarquia(
       linha[MAPA_COLUNAS_IMPORT_HIERARQUIA.cargo],
       linha[MAPA_COLUNAS_IMPORT_HIERARQUIA.nivelComissao]
     );
+    // Vida e Saúde (COMERCIAL 4): cargos de apoio (assistente, supervisor,
+    // backoffice) não têm nível próprio no schema — entram como "vendedor"
+    // (nível base) dentro da superintendência, em vez de virar erro.
+    if (!nivel && SUPERINTENDENCIAS_ALIAS_IMPORTACAO[normalizarTextoHierarquia(linha[MAPA_COLUNAS_IMPORT_HIERARQUIA.superintendencia]).toUpperCase()]) {
+      nivel = "vendedor";
+    }
     if (!nivel) {
       erros.push({ linha: numeroLinha, matricula, nome: nomeCompleto, motivo: "Não foi possível identificar o nível (cargo/nível de comissão desconhecido)." });
       return;
     }
-    const superintendenciaNome = normalizarTextoHierarquia(linha[MAPA_COLUNAS_IMPORT_HIERARQUIA.superintendencia]);
-    const diretoriaNome = normalizarTextoHierarquia(linha[MAPA_COLUNAS_IMPORT_HIERARQUIA.diretoria]);
+    const superintendenciaBruta = normalizarTextoHierarquia(linha[MAPA_COLUNAS_IMPORT_HIERARQUIA.superintendencia]);
+    const superintendenciaNome = SUPERINTENDENCIAS_ALIAS_IMPORTACAO[superintendenciaBruta.toUpperCase()] || superintendenciaBruta;
+    const diretoriaBruta = normalizarTextoHierarquia(linha[MAPA_COLUNAS_IMPORT_HIERARQUIA.diretoria]);
+    const ehTerceiroSemDiretoria = !diretoriaBruta && nivel !== "superintendente" &&
+      normalizarTextoHierarquia(linha[MAPA_COLUNAS_IMPORT_HIERARQUIA.vinculo]).toUpperCase() === "TERCEIRO";
+    // Exceção Vida e Saúde (COMERCIAL 4): a hierarquia deles ainda é desconhecida,
+    // então ninguém é ligado a diretoria/gerência — só à superintendência.
+    const ehSupVidaSaude = !!SUPERINTENDENCIAS_ALIAS_IMPORTACAO[superintendenciaBruta.toUpperCase()];
+    const diretoriaNome = ehSupVidaSaude ? "" : (diretoriaBruta || (ehTerceiroSemDiretoria ? NOME_DIRETORIA_TERCEIROS : ""));
     const gerenciaNome = normalizarTextoHierarquia(linha[MAPA_COLUNAS_IMPORT_HIERARQUIA.gerencia]);
     const ehSuperintendente = nivel === "superintendente";
 
     // A própria superintendente vem com Diretoria/Gerencia = "-": é
     // atualização do próprio registro dela, sem exigir vínculo abaixo.
-    if (!ehSuperintendente && !diretoriaNome) {
+    if (!ehSuperintendente && !ehSupVidaSaude && !diretoriaNome) {
       erros.push({ linha: numeroLinha, matricula, nome: nomeCompleto, motivo: "Diretoria ausente para um registro que não é de superintendente." });
       return;
     }
@@ -5499,13 +5649,20 @@ function analisarImportacaoHierarquia(linhasExcel, banco) {
       diretorNome: normalizarTextoHierarquia(linha[MAPA_COLUNAS_IMPORT_HIERARQUIA.diretorNome]) || null,
       // Gerência é opcional mesmo para não-superintendentes: existe o caso
       // de vendedor vinculado direto à diretoria (gerencia_id nulo).
-      gerenciaNome: ehSuperintendente ? "" : gerenciaNome,
+      // Vida e Saúde (COMERCIAL 4): não cria gerências, só importa as pessoas
+      // (ficam ligadas direto à diretoria, como vendedor sem gerência).
+      gerenciaNome: (ehSuperintendente || SUPERINTENDENCIAS_ALIAS_IMPORTACAO[superintendenciaBruta.toUpperCase()]) ? "" : gerenciaNome,
       gerenteNome: normalizarTextoHierarquia(linha[MAPA_COLUNAS_IMPORT_HIERARQUIA.gerenteNome]) || null,
       situacao: (normalizarTextoHierarquia(linha[MAPA_COLUNAS_IMPORT_HIERARQUIA.situacao]).toUpperCase() || "ATIVO"),
       vinculo: normalizarTextoHierarquia(linha[MAPA_COLUNAS_IMPORT_HIERARQUIA.vinculo]).toUpperCase() || null,
-      email: normalizarTextoHierarquia(linha[MAPA_COLUNAS_IMPORT_HIERARQUIA.email]).toLowerCase() || null
+      email: normalizarTextoHierarquia(linha[MAPA_COLUNAS_IMPORT_HIERARQUIA.email]).toLowerCase() || null,
+      inicioVendasTs: dataParaTimestampImportacao(linha[MAPA_COLUNAS_IMPORT_HIERARQUIA.inicioVendas]),
+      admissaoTs: dataParaTimestampImportacao(linha[MAPA_COLUNAS_IMPORT_HIERARQUIA.admissao])
     });
   });
+
+  // E-mails: saneamento, conferência com o nome, provisórios e duplicados.
+  const ajustesEmail = resolverEmailsImportacao(linhasValidas);
 
   // ── 2) Sincronização de superintendências (só validação de existência —
   //      criação de superintendência nova não faz parte deste importador,
@@ -5858,7 +6015,9 @@ function analisarImportacaoHierarquia(linhasExcel, banco) {
     funcionariosAtualizados,
     funcionariosSemAlteracao,
     funcionariosInativados,
-    funcionariosProtegidos
+    funcionariosProtegidos,
+    ajustesEmail,
+    linhasIgnoradasIntencionalmente
   };
 }
 
@@ -6966,7 +7125,8 @@ function ModalImportarHierarquia({ onClose, onConcluido }) {
           linhaResumo("Funcionários inativados", planoFiltrado.funcionariosInativados.length, "amber"),
           linhaResumo("Diretorias novas", planoFiltrado.diretoriasNovas.length, "roxo"),
           linhaResumo("Gerências novas", planoFiltrado.gerenciasNovas.length, "roxo"),
-          linhaResumo("Linhas com erro (ignoradas)", plano.erros.length, "vermelho")
+          linhaResumo("Linhas com erro (ignoradas)", plano.erros.length, "vermelho"),
+          linhaResumo("E-mails ajustados", (plano.ajustesEmail || []).filter(a => !a.mantido).length, "amber")
         ),
 
         plano.diretoriasNovas.length > 0 && /*#__PURE__*/React.createElement("div", null,
@@ -7034,6 +7194,13 @@ function ModalImportarHierarquia({ onClose, onConcluido }) {
             "🛡️ ", plano.funcionariosProtegidos.length, " líder(es) fora da planilha, mas citado(s) nas colunas de hierarquia — NÃO serão inativados:"),
           /*#__PURE__*/React.createElement("ul", { style: { paddingLeft: 18 } },
             plano.funcionariosProtegidos.map((f, i) => /*#__PURE__*/React.createElement("li", { key: i }, nomeParaLog(f), " — mat. ", f.matricula, f.nivel ? " (" + f.nivel + ")" : "")))
+        ),
+
+        (plano.ajustesEmail || []).length > 0 && /*#__PURE__*/React.createElement("div", null,
+          /*#__PURE__*/React.createElement("p", { style: { fontSize: 13, fontWeight: 700, marginBottom: 6 } }, "E-mails ajustados ou para conferir:"),
+          /*#__PURE__*/React.createElement("ul", { style: { fontSize: 12, paddingLeft: 18, display: "flex", flexDirection: "column", gap: 2, maxHeight: 160, overflow: "auto" } },
+            plano.ajustesEmail.map((a, i) => /*#__PURE__*/React.createElement("li", { key: i },
+              a.nome, " (mat. ", a.matricula, ") — ", a.tipo, ": ", a.de || "(vazio)", a.mantido ? "" : " → " + a.para)))
         ),
 
         plano.erros.length > 0 && /*#__PURE__*/React.createElement("div", null,
