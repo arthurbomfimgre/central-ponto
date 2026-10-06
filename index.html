@@ -1480,7 +1480,10 @@ function filtrarPorEscopoGestor(lista, usuario, { gerencias = [], diretorias = [
   if (usuario.nivel === "superintendente") {
     const diretoriasDaSuper = new Set(diretorias.filter(d => d.superintendencia_id === usuario.superintendencia_id).map(d => d.id));
     const gerenciasDaSuper = new Set(gerencias.filter(g => diretoriasDaSuper.has(g.diretoria_id)).map(g => g.id));
-    return lista.filter(f => diretoriasDaSuper.has(f.diretoria_id) || gerenciasDaSuper.has(f.gerencia_id));
+    // Também enxerga quem está ligado direto à superintendência (sem diretoria nem gerência — ex.: Vida e Saúde).
+    const direto = f => f.diretoria_id == null && f.gerencia_id == null && f.nivel !== "superintendente"
+      && f.superintendencia_id != null && f.superintendencia_id === usuario.superintendencia_id;
+    return lista.filter(f => diretoriasDaSuper.has(f.diretoria_id) || gerenciasDaSuper.has(f.gerencia_id) || direto(f));
   }
   return lista;
 }
@@ -4142,14 +4145,25 @@ function ListaFuncionarios({
   // diretor vê só a própria diretoria (única "raiz"). Um funcionário entra
   // na gerência via gerencia_id, ou direto na diretoria (sem gerência) via
   // fallback pelo diretoria_id (mesma regra da [PENDÊNCIA 2] antiga).
+  // Superintendente também vê quem está ligado direto à superintendência (sem diretoria nem gerência).
+  const diretosSuperGestor = useMemo(() => {
+    if (!usaVisaoArvore || usuario?.nivel !== "superintendente") return [];
+    return lista.filter(f => f.diretoria_id == null && f.gerencia_id == null && f.nivel !== "superintendente"
+      && f.superintendencia_id != null && f.superintendencia_id === usuario.superintendencia_id);
+  }, [usaVisaoArvore, usuario, lista]);
   const arvoreFuncionarios = useMemo(() => {
     if (!usaVisaoArvore) return [];
     const ehAtivo = f => f.ativo !== false;
+    // Gerência/diretoria sem nenhuma pessoa (ativa ou inativa) no escopo não aparece.
+    // Usa `funcionarios` (lista completa do escopo), não `lista` (que já vem filtrada
+    // por busca/cargo e esconderia nós só porque o filtro não bateu).
+    const idsGerComGente = new Set(funcionarios.map(f => f.gerencia_id).filter(id => id != null));
+    const idsDirComGente = new Set(funcionarios.map(f => f.diretoria_id).filter(id => id != null));
     const diretoriasBase = usuario?.nivel === "diretor"
       ? diretoriasComercial.filter(d => d.id === usuario.diretoria_id)
       : diretoriasComercial.filter(d => d.superintendencia_id === usuario?.superintendencia_id);
-    return diretoriasBase.slice().sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR")).map(d => {
-      const gerenciasDaDir = gerenciasComercial.filter(g => g.diretoria_id === d.id)
+    return diretoriasBase.filter(d => idsDirComGente.has(d.id) || gerenciasComercial.some(g => g.diretoria_id === d.id && idsGerComGente.has(g.id))).slice().sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR")).map(d => {
+      const gerenciasDaDir = gerenciasComercial.filter(g => g.diretoria_id === d.id && idsGerComGente.has(g.id))
         .slice().sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
       const gerenciasMontadas = gerenciasDaDir.map(g => {
         const vendedores = lista.filter(f => f.gerencia_id === g.id);
@@ -4161,7 +4175,7 @@ function ListaFuncionarios({
       const totalInativos = gerenciasMontadas.reduce((acc, g) => acc + g.totalInativos, 0) + semGerencia.filter(f => !ehAtivo(f)).length;
       return { ...d, gerencias: gerenciasMontadas, semGerencia, totalAtivos, totalInativos };
     });
-  }, [usaVisaoArvore, usuario, diretoriasComercial, gerenciasComercial, lista]);
+  }, [usaVisaoArvore, usuario, diretoriasComercial, gerenciasComercial, lista, funcionarios]);
   async function adicionar() {
     if (!novo.nome.trim() || !novo.cargo.trim()) {
       setErr("Preencha nome e cargo.");
@@ -4409,9 +4423,9 @@ function ListaFuncionarios({
     className: "cp-aba",
     style: { display: "flex", flexDirection: "column", gap: 10 }
   },
-    arvoreFuncionarios.length === 0
+    arvoreFuncionarios.length === 0 && diretosSuperGestor.length === 0
       ? /*#__PURE__*/React.createElement(EstadoVazio, { icone: "🏢", titulo: "Nenhuma diretoria cadastrada", texto: "A hierarquia é criada pela importação da planilha (aba Hierarquia, disponível para administradores).", padding: 40 })
-      : arvoreFuncionarios.map(d => /*#__PURE__*/React.createElement(NoDiretoriaFuncionarios, {
+      : /*#__PURE__*/React.createElement(React.Fragment, null, arvoreFuncionarios.map(d => /*#__PURE__*/React.createElement(NoDiretoriaFuncionarios, {
           key: d.id,
           diretoria: d,
           aberta: !!estadoAberto[`d_${d.id}`],
@@ -4423,7 +4437,16 @@ function ListaFuncionarios({
           setView,
           somenteLeituraGestor,
           setConfirmExcluir
-        }))
+        })),
+        diretosSuperGestor.length > 0 && /*#__PURE__*/React.createElement("div", {
+          key: "diretos-super",
+          style: { background: "var(--cinza-50)", border: "1px dashed var(--cinza-200)", borderRadius: 12, padding: "10px 12px" }
+        },
+          /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, fontWeight: 600, color: "var(--cinza-500)", marginBottom: 6 } }, "Sem diretoria — reporta direto à superintendência"),
+          diretosSuperGestor.map(f => /*#__PURE__*/React.createElement(LinhaFuncionarioArvore, {
+            key: f.id, f, contagens, setFuncSelecionado, setView, somenteLeituraGestor, setConfirmExcluir
+          }))
+        ))
   ) : /*#__PURE__*/React.createElement("div", {
     style: {
       background: "var(--cor-branco)",
@@ -5468,11 +5491,40 @@ const NOME_DIRETORIA_TERCEIROS = "TERCEIROS";
 //    (a partir do Apelido).
 // 3) Se mais de uma pessoa terminar com o mesmo e-mail, ordena por
 //    "Inicio Vendas" (depois Admissão e matrícula): o mais antigo ganha "1"
-//    antes do @, o seguinte "2", e assim por diante.
+//    antes do @, o seguinte "2", e assim por diante. EXCEÇÃO: quem já tem login
+//    e cujo e-mail no cadastro é exatamente esse e-mail mantém-no sem dígito;
+//    os demais do grupo recebem 2, 3...
+// 4) Domínio digitado errado (parecido com portovaleconsorcios.com.br, até 4
+//    edições de diferença: ".combr", "portoveleconsorcios", sem ".br" etc.) é
+//    corrigido para portovaleconsorcios.com.br.
+// 5) O e-mail provisório (item 2) nunca substitui o e-mail que o cadastro já
+//    tem: para quem já existe no banco e vem sem e-mail na planilha, o
+//    e-mail do cadastro é mantido (ver analisarImportacaoHierarquia).
 const DOMINIO_EMAIL_CORPORATIVO = "portovaleconsorcios.com.br";
 const DOMINIO_EMAIL_PROVISORIO = "portovale.com.br";
 const DOMINIOS_EMAIL_PESSOAIS = new Set(["gmail.com", "yahoo.com", "yahoo.com.br", "hotmail.com", "outlook.com", "icloud.com", "uol.com.br", "bol.com.br"]);
 const PARTICULAS_NOME_EMAIL = new Set(["de", "da", "do", "das", "dos", "e"]);
+
+function distanciaEdicaoTexto(a, b) {
+  const m = a.length, n = b.length;
+  let anterior = Array.from({ length: n + 1 }, (_, j) => j);
+  for (let i = 1; i <= m; i++) {
+    const atual = [i];
+    for (let j = 1; j <= n; j++) {
+      atual[j] = Math.min(anterior[j] + 1, atual[j - 1] + 1, anterior[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    }
+    anterior = atual;
+  }
+  return anterior[n];
+}
+
+// Domínio digitado errado e parecido com o corporativo vira o corporativo.
+// Domínios válidos (corporativo, provisório) e pessoais (gmail etc.) ficam como estão.
+function corrigirDominioEmail(dominio) {
+  const d = String(dominio || "").toLowerCase();
+  if (!d || d === DOMINIO_EMAIL_CORPORATIVO || d === DOMINIO_EMAIL_PROVISORIO || DOMINIOS_EMAIL_PESSOAIS.has(d)) return d;
+  return distanciaEdicaoTexto(d, DOMINIO_EMAIL_CORPORATIVO) <= 4 ? DOMINIO_EMAIL_CORPORATIVO : d;
+}
 
 function tokensNomeEmail(texto) {
   return String(texto || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
@@ -5499,7 +5551,7 @@ function emailConfereComNome(email, l) {
   return primeiros.some(p => local.startsWith(p)) && sobrenomes.some(sn => local.includes(sn));
 }
 
-function resolverEmailsImportacao(linhas) {
+function resolverEmailsImportacao(linhas, emailsComLoginPorMatricula) {
   const ajustes = [];
   const REGEX_EMAIL = /^[a-z0-9._%+\-]+@[a-z0-9\-]+(\.[a-z0-9\-]+)+$/;
   const ref = l => ({ matricula: l.matricula, nome: l.nomeCompleto, de: l.emailOriginal });
@@ -5514,6 +5566,7 @@ function resolverEmailsImportacao(linhas) {
       const base = t.length > 1 ? t[0] + "." + t[t.length - 1] : (t[0] || "");
       if (base) {
         l.email = `${base}@${DOMINIO_EMAIL_PROVISORIO}`;
+        l.emailProvisorio = true; // não pode substituir o e-mail que o cadastro já tem (ver analisarImportacaoHierarquia)
         ajustes.push({ ...ref(l), para: l.email, tipo: "provisório (sem e-mail na planilha)" });
       }
       return;
@@ -5523,13 +5576,15 @@ function resolverEmailsImportacao(linhas) {
     const partes = original.split("@");
     const local = (partes[0] || "").replace(/\s+/g, ".").replace(/^\.+|\.+$/g, "");
     const dominio = partes.length > 1 ? partes.slice(1).join("@").replace(/\s+/g, "") : "";
-    const saneado = dominio ? `${local}@${dominio}` : "";
+    const dominioFinal = dominio ? corrigirDominioEmail(dominio) : "";
+    const dominioCorrigido = !!dominio && dominioFinal !== dominio;
+    const saneado = dominio ? `${local}@${dominioFinal}` : "";
     const formatoOk = REGEX_EMAIL.test(saneado);
 
     if (formatoOk && emailConfereComNome(saneado, l)) {
       if (saneado !== original) {
         l.email = saneado;
-        ajustes.push({ ...ref(l), para: saneado, tipo: "formato corrigido (espaços)" });
+        ajustes.push({ ...ref(l), para: saneado, tipo: dominioCorrigido ? "domínio corrigido" : "formato corrigido (espaços)" });
       }
       return;
     }
@@ -5537,14 +5592,14 @@ function resolverEmailsImportacao(linhas) {
     if (formatoOk) {
       const letras = local.replace(/[^a-z]/g, "");
       const primeiros = [tokensNomeEmail(l.nomeCompleto)[0], tokensNomeEmail(l.apelido)[0]].filter(Boolean);
-      if (DOMINIOS_EMAIL_PESSOAIS.has(dominio)) {
+      if (DOMINIOS_EMAIL_PESSOAIS.has(dominioFinal)) {
         l.email = saneado;
         ajustes.push({ ...ref(l), para: saneado, tipo: "mantido — e-mail pessoal, conferir", mantido: true });
         return;
       }
-      if (dominio === DOMINIO_EMAIL_CORPORATIVO && primeiros.includes(letras)) {
+      if (dominioFinal === DOMINIO_EMAIL_CORPORATIVO && primeiros.includes(letras)) {
         l.email = saneado;
-        ajustes.push({ ...ref(l), para: saneado, tipo: "mantido — só o primeiro nome, conferir", mantido: true });
+        ajustes.push({ ...ref(l), para: saneado, tipo: "mantido — só o primeiro nome, conferir" + (dominioCorrigido ? " (domínio corrigido)" : ""), mantido: !dominioCorrigido });
         return;
       }
     }
@@ -5565,8 +5620,14 @@ function resolverEmailsImportacao(linhas) {
     g.sort((a, b) => cmp(a.inicioVendasTs, b.inicioVendasTs) || cmp(a.admissaoTs, b.admissaoTs) ||
       String(a.matricula).localeCompare(String(b.matricula), "pt-BR", { numeric: true }));
     const [loc, dom] = email.split("@");
-    g.forEach((l, i) => {
-      let n = i + 1;
+    // Quem já tem login e cujo e-mail no cadastro é exatamente este mantém-no
+    // (trocar o e-mail de quem já entra no app obriga a pessoa a mudar o login).
+    const dono = g.find(l => emailsComLoginPorMatricula && emailsComLoginPorMatricula.get(String(l.matricula).trim()) === email);
+    if (dono) ajustes.push({ ...ref(dono), para: email, tipo: "duplicado — mantido (já tem login)", mantido: true });
+    let n = dono ? 1 : 0; // com dono, os demais começam no 2
+    g.forEach(l => {
+      if (l === dono) return;
+      n++;
       let novo = `${loc}${n}@${dom}`;
       while (usados.has(novo)) { n++; novo = `${loc}${n}@${dom}`; }
       usados.add(novo);
@@ -5662,7 +5723,10 @@ function analisarImportacaoHierarquia(linhasExcel, banco) {
   });
 
   // E-mails: saneamento, conferência com o nome, provisórios e duplicados.
-  const ajustesEmail = resolverEmailsImportacao(linhasValidas);
+  const emailsComLoginPorMatricula = new Map((banco.funcionariosTodos || [])
+    .filter(f => f.auth_user_id && f.email)
+    .map(f => [String(f.matricula).trim(), String(f.email).trim().toLowerCase()]));
+  const ajustesEmail = resolverEmailsImportacao(linhasValidas, emailsComLoginPorMatricula);
 
   // ── 2) Sincronização de superintendências (só validação de existência —
   //      criação de superintendência nova não faz parte deste importador,
@@ -5788,6 +5852,13 @@ function analisarImportacaoHierarquia(linhasExcel, banco) {
 
     if (existente) {
       idsCasados.add(existente.id);
+      // Sem e-mail na planilha: o provisório só vale para quem ainda não tem
+      // e-mail no cadastro. Quem já tem mantém o que está no banco.
+      if (l.emailProvisorio && existente.email && String(existente.email).trim()) {
+        delete camposPreenchidos.email;
+        const aj = ajustesEmail.find(a => a.matricula === l.matricula && String(a.tipo).startsWith("provisório"));
+        if (aj) { aj.tipo = "mantido — sem e-mail na planilha, cadastro já tem e-mail"; aj.mantido = true; aj.para = existente.email; }
+      }
       funcionariosCasados.push({
         existente, l,
         item: {
@@ -7040,6 +7111,71 @@ function gerarResumoPreviaHierarquia(plano, planoFiltrado, banco, nomeArquivo, d
     return { "Superintendência": sup, "Diretoria": dir, "Gerência": ger, "Nível": niv, "Novos": n };
   });
 
+  // ── Estrutura DEPOIS da importação: líderes por gerência/diretoria e estruturas vazias ──
+  // Simula o resultado (mesma regra do passo "Atualiza funcionários existentes"):
+  // nome de diretoria/gerência da planilha sobrescreve o atual; superintendente
+  // zera diretoria e gerência; diretor zera a gerência. Só líderes ATIVOS contam.
+  const up = v => txt(v).trim().toUpperCase();
+  const gerObjPorId = new Map((banco?.gerencias || []).map(x => [String(x.id), x]));
+  const atualPorId = new Map(atualizados.map(a => [String(a.id), a]));
+  const inativadosIds = new Set(inativados.map(f => String(f.id)));
+  const pessoasDepois = [];
+  todosBanco.forEach(f => {
+    const gerObj = gerObjPorId.get(String(f.gerencia_id));
+    const dirObj = dirObjPorId.get(String(gerObj ? gerObj.diretoria_id : f.diretoria_id));
+    const est = { sup: nomeSup(dirObj?.superintendencia_id) || nomeSup(f.superintendencia_id), dir: dirObj?.nome || "", ger: gerObj?.nome || "" };
+    let nivel = txt(f.nivel);
+    let ativo = (f.situacao || "ATIVO").toUpperCase() === "ATIVO";
+    const at = atualPorId.get(String(f.id));
+    if (at) {
+      nivel = txt(at.campos?.nivel || f.nivel);
+      est.sup = nomeSup(at._superintendenciaId) || est.sup;
+      if (at._diretoriaNome) est.dir = at._diretoriaNome;
+      if (at._gerenciaNome) est.ger = at._gerenciaNome;
+      if (nivel === "superintendente") { est.dir = ""; est.ger = ""; }
+      else if (nivel === "diretor") est.ger = "";
+      ativo = (at.campos?.situacao || f.situacao || "ATIVO").toUpperCase() === "ATIVO";
+    }
+    if (inativadosIds.has(String(f.id))) ativo = false;
+    pessoasDepois.push({ ...est, nivel, ativo, nome: txt(f.apelido || f.nome_completo) });
+  });
+  novos.forEach(n => pessoasDepois.push({
+    sup: nomeSup(n._superintendenciaId), dir: txt(n._diretoriaNome), ger: txt(n._gerenciaNome),
+    nivel: txt(n.nivel), ativo: true, nome: txt(n.apelido || n.nome_completo)
+  }));
+  const estruturas = new Map();
+  const obter = (sup, dir, ger) => {
+    const k = [up(sup), up(dir), up(ger)].join("||");
+    if (!estruturas.has(k)) estruturas.set(k, { sup, dir, ger, pessoas: 0, ativos: 0, gerentes: [], diretores: [], supers: [] });
+    return estruturas.get(k);
+  };
+  (banco?.superintendencias || []).forEach(x => obter(x.nome, "", ""));
+  (banco?.diretorias || []).forEach(d => obter(nomeSup(d.superintendencia_id), d.nome, ""));
+  (banco?.gerencias || []).forEach(g => { const d = dirObjPorId.get(String(g.diretoria_id)); obter(nomeSup(d?.superintendencia_id), d?.nome || "", g.nome); });
+  pessoasDepois.forEach(p => {
+    if (p.ger) { const e = obter(p.sup, p.dir, p.ger); e.pessoas++; if (p.ativo) e.ativos++; if (p.nivel === "gerente" && p.ativo) e.gerentes.push(p.nome); }
+    if (p.dir) { const e = obter(p.sup, p.dir, ""); e.pessoas++; if (p.ativo) e.ativos++; if (p.nivel === "diretor" && p.ativo) e.diretores.push(p.nome); }
+    if (p.sup) { const e = obter(p.sup, "", ""); e.pessoas++; if (p.ativo) e.ativos++; if (p.nivel === "superintendente" && p.ativo) e.supers.push(p.nome); }
+  });
+  const linhasAlertaEstrutura = [];
+  const addAlerta = (tipo, e, detalhe) => linhasAlertaEstrutura.push({ "Alerta": tipo, "Superintendência": e.sup, "Diretoria": e.dir, "Gerência": e.ger, "Detalhe": detalhe });
+  estruturas.forEach(e => {
+    if (e.ger) {
+      if (e.pessoas === 0) addAlerta("Gerência vazia (ficará oculta na árvore)", e, "");
+      else if (e.gerentes.length === 0) addAlerta("Gerência sem gerente ativo", e, e.ativos + " ativo(s) de " + e.pessoas);
+      else if (e.gerentes.length > 1) addAlerta("Gerência com mais de um gerente ativo", e, e.gerentes.join(", "));
+    } else if (e.dir) {
+      if (e.pessoas === 0) addAlerta("Diretoria vazia (ficará oculta na árvore)", e, "");
+      else if (e.diretores.length === 0) addAlerta("Diretoria sem diretor ativo", e, e.ativos + " ativo(s) de " + e.pessoas);
+      else if (e.diretores.length > 1) addAlerta("Diretoria com mais de um diretor ativo", e, e.diretores.join(", "));
+    } else if (e.sup) {
+      if (e.supers.length === 0) addAlerta("Superintendência sem superintendente ativo", e, e.pessoas + " pessoa(s)");
+      else if (e.supers.length > 1) addAlerta("Superintendência com mais de um superintendente ativo", e, e.supers.join(", "));
+    }
+  });
+  linhasAlertaEstrutura.sort((a, b) => ["Alerta", "Superintendência", "Diretoria", "Gerência"].reduce((r, c) => r || a[c].localeCompare(b[c], "pt-BR"), 0));
+  const estruturasVazias = linhasAlertaEstrutura.filter(l => l["Alerta"].includes("vazia")).length;
+
   // ── Alertas automáticos (pontos que merecem olhar) ──
   const contagemEmail = new Map();
   novos.forEach(f => { const e = normEmail(f.email); if (e) contagemEmail.set(e, (contagemEmail.get(e) || 0) + 1); });
@@ -7054,7 +7190,9 @@ function gerarResumoPreviaHierarquia(plano, planoFiltrado, banco, nomeArquivo, d
     ["Inativados que NÃO são vendedor (gestores)", inativados.filter(f => f.nivel && f.nivel !== "vendedor").length],
     ["Inativados em % dos ativos do banco", ativosBanco ? Math.round((inativados.length / ativosBanco) * 1000) / 10 + "%" : "n/d"],
     ["Linhas com erro (ignoradas)", (plano.erros || []).length],
-    ["Superintendências não encontradas no sistema", (plano.superintendenciasNaoEncontradas || []).join(", ") || 0]
+    ["Superintendências não encontradas no sistema", (plano.superintendenciasNaoEncontradas || []).join(", ") || 0],
+    ["Estruturas com alerta de líder/vazia (aba Alertas de estrutura)", linhasAlertaEstrutura.length],
+    ["Gerências/diretorias que ficarão vazias (ocultas na árvore)", estruturasVazias]
   ];
   const dirRej = (plano.diretoriasNovas || []).filter(d => diretoriasRejeitadas?.has(d.chave)).map(d => d.nome);
   const gerRej = (plano.gerenciasNovas || []).filter(g => gerenciasRejeitadas?.has(g.chave)).map(g => g.nome);
@@ -7094,6 +7232,7 @@ function gerarResumoPreviaHierarquia(plano, planoFiltrado, banco, nomeArquivo, d
     ws["!cols"] = cab.map(c => ({ wch: Math.min(60, Math.max(12, c.length + 2, ...linhas.slice(0, 200).map(l => txt(l[c]).length + 2))) }));
     XLSX.utils.book_append_sheet(wb, ws, nome);
   };
+  aba("Alertas de estrutura", linhasAlertaEstrutura);
   aba("Novos por destino", linhasDestino);
   aba("Novos", linhasNovos);
   aba("Atualizados", linhasAtualizados);
@@ -11168,6 +11307,7 @@ function montarArvore({ superintendencias, diretorias, gerencias, funcionarios, 
   const ehAtivo = f => (f.situacao || "ATIVO").toUpperCase() === "ATIVO";
   const porGerencia = new Map();
   const diretosNaDiretoria = new Map(); // diretoria_id -> [vendedores sem gerência]
+  const diretosNaSuper = new Map(); // superintendencia_id -> [vendedores sem diretoria nem gerência — ex.: Vida e Saúde]
   const gerentesPorGerencia = new Map();
   const diretoresPorDiretoria = new Map();
   const superintendentesPorSuperintendencia = new Map();
@@ -11180,6 +11320,9 @@ function montarArvore({ superintendencias, diretorias, gerencias, funcionarios, 
       } else if (f.diretoria_id != null) {
         if (!diretosNaDiretoria.has(f.diretoria_id)) diretosNaDiretoria.set(f.diretoria_id, []);
         diretosNaDiretoria.get(f.diretoria_id).push(f);
+      } else if (f.superintendencia_id != null) {
+        if (!diretosNaSuper.has(f.superintendencia_id)) diretosNaSuper.set(f.superintendencia_id, []);
+        diretosNaSuper.get(f.superintendencia_id).push(f);
       }
     } else if (f.nivel === "gerente" && f.gerencia_id != null) {
       // Guarda todos (ativos e inativos) — se o gerente ativo mais recente
@@ -11225,7 +11368,7 @@ function montarArvore({ superintendencias, diretorias, gerencias, funcionarios, 
           totalAtivos: vendedoresAtivos + (gerenteAtivo ? 1 : 0),
           totalInativos: (vendedores.length - vendedoresAtivos) + (gerente && !gerenteAtivo ? 1 : 0)
         };
-      });
+      }).filter(g => g.totalAtivos + g.totalInativos > 0); // gerência esvaziada por promoções/transferências não aparece
       const semGerencia = (diretosNaDiretoria.get(d.id) || []).slice().sort(ordenarNome);
       const semGerenciaAtivos = semGerencia.filter(ehAtivo).length;
       const diretor = diretoresPorDiretoria.get(d.id) || null;
@@ -11240,13 +11383,16 @@ function montarArvore({ superintendencias, diretorias, gerencias, funcionarios, 
         totalAtivos: totalAtivosDir,
         totalInativos: totalInativosDir
       };
-    });
-    const totalAtivosSup = diretoriasMontadas.reduce((acc, d) => acc + d.totalAtivos, 0);
-    const totalInativosSup = diretoriasMontadas.reduce((acc, d) => acc + d.totalInativos, 0);
+    }).filter(d => d.totalAtivos + d.totalInativos > 0); // diretoria sem ninguém (nem gerências com gente) não aparece
+    const semDiretoria = (diretosNaSuper.get(s.id) || []).slice().sort(ordenarNome);
+    const semDiretoriaAtivos = semDiretoria.filter(ehAtivo).length;
+    const totalAtivosSup = diretoriasMontadas.reduce((acc, d) => acc + d.totalAtivos, 0) + semDiretoriaAtivos;
+    const totalInativosSup = diretoriasMontadas.reduce((acc, d) => acc + d.totalInativos, 0) + (semDiretoria.length - semDiretoriaAtivos);
     return {
       ...s,
       superintendente: superintendentesPorSuperintendencia.get(s.id) || null,
       diretorias: diretoriasMontadas,
+      semDiretoria,
       totalAtivos: totalAtivosSup,
       totalInativos: totalInativosSup
     };
@@ -11274,8 +11420,9 @@ function filtrarArvorePorBusca(arvore, termoBruto, nomesExibicao) {
           return passaDir ? { ...d, gerencias, semGerencia } : null;
         })
         .filter(Boolean);
-      const passaSup = bate(s.superintendente) || normalizarBusca(s.nome).includes(termo) || diretorias.length > 0;
-      return passaSup ? { ...s, diretorias } : null;
+      const semDiretoria = (s.semDiretoria || []).filter(bate);
+      const passaSup = bate(s.superintendente) || normalizarBusca(s.nome).includes(termo) || diretorias.length > 0 || semDiretoria.length > 0;
+      return passaSup ? { ...s, diretorias, semDiretoria } : null;
     })
     .filter(Boolean);
 }
@@ -12284,7 +12431,7 @@ function NoSuperintendencia({ superintendencia, aberta, onToggle, estadoAberto, 
     aberta && /*#__PURE__*/React.createElement("div", {
       style: { padding: 20, display: "flex", flexDirection: "column", gap: 10, background: "var(--cinza-50)" }
     },
-      superintendencia.diretorias.length === 0
+      superintendencia.diretorias.length === 0 && !(superintendencia.semDiretoria?.length > 0)
         ? /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: "var(--texto-fraco)" } }, "Nenhuma diretoria cadastrada nesta superintendência.")
         : superintendencia.diretorias.map(d => /*#__PURE__*/React.createElement(NoDiretoria, {
             key: d.id,
@@ -12293,7 +12440,13 @@ function NoSuperintendencia({ superintendencia, aberta, onToggle, estadoAberto, 
             onToggle: () => onToggleChave(`d_${d.id}`),
             gerenciasAbertas: estadoAberto,
             onToggleGerencia: onToggleChave
-          }))
+          })),
+      superintendencia.semDiretoria?.length > 0 && /*#__PURE__*/React.createElement("div", {
+        style: { background: "var(--cor-branco)", border: "1px dashed var(--cinza-200)", borderRadius: 12, padding: "10px 12px" }
+      },
+        /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, fontWeight: 600, color: "var(--cinza-500)", marginBottom: 6 } }, "Sem diretoria — reporta direto à superintendência"),
+        superintendencia.semDiretoria.map(v => /*#__PURE__*/React.createElement(LinhaPessoa, { key: v.id, pessoa: v, nivel: "vendedor" }))
+      )
     )
   );
 }
@@ -12307,7 +12460,7 @@ function NoSuperintendencia({ superintendencia, aberta, onToggle, estadoAberto, 
 // onAtualizado(pessoaAtualizada) é chamado após salvar/mudar acesso com
 // sucesso, para o chamador atualizar sua cópia em memória sem precisar
 // recarregar a página inteira.
-function ModalPerfilComercial({ pessoa, onClose, onAtualizado, nomeExibicao: nomeExibicaoProp, superintendencias, diretorias, gerencias, pode = () => true }) {
+function ModalPerfilComercial({ pessoa, onClose, onAtualizado, nomeExibicao: nomeExibicaoProp, superintendencias, diretorias, gerencias, funcionariosComercial = null, pode = () => true }) {
   const podeEditarPerfil = pode("editar_perfil");
   const podeGerenciarAcesso = pode("gerenciar_acesso");
   const nomeParaTitulo = nomeExibicaoProp || pessoa.nome_completo;
@@ -12336,18 +12489,33 @@ function ModalPerfilComercial({ pessoa, onClose, onAtualizado, nomeExibicao: nom
   );
   // Diretorias filtradas pela superintendência escolhida (só faz sentido
   // oferecer diretorias que pertencem à superintendência selecionada).
+  // Diretoria/gerência sem ninguém (ativo ou inativo) não aparece nas opções —
+  // sobra de renomeação ou promoção. A opção atualmente selecionada sempre aparece.
+  const idsComGente = useMemo(() => {
+    if (!Array.isArray(funcionariosComercial)) return null;
+    const ger = new Set(funcionariosComercial.map(f => f.gerencia_id).filter(id => id != null));
+    const dir = new Set(funcionariosComercial.map(f => f.diretoria_id).filter(id => id != null));
+    (gerencias || []).forEach(g => { if (ger.has(g.id) && g.diretoria_id != null) dir.add(g.diretoria_id); });
+    return { dir, ger };
+  }, [funcionariosComercial, gerencias]);
   const diretoriasFiltradas = useMemo(
     () => (diretorias || [])
       .filter(d => editando.superintendencia_id != null && d.superintendencia_id === editando.superintendencia_id)
+      .filter(d => !idsComGente || idsComGente.dir.has(d.id) || d.id === editando.diretoria_id)
       .sort((a, b) => (a.nome || "").localeCompare(b.nome || "", "pt-BR", { sensitivity: "base" })),
-    [diretorias, editando.superintendencia_id]
+    [diretorias, editando.superintendencia_id, editando.diretoria_id, idsComGente]
   );
+  // Superintendência sem nenhuma diretoria cadastrada (ex.: Vida e Saúde): o vendedor
+  // fica ligado direto a ela, sem diretoria nem gerência.
+  const supSemDiretorias = editando.superintendencia_id != null
+    && !(diretorias || []).some(d => d.superintendencia_id === editando.superintendencia_id);
   // Gerências filtradas pela diretoria escolhida.
   const gerenciasFiltradas = useMemo(
     () => (gerencias || [])
       .filter(g => editando.diretoria_id != null && g.diretoria_id === editando.diretoria_id)
+      .filter(g => !idsComGente || idsComGente.ger.has(g.id) || g.id === editando.gerencia_id)
       .sort((a, b) => (a.nome || "").localeCompare(b.nome || "", "pt-BR", { sensitivity: "base" })),
-    [gerencias, editando.diretoria_id]
+    [gerencias, editando.diretoria_id, editando.gerencia_id, idsComGente]
   );
 
   // Quando o nível muda, limpa os vínculos que não fazem mais sentido para
@@ -12408,8 +12576,8 @@ function ModalPerfilComercial({ pessoa, onClose, onAtualizado, nomeExibicao: nom
       setErroSalvar("Selecione a superintendência, a diretoria e a gerência.");
       return;
     }
-    if (editando.nivel === "vendedor" && (editando.superintendencia_id == null || editando.diretoria_id == null)) {
-      setErroSalvar("Selecione ao menos a superintendência e a diretoria (a gerência é opcional para vendedor vinculado direto à diretoria).");
+    if (editando.nivel === "vendedor" && (editando.superintendencia_id == null || (editando.diretoria_id == null && !supSemDiretorias))) {
+      setErroSalvar(supSemDiretorias ? "Selecione a superintendência." : "Selecione ao menos a superintendência e a diretoria (a gerência é opcional para vendedor vinculado direto à diretoria).");
       return;
     }
 
@@ -12623,7 +12791,7 @@ function ModalPerfilComercial({ pessoa, onClose, onAtualizado, nomeExibicao: nom
           disabled: editando.superintendencia_id == null,
           style: { ...campoStyle, cursor: editando.superintendencia_id == null ? "not-allowed" : "pointer" }
         },
-          /*#__PURE__*/React.createElement("option", { value: "" }, editando.superintendencia_id == null ? "Selecione a superintendência primeiro…" : "Selecione…"),
+          /*#__PURE__*/React.createElement("option", { value: "" }, editando.superintendencia_id == null ? "Selecione a superintendência primeiro…" : (supSemDiretorias ? "Nenhuma (vínculo direto à superintendência)" : "Selecione…")),
           diretoriasFiltradas.map(d => /*#__PURE__*/React.createElement("option", { key: d.id, value: d.id }, d.nome))
         )
       ),
@@ -14148,6 +14316,7 @@ function ArvoreHierarquia({ pode = () => true, ocorrencias = [], funcionariosUni
       superintendencias,
       diretorias,
       gerencias,
+      funcionariosComercial: funcionarios,
       pode,
       onClose: () => setPessoaSelecionada(null),
       onAtualizado: pessoaAtualizada => {
@@ -14438,13 +14607,15 @@ function App() {
     // admin_geral (ex: gre@ em previewHierarquia) não tem superintendencia_id
     // — vê tudo por padrão, então o seletor deve oferecer TODAS as gerências
     // de TODAS as diretorias/superintendências, não só uma.
-    if (usuario?.nivel === "admin_geral") return dadosComercial.gerencias;
+    // Gerência sem nenhum funcionário ativo no escopo não entra na lista (não teria o que filtrar).
+    const idsGerComGente = new Set(funcionariosExibidos.map(f => f.gerencia_id).filter(id => id != null));
+    if (usuario?.nivel === "admin_geral") return dadosComercial.gerencias.filter(g => idsGerComGente.has(g.id));
     if (usuario?.nivel !== "superintendente") return [];
     const diretoriasDaSuper = new Set(
       dadosComercial.diretorias.filter(d => d.superintendencia_id === usuario.superintendencia_id).map(d => d.id)
     );
-    return dadosComercial.gerencias.filter(g => diretoriasDaSuper.has(g.diretoria_id));
-  }, [usuario, dadosComercial]);
+    return dadosComercial.gerencias.filter(g => diretoriasDaSuper.has(g.diretoria_id) && idsGerComGente.has(g.id));
+  }, [usuario, dadosComercial, funcionariosExibidos]);
   // Aplica o recorte extra de gerências (só para superintendente, só em
   // Dashboard/Relatórios) por cima do escopo hierárquico já presente em
   // `funcionariosExibidos`. Conjunto vazio = sem recorte (vê tudo).
