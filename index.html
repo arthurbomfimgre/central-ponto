@@ -6964,15 +6964,19 @@ function analisarImportacaoAdministrativa(linhasExcel, nomeArquivo, funcionarios
       erros.push({ linha: numeroLinha, motivo: "Matrícula ou nome do colaborador ausente." });
       return;
     }
-    // Cargo vazio na origem: a pessoa não entra no app, sem erro e sem aviso de falha.
+    // Cargo vazio na origem: a pessoa entra normalmente, com o cargo vazio (sem erro).
     if (!_vazio(normalizarTexto(linha[M.cargo]))) {
       ignoradosCargoVazio.push({ linha: numeroLinha, matricula, nome: nomeCompleto.toUpperCase() });
-      return;
     }
     let equipe = _vazio(normalizarTexto(linha[M.equipe]));
     // Diretor global: cargo DIRETOR ADMINISTRATIVO sem Gerencia -> equipe DIRETORIA
     if (!equipe && /DIRETOR/.test(String(normalizarTexto(linha[M.cargo])).toUpperCase())
         && !_vazio(normalizarTexto(linha[M.gerente]))) equipe = EQUIPE_DIRETORIA;
+    // Sem Gerencia, mas é o próprio diretor da diretoria (ex.: Marcos Sanches, FINANCEIRO): entra na equipe da diretoria.
+    const diretoriaDele = _vazio(normalizarTexto(linha["Diretoria"]));
+    const diretorDele = _vazio(normalizarTexto(linha[M.diretor]));
+    const ehDiretorDaDiretoria = !!(diretoriaDele && diretorDele && nomeCurtoCasaComCompleto(diretorDele, nomeCompleto));
+    if (!equipe && ehDiretorDaDiretoria) equipe = diretoriaDele;
     if (!equipe) {
       erros.push({ linha: numeroLinha, matricula, nome: nomeCompleto.toUpperCase(), motivo: "Coluna Gerencia (equipe) vazia." });
       return;
@@ -6986,7 +6990,8 @@ function analisarImportacaoAdministrativa(linhasExcel, nomeArquivo, funcionarios
       cpf: normalizarTexto(linha[M.cpf]) || null,
       admissaoTs: dataParaTimestampImportacao(linha[M.admissao]),
       demissaoTs: dataParaTimestampImportacao(linha[M.demissao]),
-      papel: classificarCargoAdmin(cargo),
+      // cargo vazio + é o diretor da diretoria -> papel diretor (o cargo continua vazio)
+      papel: (!cargo && ehDiretorDaDiretoria) ? "diretor" : classificarCargoAdmin(cargo),
       setor: normalizarTexto(linha[M.setor]) || null,
       situacao: (normalizarTexto(linha[M.situacao]).toUpperCase() || "ATIVO"),
       supervisorNome: _vazio(normalizarTexto(linha[M.supervisor])),
@@ -7111,7 +7116,18 @@ function analisarImportacaoAdministrativa(linhasExcel, nomeArquivo, funcionarios
       if (v !== null && v !== "") campos[k] = v;
     }
 
-    if (existente && l.emailProvisorio && String(existente.email || "").trim()) delete campos.email;
+    // Provisório nunca substitui e-mail já cadastrado — exceto quando o e-mail do cadastro é justamente o
+    // compartilhado entre pessoas (ex.: dpsjc@) e a pessoa ainda não tem login: aí troca pelo provisório.
+    // Quem já tem login (auth_user_id) mantém o e-mail e é listado para conferência.
+    if (existente && l.emailProvisorio) {
+      const emailCadastro = String(existente.email || "").trim().toLowerCase();
+      const ehColisao = !!l.emailOriginal && emailCadastro === l.emailOriginal;
+      if (emailCadastro && !(ehColisao && !existente.auth_user_id)) {
+        delete campos.email;
+        if (ehColisao) ajustesEmail.push({ matricula: l.matricula, nome: l.nomeCompleto, de: emailCadastro, para: emailCadastro,
+          tipo: "e-mail compartilhado mantido — esta pessoa já tem login; conferir" });
+      }
+    }
 
     if (existente) {
       const snapAnterior = suportaSnapshot && existente.importacao_snapshot && typeof existente.importacao_snapshot === "object"
@@ -7595,7 +7611,7 @@ function ModalImportarEquipeAdministrativa({ onClose, onConcluido }) {
 
       (plano.ignoradosCargoVazio || []).length > 0 && /*#__PURE__*/React.createElement("div", null,
         /*#__PURE__*/React.createElement("p", { style: { fontSize: 13, fontWeight: 700, color: "var(--cinza-600)", marginBottom: 6 } },
-          "ℹ️ Sem cargo na planilha — não serão importados (" + plano.ignoradosCargoVazio.length + "):"),
+          "ℹ️ Sem cargo na planilha — importados com o cargo vazio (" + plano.ignoradosCargoVazio.length + "):"),
         /*#__PURE__*/React.createElement("ul", { style: { fontSize: 12, color: "var(--cinza-600)", paddingLeft: 18, display: "flex", flexDirection: "column", gap: 2, maxHeight: 120, overflow: "auto" } },
           plano.ignoradosCargoVazio.map((e, i) => /*#__PURE__*/React.createElement("li", { key: i }, e.nome, " (mat. ", e.matricula, ")")))
       ),
