@@ -7117,15 +7117,18 @@ function analisarImportacaoAdministrativa(linhasExcel, nomeArquivo, funcionarios
     }
 
     // Provisório nunca substitui e-mail já cadastrado — exceto quando o e-mail do cadastro é justamente o
-    // compartilhado entre pessoas (ex.: dpsjc@) e a pessoa ainda não tem login: aí troca pelo provisório.
-    // Quem já tem login (auth_user_id) mantém o e-mail e é listado para conferência.
+    // compartilhado entre pessoas (ex.: dpsjc@). Sem login: troca direto no cadastro. Com login (auth_user_id):
+    // troca também o e-mail do login no Auth (ação atualizar_email), nessa ordem, para os dois andarem juntos.
+    let trocarEmailAuth = null;
     if (existente && l.emailProvisorio) {
       const emailCadastro = String(existente.email || "").trim().toLowerCase();
       const ehColisao = !!l.emailOriginal && emailCadastro === l.emailOriginal;
-      if (emailCadastro && !(ehColisao && !existente.auth_user_id)) {
-        delete campos.email;
-        if (ehColisao) ajustesEmail.push({ matricula: l.matricula, nome: l.nomeCompleto, de: emailCadastro, para: emailCadastro,
-          tipo: "e-mail compartilhado mantido — esta pessoa já tem login; conferir" });
+      if (emailCadastro) {
+        if (ehColisao && existente.auth_user_id) {
+          trocarEmailAuth = { ref: existente, anterior: emailCadastro, novo: l.email };
+          ajustesEmail.push({ matricula: l.matricula, nome: l.nomeCompleto, de: emailCadastro, para: l.email,
+            tipo: "e-mail compartilhado — o e-mail do login desta pessoa também será trocado" });
+        } else if (!ehColisao) delete campos.email;
       }
     }
 
@@ -7168,7 +7171,7 @@ function analisarImportacaoAdministrativa(linhasExcel, nomeArquivo, funcionarios
       funcionariosAtualizados.push({
         id: existente.id, matriculaAnterior: existente.matricula, nome: l.nomeCompleto,
         coordenadorAnteriorId: existente.coordenador_id || null,
-        manterCoord, snapshotBase, snapshotAnterior: snapAnterior,
+        manterCoord, snapshotBase, snapshotAnterior: snapAnterior, existenteRef: existente, trocarEmailAuth,
         campos   // campos.ativo já vem da Situação/Demissão da planilha (reativa quem voltou a ATIVO)
       });
     } else {
@@ -7177,6 +7180,18 @@ function analisarImportacaoAdministrativa(linhasExcel, nomeArquivo, funcionarios
       funcionariosNovos.push({ ...camposBase, _snapshotBase, acesso_revogado: false,
         esquecimentos: 0, atestados: 0, faltas: 0, banco_horas: 0, erros_registro: 0, abonos: 0, integracoes: 0 });
     }
+  }
+
+  // ── Acesso (login) de quem está/fica inativo precisa ser revogado ──
+  // Cobre: (1) quem a planilha manda inativar agora (Situação/Demissao), (2) quem já estava inativo no banco
+  // mas ainda tem login ativo (estado órfão). A inativação por "não veio na planilha" é tratada ao gravar.
+  const revogarAcesso = [];
+  const idsAtu = new Set(funcionariosAtualizados.map(a => a.id));
+  for (const a of funcionariosAtualizados) {
+    if (a.campos.ativo === false && a.existenteRef.auth_user_id && !a.existenteRef.acesso_revogado) revogarAcesso.push(a.existenteRef);
+  }
+  for (const f of funcionariosExistentesTodos) {
+    if (f.ativo === false && f.auth_user_id && !f.acesso_revogado && !idsAtu.has(f.id)) revogarAcesso.push(f);
   }
 
   // ── (a) Quem sumiu: NÃO inativa. Só lista para o usuário decidir. ──
@@ -7210,7 +7225,7 @@ function analisarImportacaoAdministrativa(linhasExcel, nomeArquivo, funcionarios
   }
 
   return {
-    suportaSnapshot, conflitosManuais,
+    suportaSnapshot, conflitosManuais, revogarAcesso,
     erros, ignoradosCargoVazio, ajustesEmail, avisosSituacao, equipesNovas, grafiaSuspeitaEquipes, semCoordenadorResolvido, totalLinhasPlanilha: linhasExcel.length,
     equipes, funcionariosNovos, funcionariosAtualizados, naoVieramNaPlanilha,
     candidatosInativacao, travasInativacao,
@@ -7278,6 +7293,7 @@ async function aplicarImportacaoAdministrativa(plano, onProgresso) {
 async function aplicarImportacaoAdministrativaInterno(plano, onProgresso, aplicado) {
   const progresso = onProgresso || (() => {});
   const idPorMatricula = new Map();
+  plano.avisosEmailAuth = [];
 
   // Equipes: só grava o que mudou (equipe nova ou gerente/diretor/superintendente
   // diferente do banco). Reimportar a mesma planilha não escreve nada.
@@ -7324,10 +7340,24 @@ async function aplicarImportacaoAdministrativaInterno(plano, onProgresso, aplica
   progresso(`Atualizando ${plano.funcionariosAtualizados.length} funcionário(s)…`);
   for (const at of plano.funcionariosAtualizados) {
     const { _coordenadorMatricula, ...campos } = at.campos;
+    let emailAuthTrocado = false;
+    if (at.trocarEmailAuth) {
+      const t = at.trocarEmailAuth;
+      const r = await chamarGerenciarAcesso("atualizar_email", t.ref, "importacao_planilha", { novo_email: t.novo, email_anterior: t.anterior });
+      if (r.ok) emailAuthTrocado = true;
+      else {
+        delete campos.email; // Auth não aceitou: o cadastro continua com o e-mail antigo, igual ao login
+        if (at.snapshotBase) at.snapshotBase.email = t.anterior;
+        plano.avisosEmailAuth.push(`${at.nome}: não foi possível trocar o e-mail do login (${r.erro}). Mantido ${t.anterior}.`);
+      }
+    }
     const { error } = await supa.from("funcionarios_administrativo")
       .update(campos)
       .eq("id", at.id);
-    if (error) throw new Error(`Falha ao atualizar funcionário "${at.nome}": ${extrairMensagemErro(error)}`);
+    if (error) {
+      if (emailAuthTrocado) await chamarGerenciarAcesso("atualizar_email", at.trocarEmailAuth.ref, "importacao_planilha", { novo_email: at.trocarEmailAuth.anterior, email_anterior: at.trocarEmailAuth.novo });
+      throw new Error(`Falha ao atualizar funcionário "${at.nome}": ${extrairMensagemErro(error)}`);
+    }
     idPorMatricula.set(at.matriculaAnterior, at.id);
     if (campos.matricula) idPorMatricula.set(campos.matricula, at.id);
     aplicado.atualizados++;
@@ -7377,6 +7407,19 @@ async function aplicarImportacaoAdministrativaInterno(plano, onProgresso, aplica
       .eq("id", inativo.id);
     if (error) throw new Error(`Falha ao inativar funcionário "${inativo.nome}": ${extrairMensagemErro(error)}`);
     aplicado.inativados++;
+  }
+
+  // Revoga o login de todo inativo que ainda tem acesso (a falha de uma revogação não derruba a importação).
+  const alvosRevogar = new Map();
+  for (const f of plano.revogarAcesso || []) alvosRevogar.set(f.id, f);
+  for (const f of plano.funcionariosInativados || []) if (f.auth_user_id && !f.acesso_revogado) alvosRevogar.set(f.id, f);
+  plano.revogados = [];
+  plano.falhasRevogacao = [];
+  if (alvosRevogar.size) progresso(`Revogando acesso de ${alvosRevogar.size} funcionário(s) inativo(s)…`);
+  for (const f of alvosRevogar.values()) {
+    const r = await chamarGerenciarAcesso("revogar_acesso", f, "importacao_planilha");
+    if (r.ok) plano.revogados.push({ nome: f.nome, matricula: f.matricula });
+    else plano.falhasRevogacao.push({ nome: f.nome, matricula: f.matricula, motivo: r.erro });
   }
 
   progresso("Concluído.");
@@ -7452,6 +7495,7 @@ function ModalImportarEquipeAdministrativa({ onClose, onConcluido }) {
         atualizados: plano.funcionariosAtualizados.length,
         inativados: plano.funcionariosInativados.length,
         logFalhou: !resultadoLog.ok,
+        revogados: plano.revogados || [], falhasRevogacao: plano.falhasRevogacao || [], avisosEmailAuth: plano.avisosEmailAuth || [],
         listaNovos: plano.funcionariosNovos.map(f => ({ nome: f.nome, matricula: f.matricula })),
         listaAtualizados: plano.funcionariosAtualizados.map(f => ({ nome: f.nome, matricula: f.matriculaAnterior })),
         listaInativados: plano.funcionariosInativados.map(f => ({ nome: f.nome, matricula: f.matricula }))
@@ -7658,6 +7702,15 @@ function ModalImportarEquipeAdministrativa({ onClose, onConcluido }) {
       /*#__PURE__*/React.createElement("div", {
         style: { background: "var(--verde-100)", color: "var(--verde-800)", borderRadius: 12, padding: "12px 16px", fontSize: 13, fontWeight: 600 }
       }, "✓ Importação da equipe \"", concluido.nomeEquipe, "\" concluída: ", concluido.novos, " novo(s), ", concluido.atualizados, " atualizado(s), ", concluido.inativados, " inativado(s)."),
+      (concluido.revogados || []).length > 0 && /*#__PURE__*/React.createElement("div", {
+        style: { background: "var(--verde-100)", color: "var(--verde-800)", borderRadius: 12, padding: "10px 14px", fontSize: 13 }
+      }, "🔒 Acesso revogado de ", concluido.revogados.length, " inativo(s): ", concluido.revogados.map(f => f.nome).join(", "), "."),
+      (concluido.avisosEmailAuth || []).length > 0 && /*#__PURE__*/React.createElement("div", {
+        style: { background: "var(--amber-100)", color: "var(--amber-800)", borderRadius: 12, padding: "10px 14px", fontSize: 13, fontWeight: 600 }
+      }, "⚠️ ", concluido.avisosEmailAuth.join(" ")),
+      (concluido.falhasRevogacao || []).length > 0 && /*#__PURE__*/React.createElement("div", {
+        style: { background: "var(--amber-100)", color: "var(--amber-800)", borderRadius: 12, padding: "10px 14px", fontSize: 13, fontWeight: 600 }
+      }, "⚠️ Não foi possível revogar o acesso de: ", concluido.falhasRevogacao.map(f => `${f.nome} (${f.motivo})`).join("; "), ". Revogue pelo Painel de Acessos."),
       concluido.logFalhou && /*#__PURE__*/React.createElement("div", {
         style: { background: "var(--amber-100)", color: "var(--amber-800)", borderRadius: 12, padding: "10px 14px", fontSize: 13, fontWeight: 600 }
       }, "⚠️ As alterações acima foram aplicadas normalmente, mas não foi possível registrar esta importação no Log de auditoria."),
@@ -14616,7 +14669,7 @@ function ArvoreHierarquia({ pode = () => true, ocorrencias = [], funcionariosUni
     ativosComAcesso: funcionariosAdmin.filter(f => !!f.auth_user_id && !f.acesso_revogado).length
   }), [funcionariosAdmin]);
   const semLoginCountAdmin = useMemo(
-    () => funcionariosAdmin.filter(f => !f.auth_user_id).length,
+    () => funcionariosAdmin.filter(f => f.ativo !== false && !f.auth_user_id).length,
     [funcionariosAdmin]
   );
   // Nome de exibição para a lista "quem está sem login" do administrativo.
@@ -14627,7 +14680,7 @@ function ArvoreHierarquia({ pode = () => true, ocorrencias = [], funcionariosUni
   // Mesmo critério do comercial (semEmailLista acima): vazio/nulo OU
   // formato inválido — os dois precisam do mesmo tratamento de correção.
   const semEmailListaAdmin = useMemo(
-    () => funcionariosAdmin.filter(f => !f.auth_user_id && !EMAIL_VALIDO_REGEX.test((f.email || "").trim()))
+    () => funcionariosAdmin.filter(f => f.ativo !== false && !f.auth_user_id && !EMAIL_VALIDO_REGEX.test((f.email || "").trim()))
       .sort((a, b) => (a.nome || "").localeCompare(b.nome || "", "pt-BR", { sensitivity: "base" })),
     [funcionariosAdmin]
   );
