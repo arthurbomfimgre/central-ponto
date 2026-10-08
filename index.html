@@ -6777,7 +6777,7 @@ async function aplicarImportacaoHierarquiaInterno(plano, banco, onProgresso, apl
 const MAPA_COLUNAS_IMPORT_ADMIN = {
   matricula: "Matricula", nome: "Colaborador", cargo: "Cargo", setor: "Area",
   situacao: "Situacao", supervisor: "Supervisor", supervisao: "Supervisao",
-  email: "e-mail Profissional",
+  email: "e-mail Profissional", apelido: "Apelido", cpf: "CPF", admissao: "Admissao", demissao: "Demissao",
   equipe: "Gerencia", gerente: "Gerente", diretor: "Diretor(a)", superintendente: "Superintendente"
 };
 
@@ -6792,6 +6792,43 @@ function classificarCargoAdmin(cargoBruto) {
 }
 
 const EQUIPE_DIRETORIA = "DIRETORIA";
+// Situação que desativa a pessoa. Também desativa quem tem data em Demissao igual ou
+// anterior a hoje. Qualquer outro texto diferente de ATIVO gera aviso na prévia (não desativa).
+const SITUACOES_INATIVAS_ADMIN = new Set(["INATIVO", "INATIVA", "DEMITIDO", "DEMITIDA", "DESLIGADO", "DESLIGADA"]);
+function importacaoAdminInativa(l) {
+  return SITUACOES_INATIVAS_ADMIN.has(_norm(l.situacao)) || (l.demissaoTs != null && l.demissaoTs <= Date.now());
+}
+
+// Saneia e-mails da planilha: espaço vira ponto, domínio parecido com o corporativo é corrigido,
+// formato inválido não é gravado. Domínio fora da empresa é mantido, mas listado para conferência.
+function sanearEmailsAdministrativo(linhas) {
+  const ajustes = [];
+  const REGEX_EMAIL = /^[a-z0-9._%+\-]+@[a-z0-9\-]+(\.[a-z0-9\-]+)+$/;
+  linhas.forEach(l => {
+    if (!l.email) return;
+    const original = l.email;
+    const ref = { matricula: l.matricula, nome: l.nomeCompleto, de: original };
+    const partes = original.split("@");
+    const local = (partes[0] || "").replace(/\s+/g, ".").replace(/^\.+|\.+$/g, "");
+    const dominio = partes.length > 1 ? partes.slice(1).join("@").replace(/\s+/g, "") : "";
+    const dominioFinal = dominio ? corrigirDominioEmail(dominio) : "";
+    const saneado = dominio ? `${local}@${dominioFinal}` : "";
+    if (!REGEX_EMAIL.test(saneado)) {
+      l.email = null;
+      ajustes.push({ ...ref, para: null, tipo: "formato inválido — e-mail não gravado" });
+      return;
+    }
+    if (saneado !== original) {
+      l.email = saneado;
+      ajustes.push({ ...ref, para: saneado, tipo: dominioFinal !== dominio ? "domínio corrigido" : "formato corrigido (espaços)" });
+    }
+    if (dominioFinal !== DOMINIO_EMAIL_CORPORATIVO && dominioFinal !== DOMINIO_EMAIL_PROVISORIO) {
+      ajustes.push({ ...ref, para: saneado, tipo: DOMINIOS_EMAIL_PESSOAIS.has(dominioFinal) ? "mantido — e-mail pessoal, conferir" : "mantido — domínio de fora da empresa, conferir" });
+    }
+  });
+  return ajustes;
+}
+
 // Trava da inativação automática: se mais que este % dos ativos de uma equipe
 // não vier na planilha, a inativação dessa equipe exige confirmação explícita.
 const LIMITE_PERCENTUAL_INATIVACAO_ADMIN = 10;
@@ -6815,10 +6852,109 @@ function nomeCurtoCasaComCompleto(curtoBruto, completoBruto) {
   return true;
 }
 
-function analisarImportacaoAdministrativa(linhasExcel, nomeArquivo, funcionariosExistentesTodos, normalizarTexto = normalizarTextoHierarquia) {
+// E-mail compartilhado entre pessoas diferentes (ex.: dpsjc@ do DP) não pode ser
+// usado como identificador: casaria todas no mesmo cadastro. Todas as pessoas do
+// grupo recebem e-mail provisório nome.sobrenome@portovale.com.br (mesmo padrão do
+// comercial); em caso de repetição, o dígito segue a ordem de admissão (mais antigo primeiro).
+// Regra definida em 08/10/2026 e válida para qualquer colisão futura.
+function resolverEmailsAdministrativo(linhas) {
+  const ajustes = [];
+  const grupos = new Map();
+  linhas.forEach(l => { if (l.email) { if (!grupos.has(l.email)) grupos.set(l.email, []); grupos.get(l.email).push(l); } });
+  const usados = new Set(linhas.map(l => l.email).filter(Boolean));
+  const cmp = (a, b) => (a ?? Infinity) - (b ?? Infinity);
+  grupos.forEach((g, original) => {
+    if (g.length < 2) return;
+    g.sort((a, b) => cmp(a.admissaoTs, b.admissaoTs) ||
+      String(a.matricula).localeCompare(String(b.matricula), "pt-BR", { numeric: true }));
+    g.forEach(l => {
+      const ap = tokensNomeEmail(l.apelido);
+      const t = ap.length > 1 ? ap : tokensNomeEmail(l.nomeCompleto);
+      const base = t.length > 1 ? t[0] + "." + t[t.length - 1] : (t[0] || "");
+      if (!base) return; // sem nome utilizável: mantém o e-mail e deixa o aviso de colisão
+      let novo = `${base}@${DOMINIO_EMAIL_PROVISORIO}`, n = 1;
+      while (usados.has(novo)) { n++; novo = `${base}${n}@${DOMINIO_EMAIL_PROVISORIO}`; }
+      usados.add(novo);
+      l.emailOriginal = original;
+      l.email = novo;
+      l.emailProvisorio = true;
+      ajustes.push({ matricula: l.matricula, nome: l.nomeCompleto, de: original, para: novo, tipo: "repetido entre pessoas — provisório" });
+    });
+  });
+  return ajustes;
+}
+
+// ── Proteção contra sobrescrita de ajustes manuais ──
+// A cada importação grava-se em funcionarios_administrativo.importacao_snapshot (jsonb) o que a
+// importação deixou em cada campo. Na seguinte, se o valor atual do banco difere do snapshot, alguém
+// mudou à mão no app: o importador preserva o valor e lista o caso na prévia (dá para liberar um a um).
+// Sem a coluna (ou sem snapshot, na 1ª importação) o comportamento é o antigo: a planilha vale.
+const CAMPOS_PROTEGIDOS_ADMIN = ["nome", "cargo", "setor", "email", "equipe_id", "subequipe_id", "papel", "ativo"];
+const ROTULOS_CAMPOS_ADMIN = { nome: "nome", cargo: "cargo", setor: "setor", email: "e-mail", equipe_id: "equipe",
+  subequipe_id: "subequipe", papel: "papel", ativo: "situação", coordenador_id: "coordenador" };
+const _sv = v => (v === null || v === undefined) ? "" : String(v);
+function snapshotsIguais(a, b) {
+  if (!a || !b) return false;
+  const chaves = [...CAMPOS_PROTEGIDOS_ADMIN, "coordenador_id"];
+  return chaves.every(k => _sv(a[k]) === _sv(b[k]));
+}
+function rotuloValorAdmin(campo, v) {
+  if (campo === "ativo") return v === false || v === "false" ? "inativo" : "ativo";
+  return _sv(v) || "(vazio)";
+}
+// Aplica à vontade do usuário: os conflitos liberados passam a valer o que diz a planilha.
+function liberarConflitosManuais(plano, liberados) {
+  for (const c of plano.conflitosManuais || []) {
+    if (!liberados.has(c.chave)) continue;
+    const at = plano.funcionariosAtualizados.find(x => x.id === c.idFunc);
+    if (!at) continue;
+    if (c.campo === "coordenador_id") { at.manterCoord = false; continue; }
+    at.campos[c.campo] = c.valorPlanilha;
+    at.snapshotBase[c.campo] = c.valorPlanilha;
+  }
+}
+
+// Todo funcionário sem e-mail na planilha (e sem e-mail já no cadastro) recebe um provisório
+// nome.sobrenome@portovale.com.br (apelido, se houver). Repetição: dígito 1, 2… do mais antigo ao mais novo
+// (Admissao). Nunca substitui e-mail já cadastrado. Regra definida em 08/10/2026.
+function gerarEmailsProvisoriosAdmin(linhas, porMat, emailsBanco) {
+  const ajustes = [];
+  const usados = new Set([...emailsBanco, ...linhas.map(l => l.email).filter(Boolean)]);
+  const grupos = new Map();
+  linhas.forEach(l => {
+    if (l.email) return;
+    const ex = porMat.get(l.matricula);
+    if (ex && String(ex.email || "").trim()) return; // mantém o e-mail do cadastro
+    const ap = tokensNomeEmail(l.apelido);
+    const t = ap.length > 1 ? ap : tokensNomeEmail(l.nomeCompleto);
+    const base = t.length > 1 ? t[0] + "." + t[t.length - 1] : (t[0] || "");
+    if (!base) return;
+    if (!grupos.has(base)) grupos.set(base, []);
+    grupos.get(base).push(l);
+  });
+  const cmp = (a, b) => (a ?? Infinity) - (b ?? Infinity);
+  grupos.forEach((g, base) => {
+    g.sort((a, b) => cmp(a.admissaoTs, b.admissaoTs) || String(a.matricula).localeCompare(String(b.matricula), "pt-BR", { numeric: true }));
+    let n = g.length > 1 ? 1 : 0;
+    for (const l of g) {
+      let novo = `${base}${n || ""}@${DOMINIO_EMAIL_PROVISORIO}`;
+      while (usados.has(novo)) { n++; novo = `${base}${n}@${DOMINIO_EMAIL_PROVISORIO}`; }
+      usados.add(novo);
+      l.email = novo; l.emailProvisorio = true;
+      ajustes.push({ matricula: l.matricula, nome: l.nomeCompleto, de: null, para: novo, tipo: "sem e-mail — provisório" });
+      n++;
+    }
+  });
+  return ajustes;
+}
+
+function analisarImportacaoAdministrativa(linhasExcel, nomeArquivo, funcionariosExistentesTodos, normalizarTexto = normalizarTextoHierarquia, opcoes = {}) {
+  const suportaSnapshot = !!opcoes.suportaSnapshot;
+  const conflitosManuais = [];
   const M = MAPA_COLUNAS_IMPORT_ADMIN;
   const erros = [];
   const linhasValidas = [];
+  const ignoradosCargoVazio = []; // informativo: não é erro (decisão de 08/10/2026)
 
   linhasExcel.forEach((linha, idx) => {
     const numeroLinha = idx + 2;
@@ -6826,6 +6962,11 @@ function analisarImportacaoAdministrativa(linhasExcel, nomeArquivo, funcionarios
     const nomeCompleto = normalizarTexto(linha[M.nome]);
     if (!matricula || !nomeCompleto) {
       erros.push({ linha: numeroLinha, motivo: "Matrícula ou nome do colaborador ausente." });
+      return;
+    }
+    // Cargo vazio na origem: a pessoa não entra no app, sem erro e sem aviso de falha.
+    if (!_vazio(normalizarTexto(linha[M.cargo]))) {
+      ignoradosCargoVazio.push({ linha: numeroLinha, matricula, nome: nomeCompleto.toUpperCase() });
       return;
     }
     let equipe = _vazio(normalizarTexto(linha[M.equipe]));
@@ -6841,6 +6982,10 @@ function analisarImportacaoAdministrativa(linhasExcel, nomeArquivo, funcionarios
       numeroLinha, matricula,
       nomeCompleto: nomeCompleto.toUpperCase(),
       cargo: cargo || null,
+      apelido: normalizarTexto(linha[M.apelido]) || null,
+      cpf: normalizarTexto(linha[M.cpf]) || null,
+      admissaoTs: dataParaTimestampImportacao(linha[M.admissao]),
+      demissaoTs: dataParaTimestampImportacao(linha[M.demissao]),
       papel: classificarCargoAdmin(cargo),
       setor: normalizarTexto(linha[M.setor]) || null,
       situacao: (normalizarTexto(linha[M.situacao]).toUpperCase() || "ATIVO"),
@@ -6853,6 +6998,24 @@ function analisarImportacaoAdministrativa(linhasExcel, nomeArquivo, funcionarios
       superintendenteNome: (_vazio(normalizarTexto(linha[M.superintendente])) || "").toUpperCase() || null
     });
   });
+
+  const ajustesEmail = [...sanearEmailsAdministrativo(linhasValidas), ...resolverEmailsAdministrativo(linhasValidas)];
+
+  // Situações que a planilha traz e o importador não reconhece (ex.: AFASTADO): só avisa.
+  const avisosSituacao = linhasValidas
+    .filter(l => !importacaoAdminInativa(l) && _norm(l.situacao) !== "ATIVO")
+    .map(l => ({ matricula: l.matricula, nome: l.nomeCompleto, situacao: l.situacao }));
+
+  // Equipes novas e grafias parecidas (TREINAMENTO x TREINAMENTOS): erro de digitação cria equipe nova.
+  const equipesNaPlan = new Set(linhasValidas.map(l => l.equipeId));
+  const equipesNoBancoSet = new Set(funcionariosExistentesTodos.map(f => f.equipe_id).filter(Boolean));
+  const equipesNovas = equipesNoBancoSet.size ? [...equipesNaPlan].filter(e => !equipesNoBancoSet.has(e)) : [];
+  const grafiaSuspeitaEquipes = [];
+  const todasEquipes = [...new Set([...equipesNaPlan, ...equipesNoBancoSet])];
+  for (let i = 0; i < todasEquipes.length; i++) for (let j = i + 1; j < todasEquipes.length; j++) {
+    const a = todasEquipes[i], b = todasEquipes[j];
+    if ((equipesNaPlan.has(a) || equipesNaPlan.has(b)) && grafiaParecidaHier(a, b)) grafiaSuspeitaEquipes.push([a, b]);
+  }
 
   // ── Agrupa por equipe ──
   const equipesMap = new Map();
@@ -6881,8 +7044,14 @@ function analisarImportacaoAdministrativa(linhasExcel, nomeArquivo, funcionarios
     // "coordenador da equipe" = quem recebe os membros sem Supervisor.
     // GRE: gerente é a cabeça e há vários coordenadores -> sem coordenador padrão.
     // DP/FACILITIES/GENTE E GESTAO: a coordenadora (cabeça) é o coordenador.
+    // Decisão de 08/10/2026: quem não tem Supervisor responde ao gerente da equipe
+    // (a cabeça, quando é coordenador ou gerente; senão o único gerente por cargo).
     let coordPadrao = null;
-    if (cabeca && cabeca.papel === "coordenador") coordPadrao = cabeca;
+    if (cabeca && (cabeca.papel === "coordenador" || cabeca.papel === "gerente")) coordPadrao = cabeca;
+    if (!coordPadrao) {
+      const gerentes = membros.filter(m => m.papel === "gerente");
+      if (gerentes.length === 1) coordPadrao = gerentes[0];
+    }
     if (coordPadrao) coordenadorPorEquipe.set(equipeId, coordPadrao);
 
     equipes.push({ equipeId, gerenteNome, diretorNome, superintendenteNome: superNome, total: membros.length,
@@ -6912,16 +7081,24 @@ function analisarImportacaoAdministrativa(linhasExcel, nomeArquivo, funcionarios
   const porMat = new Map(funcionariosExistentesTodos.map(f => [String(f.matricula || "").trim(), f]));
   const porEmail = new Map(funcionariosExistentesTodos.filter(f => f.email).map(f => [f.email.trim().toLowerCase(), f]));
 
+  ajustesEmail.push(...gerarEmailsProvisoriosAdmin(linhasValidas, porMat,
+    funcionariosExistentesTodos.map(f => String(f.email || "").trim().toLowerCase()).filter(Boolean)));
+
   const funcionariosNovos = [];
   const funcionariosAtualizados = [];
+  const nomePorId = new Map(funcionariosExistentesTodos.map(f => [f.id, f.nome]));
+  const linhaPorMat = new Map(linhasValidas.map(l => [l.matricula, l]));
 
   for (const l of linhasValidas) {
     let existente = porMat.get(l.matricula);
-    if (!existente && l.email) existente = porEmail.get(l.email);
+    if (!existente && l.email) {
+      const candidato = porEmail.get(l.email);
+      if (candidato && mesmaPessoaHier(l.nomeCompleto, l.cpf, candidato.nome, candidato.cpf)) existente = candidato;
+    }
 
     const camposBase = {
       matricula: l.matricula, nome: l.nomeCompleto, cargo: l.cargo, setor: l.setor, email: l.email,
-      ativo: l.situacao !== "INATIVO",
+      ativo: !importacaoAdminInativa(l),
       equipe_id: l.equipeId,
       papel: l.papel,
       // (b) subequipe: só entra se a planilha trouxe valor; "-" nunca apaga o que existe
@@ -6934,13 +7111,54 @@ function analisarImportacaoAdministrativa(linhasExcel, nomeArquivo, funcionarios
       if (v !== null && v !== "") campos[k] = v;
     }
 
+    if (existente && l.emailProvisorio && String(existente.email || "").trim()) delete campos.email;
+
     if (existente) {
+      const snapAnterior = suportaSnapshot && existente.importacao_snapshot && typeof existente.importacao_snapshot === "object"
+        ? existente.importacao_snapshot : null;
+      const snapshotBase = {};
+      let manterCoord = false;
+      const manter = {}; // campos cujo snapshot continua o antigo (valor manual preservado)
+      if (snapAnterior) {
+        for (const f of CAMPOS_PROTEGIDOS_ADMIN) {
+          if (!(f in snapAnterior)) continue;
+          const dbV = f === "ativo" ? existente.ativo !== false : existente[f];
+          if (_sv(dbV) === _sv(snapAnterior[f])) continue;           // ninguém mexeu à mão
+          if (f in campos && _sv(campos[f]) !== _sv(dbV)) {          // mexeram e a planilha discorda
+            conflitosManuais.push({ chave: `${existente.id}|${f}`, idFunc: existente.id, nome: existente.nome || l.nomeCompleto,
+              matricula: existente.matricula, campo: f, valorBanco: dbV, valorPlanilha: campos[f],
+              rotuloBanco: rotuloValorAdmin(f, dbV), rotuloPlanilha: rotuloValorAdmin(f, campos[f]) });
+            delete campos[f];
+            manter[f] = true;
+          }
+        }
+        if ("coordenador_id" in snapAnterior && _sv(existente.coordenador_id) !== _sv(snapAnterior.coordenador_id)) {
+          const cm = camposBase._coordenadorMatricula;
+          const alvoId = cm ? (porMat.get(String(cm))?.id || null) : null;
+          if (_sv(alvoId) !== _sv(existente.coordenador_id)) {
+            manterCoord = true;
+            conflitosManuais.push({ chave: `${existente.id}|coordenador_id`, idFunc: existente.id, nome: existente.nome || l.nomeCompleto,
+              matricula: existente.matricula, campo: "coordenador_id",
+              rotuloBanco: nomePorId.get(existente.coordenador_id) || "(nenhum)",
+              rotuloPlanilha: cm ? (linhaPorMat.get(String(cm))?.nomeCompleto || String(cm)) : "(nenhum)" });
+          }
+        }
+      }
+      for (const f of CAMPOS_PROTEGIDOS_ADMIN) {
+        const atual = f === "ativo" ? (f in campos ? campos.ativo : existente.ativo !== false) : (f in campos ? campos[f] : existente[f]);
+        snapshotBase[f] = manter[f] && snapAnterior ? snapAnterior[f] : (atual ?? null);
+      }
+      snapshotBase.coordenador_id = manterCoord && snapAnterior ? (snapAnterior.coordenador_id ?? null) : null; // o final é definido ao gravar
       funcionariosAtualizados.push({
         id: existente.id, matriculaAnterior: existente.matricula, nome: l.nomeCompleto,
-        campos: existente.ativo === false ? { ...campos, ativo: true } : campos
+        coordenadorAnteriorId: existente.coordenador_id || null,
+        manterCoord, snapshotBase, snapshotAnterior: snapAnterior,
+        campos   // campos.ativo já vem da Situação/Demissão da planilha (reativa quem voltou a ATIVO)
       });
     } else {
-      funcionariosNovos.push({ ...camposBase, acesso_revogado: false,
+      const _snapshotBase = {};
+      for (const f of CAMPOS_PROTEGIDOS_ADMIN) _snapshotBase[f] = camposBase[f] ?? null;
+      funcionariosNovos.push({ ...camposBase, _snapshotBase, acesso_revogado: false,
         esquecimentos: 0, atestados: 0, faltas: 0, banco_horas: 0, erros_registro: 0, abonos: 0, integracoes: 0 });
     }
   }
@@ -6976,7 +7194,8 @@ function analisarImportacaoAdministrativa(linhasExcel, nomeArquivo, funcionarios
   }
 
   return {
-    erros, semCoordenadorResolvido, totalLinhasPlanilha: linhasExcel.length,
+    suportaSnapshot, conflitosManuais,
+    erros, ignoradosCargoVazio, ajustesEmail, avisosSituacao, equipesNovas, grafiaSuspeitaEquipes, semCoordenadorResolvido, totalLinhasPlanilha: linhasExcel.length,
     equipes, funcionariosNovos, funcionariosAtualizados, naoVieramNaPlanilha,
     candidatosInativacao, travasInativacao,
     limitePercentualInativacao: LIMITE_PERCENTUAL_INATIVACAO_ADMIN,
@@ -6994,7 +7213,53 @@ function analisarImportacaoAdministrativa(linhasExcel, nomeArquivo, funcionarios
 // criação); (2) num segundo passe, resolve coordenador_id de cada um via
 // matrícula -> id e faz um update pontual só desse campo; (3) inativa quem
 // sumiu.
+function validarPlanoAdministrativo(plano) {
+  const problemas = [];
+  const vistos = new Set();
+  const emails = new Map();
+  const todos = [
+    ...plano.funcionariosNovos.map(f => ({ matricula: f.matricula, nome: f.nome, email: f.email })),
+    ...plano.funcionariosAtualizados.map(f => ({ matricula: f.campos.matricula || f.matriculaAnterior, nome: f.nome, email: f.campos.email }))
+  ];
+  const matriculas = new Set(todos.map(t => String(t.matricula)));
+  for (const t of todos) {
+    const m = String(t.matricula);
+    if (vistos.has(m)) problemas.push(`Matrícula ${m} repetida na planilha (${t.nome}).`);
+    vistos.add(m);
+    if (t.email) {
+      if (emails.has(t.email)) problemas.push(`E-mail ${t.email} ficou repetido entre ${emails.get(t.email)} e ${t.nome}.`);
+      else emails.set(t.email, t.nome);
+    }
+  }
+  [...plano.funcionariosNovos.map(f => [f.nome, f._coordenadorMatricula]),
+   ...plano.funcionariosAtualizados.map(f => [f.nome, f.campos._coordenadorMatricula])]
+    .forEach(([nome, cm]) => { if (cm && !matriculas.has(String(cm))) problemas.push(`Coordenador de ${nome} (matrícula ${cm}) não está na planilha.`); });
+  return problemas;
+}
+
+// Valida tudo antes de gravar; se a gravação parar no meio, o erro diz o que já foi aplicado.
 async function aplicarImportacaoAdministrativa(plano, onProgresso) {
+  (onProgresso || (() => {}))("Validando antes de gravar…");
+  const problemas = validarPlanoAdministrativo(plano);
+  if (problemas.length) {
+    throw new Error(`A validação encontrou ${problemas.length} problema(s) e nada foi gravado:\n• ` +
+      problemas.slice(0, 15).join("\n• ") + (problemas.length > 15 ? `\n… e mais ${problemas.length - 15}.` : ""));
+  }
+  const aplicado = { novos: 0, atualizados: 0, vinculos: 0, inativados: 0 };
+  try {
+    return await aplicarImportacaoAdministrativaInterno(plano, onProgresso, aplicado);
+  } catch (e) {
+    const pend = {
+      novos: plano.funcionariosNovos.length - aplicado.novos,
+      atualizados: plano.funcionariosAtualizados.length - aplicado.atualizados,
+      inativados: (plano.funcionariosInativados || []).length - aplicado.inativados
+    };
+    e.message = `${e.message}\n\nA gravação parou no meio. Já aplicado: ${aplicado.novos} novo(s), ${aplicado.atualizados} atualizado(s), ${aplicado.vinculos} vínculo(s) de coordenador, ${aplicado.inativados} inativado(s). Pendente: ${pend.novos} novo(s), ${pend.atualizados} atualização(ões), ${pend.inativados} inativação(ões). Corrija o motivo e envie a planilha de novo: a nova análise considera o que já foi gravado.`;
+    throw e;
+  }
+}
+
+async function aplicarImportacaoAdministrativaInterno(plano, onProgresso, aplicado) {
   const progresso = onProgresso || (() => {});
   const idPorMatricula = new Map();
 
@@ -7024,12 +7289,13 @@ async function aplicarImportacaoAdministrativa(plano, onProgresso) {
 
   progresso(`Criando ${plano.funcionariosNovos.length} funcionário(s) novo(s)…`);
   for (const novo of plano.funcionariosNovos) {
-    const { _coordenadorMatricula, ...campos } = novo;
+    const { _coordenadorMatricula, _snapshotBase, ...campos } = novo;
     const { data, error } = await supa.from("funcionarios_administrativo")
       .insert(campos)
       .select().single();
     if (error) throw new Error(`Falha ao criar funcionário "${novo.nome}" (matrícula ${novo.matricula}): ${extrairMensagemErro(error)}`);
     idPorMatricula.set(novo.matricula, data.id);
+    aplicado.novos++;
     registrarLogAcessosClient({
       acao: "criar_funcionario",
       funcionario_nome: novo.nome,
@@ -7047,24 +7313,46 @@ async function aplicarImportacaoAdministrativa(plano, onProgresso) {
       .eq("id", at.id);
     if (error) throw new Error(`Falha ao atualizar funcionário "${at.nome}": ${extrairMensagemErro(error)}`);
     idPorMatricula.set(at.matriculaAnterior, at.id);
+    if (campos.matricula) idPorMatricula.set(campos.matricula, at.id);
+    aplicado.atualizados++;
   }
 
   // Segundo passe: resolve coordenador_id agora que todo mundo tem id real
   // (seja recém-criado, seja já existente).
   progresso("Vinculando coordenadores…");
-  const todosComCoordenadorPendente = [
-    ...plano.funcionariosNovos.map(f => ({ matricula: f.matricula, coordMatricula: f._coordenadorMatricula })),
-    ...plano.funcionariosAtualizados.map(f => ({ matricula: f.matriculaAnterior, coordMatricula: f.campos._coordenadorMatricula }))
-  ].filter(x => x.coordMatricula);
-  for (const item of todosComCoordenadorPendente) {
+  // Também LIMPA o coordenador antigo quando o resultado da planilha é "nenhum", e só grava
+  // quando o vínculo mudou (reimportar a mesma planilha não escreve nada).
+  const itensCoordenacao = [
+    ...plano.funcionariosNovos.map(f => ({ matricula: f.matricula, coordMatricula: f._coordenadorMatricula, anterior: null,
+      manter: false, snapBase: f._snapshotBase, snapAnterior: null })),
+    ...plano.funcionariosAtualizados.map(f => ({ matricula: f.matriculaAnterior, coordMatricula: f.campos._coordenadorMatricula,
+      anterior: f.coordenadorAnteriorId || null, manter: !!f.manterCoord, snapBase: f.snapshotBase, snapAnterior: f.snapshotAnterior || null }))
+  ];
+  const avisosCoordenacao = [];
+  for (const item of itensCoordenacao) {
     const idPessoa = idPorMatricula.get(item.matricula);
-    const idCoordenador = idPorMatricula.get(item.coordMatricula);
-    if (!idPessoa || !idCoordenador) continue; // matrícula não resolvida — pula silenciosamente, não é erro fatal
+    if (!idPessoa) continue;
+    let alvo = null;
+    if (!item.manter) {
+      alvo = item.coordMatricula ? (idPorMatricula.get(item.coordMatricula) || null) : null;
+      if (item.coordMatricula && !alvo) { avisosCoordenacao.push(`matrícula ${item.matricula}: coordenador ${item.coordMatricula} não encontrado`); continue; }
+    }
+    const finalCoord = item.manter ? item.anterior : alvo;   // coordenador mexido à mão fica como está
+    const upd = {};
+    if ((finalCoord || null) !== (item.anterior || null)) upd.coordenador_id = finalCoord;
+    if (plano.suportaSnapshot && item.snapBase) {
+      const snap = { ...item.snapBase, coordenador_id: item.manter ? (item.snapBase.coordenador_id ?? null) : finalCoord };
+      if (!snapshotsIguais(snap, item.snapAnterior)) upd.importacao_snapshot = snap;
+    }
+    if (!Object.keys(upd).length) continue;
     const { error } = await supa.from("funcionarios_administrativo")
-      .update({ coordenador_id: idCoordenador })
+      .update(upd)
       .eq("id", idPessoa);
     if (error) throw new Error(`Falha ao vincular coordenador de matrícula ${item.matricula}: ${extrairMensagemErro(error)}`);
+    if ("coordenador_id" in upd) aplicado.vinculos++;
   }
+  plano.avisosCoordenacao = avisosCoordenacao;
+  if (avisosCoordenacao.length) console.warn("[importação administrativo] vínculos não resolvidos:", avisosCoordenacao);
 
   progresso(`Inativando ${plano.funcionariosInativados.length} funcionário(s)…`);
   for (const inativo of plano.funcionariosInativados) {
@@ -7072,6 +7360,7 @@ async function aplicarImportacaoAdministrativa(plano, onProgresso) {
       .update({ ativo: false })
       .eq("id", inativo.id);
     if (error) throw new Error(`Falha ao inativar funcionário "${inativo.nome}": ${extrairMensagemErro(error)}`);
+    aplicado.inativados++;
   }
 
   progresso("Concluído.");
@@ -7088,10 +7377,12 @@ function ModalImportarEquipeAdministrativa({ onClose, onConcluido }) {
   const [concluido, setConcluido] = useState(null);
   const [marcadosInativar, setMarcadosInativar] = useState(new Set());
   const [equipesLiberadas, setEquipesLiberadas] = useState(new Set());
+  const [conflitosLiberados, setConflitosLiberados] = useState(new Set());
 
   async function selecionarArquivo(file) {
     setArquivo(file);
     setPlano(null);
+    setConflitosLiberados(new Set());
     setMarcadosInativar(new Set());
     setEquipesLiberadas(new Set());
     setErro("");
@@ -7100,12 +7391,14 @@ function ModalImportarEquipeAdministrativa({ onClose, onConcluido }) {
     setProcessandoArquivo(true);
     setCarregandoBanco(true);
     try {
-      const [linhas, funcRes] = await Promise.all([
+      const [linhas, funcRes, sondaSnapshot] = await Promise.all([
         lerArquivoExcel(file),
-        supa.from("funcionarios_administrativo").select("*")
+        supa.from("funcionarios_administrativo").select("*"),
+        supa.from("funcionarios_administrativo").select("importacao_snapshot").limit(1)
       ]);
       if (funcRes.error) throw funcRes.error;
-      const resultado = analisarImportacaoAdministrativa(linhas, file.name, funcRes.data || []);
+      const resultado = analisarImportacaoAdministrativa(linhas, file.name, funcRes.data || [], normalizarTextoHierarquia,
+        { suportaSnapshot: !sondaSnapshot.error });
       setPlano(resultado);
       setMarcadosInativar(new Set(resultado.candidatosInativacao.filter(f => !f._equipeTravada).map(f => f.id)));
     } catch (err) {
@@ -7119,6 +7412,7 @@ function ModalImportarEquipeAdministrativa({ onClose, onConcluido }) {
   async function confirmarImportacao() {
     if (!plano) return;
     const travadas = new Set(plano.travasInativacao.map(t => t.equipeId));
+    liberarConflitosManuais(plano, conflitosLiberados);
     plano.funcionariosInativados = plano.candidatosInativacao.filter(f =>
       marcadosInativar.has(f.id) && (!travadas.has(f.equipe_id) || equipesLiberadas.has(f.equipe_id)));
     setAplicando(true);
@@ -7257,6 +7551,53 @@ function ModalImportarEquipeAdministrativa({ onClose, onConcluido }) {
                 }),
                 f.nome, " (mat. ", f.matricula, ", ", f.equipe_id, f.subequipe_id ? " / " + f.subequipe_id : "", ")", bloqueado ? " — bloqueado pela trava" : ""))
           }))
+      ),
+
+      (plano.suportaSnapshot === false) && /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: "var(--amber-700)", background: "var(--amber-50)", borderRadius: 10, padding: "8px 12px" } },
+        "🔓 Proteção de ajustes manuais desligada: falta a coluna importacao_snapshot em funcionarios_administrativo. Rode no Supabase: ALTER TABLE funcionarios_administrativo ADD COLUMN IF NOT EXISTS importacao_snapshot jsonb; — sem ela, a planilha sobrescreve tudo."),
+
+      (plano.conflitosManuais || []).length > 0 && /*#__PURE__*/React.createElement("div", null,
+        /*#__PURE__*/React.createElement("p", { style: { fontSize: 13, fontWeight: 700, color: "var(--amber-700)", marginBottom: 6 } },
+          "✋ Alterados à mão no app depois da última importação — serão PRESERVADOS (marque para usar o valor da planilha):"),
+        /*#__PURE__*/React.createElement("ul", { style: { fontSize: 12, color: "var(--amber-700)", paddingLeft: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 3, maxHeight: 160, overflow: "auto" } },
+          plano.conflitosManuais.map(c => /*#__PURE__*/React.createElement("li", { key: c.chave },
+            /*#__PURE__*/React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer" } },
+              /*#__PURE__*/React.createElement("input", {
+                type: "checkbox", checked: conflitosLiberados.has(c.chave),
+                onChange: e => { const n = new Set(conflitosLiberados); e.target.checked ? n.add(c.chave) : n.delete(c.chave); setConflitosLiberados(n); }
+              }),
+              c.nome, " (mat. ", c.matricula, ") — ", ROTULOS_CAMPOS_ADMIN[c.campo], ": app \"", c.rotuloBanco, "\" × planilha \"", c.rotuloPlanilha, "\""))))
+      ),
+
+
+      (plano.ajustesEmail || []).length > 0 && /*#__PURE__*/React.createElement("div", null,
+        /*#__PURE__*/React.createElement("p", { style: { fontSize: 13, fontWeight: 700, color: "var(--amber-700)", marginBottom: 6 } },
+          "✉️ Ajustes e conferências de e-mail (provisório só entra onde não há e-mail; quem já tem e-mail no cadastro o mantém):"),
+        /*#__PURE__*/React.createElement("ul", { style: { fontSize: 12, color: "var(--amber-700)", paddingLeft: 18, display: "flex", flexDirection: "column", gap: 2, maxHeight: 140, overflow: "auto" } },
+          plano.ajustesEmail.map((e, i) => /*#__PURE__*/React.createElement("li", { key: i },
+            e.nome, " (mat. ", e.matricula, "): ", e.de || "(vazio)", " → ", e.para || "(não gravado)", " — ", e.tipo)))
+      ),
+
+      ((plano.equipesNovas || []).length > 0 || (plano.grafiaSuspeitaEquipes || []).length > 0) && /*#__PURE__*/React.createElement("div", null,
+        /*#__PURE__*/React.createElement("p", { style: { fontSize: 13, fontWeight: 700, color: "var(--amber-700)", marginBottom: 6 } },
+          "🏷️ Confira os nomes de equipe (a equipe vem só do texto da coluna Gerencia):"),
+        /*#__PURE__*/React.createElement("ul", { style: { fontSize: 12, color: "var(--amber-700)", paddingLeft: 18, display: "flex", flexDirection: "column", gap: 2, maxHeight: 120, overflow: "auto" } },
+          (plano.equipesNovas || []).map((e, i) => /*#__PURE__*/React.createElement("li", { key: "n" + i }, "Equipe nova que será criada: ", e)),
+          (plano.grafiaSuspeitaEquipes || []).map((par, i) => /*#__PURE__*/React.createElement("li", { key: "g" + i }, "Grafia parecida: \"", par[0], "\" e \"", par[1], "\"")))
+      ),
+
+      (plano.avisosSituacao || []).length > 0 && /*#__PURE__*/React.createElement("div", null,
+        /*#__PURE__*/React.createElement("p", { style: { fontSize: 13, fontWeight: 700, color: "var(--amber-700)", marginBottom: 6 } },
+          "⚠️ Situação não reconhecida (a pessoa continua ativa; só INATIVO, DEMITIDO, DESLIGADO ou data em Demissao desativam):"),
+        /*#__PURE__*/React.createElement("ul", { style: { fontSize: 12, color: "var(--amber-700)", paddingLeft: 18, display: "flex", flexDirection: "column", gap: 2, maxHeight: 120, overflow: "auto" } },
+          plano.avisosSituacao.map((e, i) => /*#__PURE__*/React.createElement("li", { key: i }, e.nome, " (mat. ", e.matricula, "): ", e.situacao)))
+      ),
+
+      (plano.ignoradosCargoVazio || []).length > 0 && /*#__PURE__*/React.createElement("div", null,
+        /*#__PURE__*/React.createElement("p", { style: { fontSize: 13, fontWeight: 700, color: "var(--cinza-600)", marginBottom: 6 } },
+          "ℹ️ Sem cargo na planilha — não serão importados (" + plano.ignoradosCargoVazio.length + "):"),
+        /*#__PURE__*/React.createElement("ul", { style: { fontSize: 12, color: "var(--cinza-600)", paddingLeft: 18, display: "flex", flexDirection: "column", gap: 2, maxHeight: 120, overflow: "auto" } },
+          plano.ignoradosCargoVazio.map((e, i) => /*#__PURE__*/React.createElement("li", { key: i }, e.nome, " (mat. ", e.matricula, ")")))
       ),
 
       plano.semCoordenadorResolvido.length > 0 && /*#__PURE__*/React.createElement("div", null,
