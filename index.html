@@ -7630,7 +7630,7 @@ function ModalImportarEquipeAdministrativa({ onClose, onConcluido }) {
       ),
 
 
-      (plano.ajustesEmail || []).length > 0 && /*#__PURE__*/React.createElement("div", null,
+      (plano.ajustesEmail || []).length > 0 && /*#__PURE__*/React.createElement("div", { style: { background: "var(--amber-50)", borderRadius: 12, padding: "10px 14px" } },
         /*#__PURE__*/React.createElement("p", { style: { fontSize: 13, fontWeight: 700, color: "var(--amber-700)", marginBottom: 6 } },
           "✉️ Ajustes e conferências de e-mail (provisório só entra onde não há e-mail; quem já tem e-mail no cadastro o mantém):"),
         /*#__PURE__*/React.createElement("ul", { style: { fontSize: 12, color: "var(--amber-700)", paddingLeft: 18, display: "flex", flexDirection: "column", gap: 2, maxHeight: 140, overflow: "auto" } },
@@ -7638,7 +7638,7 @@ function ModalImportarEquipeAdministrativa({ onClose, onConcluido }) {
             e.nome, " (mat. ", e.matricula, "): ", e.de || "(vazio)", " → ", e.para || "(não gravado)", " — ", e.tipo)))
       ),
 
-      ((plano.equipesNovas || []).length > 0 || (plano.grafiaSuspeitaEquipes || []).length > 0) && /*#__PURE__*/React.createElement("div", null,
+      ((plano.equipesNovas || []).length > 0 || (plano.grafiaSuspeitaEquipes || []).length > 0) && /*#__PURE__*/React.createElement("div", { style: { background: "var(--amber-50)", borderRadius: 12, padding: "10px 14px" } },
         /*#__PURE__*/React.createElement("p", { style: { fontSize: 13, fontWeight: 700, color: "var(--amber-700)", marginBottom: 6 } },
           "🏷️ Confira os nomes de equipe (a equipe vem só do texto da coluna Gerencia):"),
         /*#__PURE__*/React.createElement("ul", { style: { fontSize: 12, color: "var(--amber-700)", paddingLeft: 18, display: "flex", flexDirection: "column", gap: 2, maxHeight: 120, overflow: "auto" } },
@@ -7646,7 +7646,7 @@ function ModalImportarEquipeAdministrativa({ onClose, onConcluido }) {
           (plano.grafiaSuspeitaEquipes || []).map((par, i) => /*#__PURE__*/React.createElement("li", { key: "g" + i }, "Grafia parecida: \"", par[0], "\" e \"", par[1], "\"")))
       ),
 
-      (plano.avisosSituacao || []).length > 0 && /*#__PURE__*/React.createElement("div", null,
+      (plano.avisosSituacao || []).length > 0 && /*#__PURE__*/React.createElement("div", { style: { background: "var(--amber-50)", borderRadius: 12, padding: "10px 14px" } },
         /*#__PURE__*/React.createElement("p", { style: { fontSize: 13, fontWeight: 700, color: "var(--amber-700)", marginBottom: 6 } },
           "⚠️ Situação não reconhecida (a pessoa continua ativa; só INATIVO, DEMITIDO, DESLIGADO ou data em Demissao desativam):"),
         /*#__PURE__*/React.createElement("ul", { style: { fontSize: 12, color: "var(--amber-700)", paddingLeft: 18, display: "flex", flexDirection: "column", gap: 2, maxHeight: 120, overflow: "auto" } },
