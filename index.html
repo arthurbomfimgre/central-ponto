@@ -7559,11 +7559,11 @@ function ModalImportarEquipeAdministrativa({ onClose, onConcluido }) {
         /*#__PURE__*/React.createElement("strong", null, plano.totalLinhasPlanilha), " linha(s) na planilha."),
 
       /*#__PURE__*/React.createElement("div", {
-        style: { background: "var(--azul-50)", border: "1px solid var(--azul-200)", borderRadius: 10, padding: "12px 16px", fontSize: 13, display: "flex", flexDirection: "column", gap: 6 }
+        style: { background: "var(--azul-50)", color: "var(--azul-800)", border: "1px solid var(--azul-200)", borderRadius: 10, padding: "12px 16px", fontSize: 13, display: "flex", flexDirection: "column", gap: 6 }
       },
         plano.equipes.map(eq => /*#__PURE__*/React.createElement("span", { key: eq.equipeId, style: { display: "block" } },
           /*#__PURE__*/React.createElement("strong", null, eq.equipeId), ` — ${eq.total} pessoa(s)`,
-          eq.gerenteNome && /*#__PURE__*/React.createElement("span", { style: { display: "block", fontSize: 12, color: "var(--cinza-500)" } }, "👑 Gerente: ", eq.gerenteNome)))
+          eq.gerenteNome && /*#__PURE__*/React.createElement("span", { style: { display: "block", fontSize: 12, color: "var(--azul-700)" } }, "👑 Gerente: ", eq.gerenteNome)))
       ),
 
       /*#__PURE__*/React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 } },
@@ -7723,7 +7723,7 @@ function ModalImportarEquipeAdministrativa({ onClose, onConcluido }) {
           concluido.listaNovos.map((f, i) => /*#__PURE__*/React.createElement("li", { key: i }, f.nome, " — mat. ", f.matricula)))
       ),
       concluido.listaAtualizados?.length > 0 && /*#__PURE__*/React.createElement("details", {
-        style: { background: "var(--azul-50)", borderRadius: 12, padding: "10px 14px", fontSize: 13 }
+        style: { background: "var(--azul-50)", color: "var(--azul-800)", borderRadius: 12, padding: "10px 14px", fontSize: 13 }
       },
         /*#__PURE__*/React.createElement("summary", { style: { fontWeight: 700, color: "var(--azul-700)", cursor: "pointer" } },
           "Ver ", concluido.listaAtualizados.length, " funcionário(s) atualizado(s)"),
