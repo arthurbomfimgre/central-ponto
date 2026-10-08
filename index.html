@@ -5160,6 +5160,30 @@ function montarPlanoImportacaoPonto(linhas, funcionarios, ocorrenciasExistentes)
   return { prontas, semCorrespondencia, duplicadas, semData, ambiguas };
 }
 
+// Barra de progresso reutilizável. `valor` numérico (0–100) = determinada;
+// sem `valor` = indeterminada (animação). Estilos em styles.css (.cp-progresso).
+function BarraProgresso({ valor, rotulo, detalhe }) {
+  const indeterminada = typeof valor !== "number" || isNaN(valor);
+  const pct = indeterminada ? 0 : Math.max(0, Math.min(100, Math.round(valor)));
+  return React.createElement("div", { style: { width: "100%", textAlign: "left" } },
+    (rotulo || !indeterminada) && React.createElement("div", { style: { display: "flex", justifyContent: "space-between", gap: 8, fontSize: 12, color: "var(--texto-fraco)", marginBottom: 6 } },
+      React.createElement("span", null, rotulo || ""),
+      !indeterminada && React.createElement("strong", { style: { color: "var(--texto)" } }, pct + "%")),
+    React.createElement("div", {
+      className: "cp-progresso" + (indeterminada ? " indeterminada" : ""),
+      role: "progressbar", "aria-label": rotulo || "Progresso",
+      "aria-valuemin": 0, "aria-valuemax": 100, "aria-valuenow": indeterminada ? undefined : pct
+    }, React.createElement("div", { style: indeterminada ? null : { width: pct + "%" } })),
+    detalhe && React.createElement("p", { style: { fontSize: 12, color: "var(--texto-fraco)", marginTop: 6 } }, detalhe));
+}
+
+// Andamento da criação de logins em lote: { feitos, pct } a partir do resumo.
+function progressoLote(r) {
+  const total = r?.total || 0;
+  const feitos = Math.min(total, (r?.criados || 0) + (r?.jaExistiam || 0) + (r?.falhas || []).length);
+  return { total, feitos, pct: total ? (feitos / total) * 100 : 0 };
+}
+
 function ModalImportarPontoDP({ funcionarios, ocorrencias, setOcorrencias, addNotif, onClose }) {
   const [arquivo, setArquivo] = useState(null);
   const [processando, setProcessando] = useState(false);
@@ -5311,9 +5335,8 @@ function ModalImportarPontoDP({ funcionarios, ocorrencias, setOcorrencias, addNo
       })
     ),
 
-    processando && /*#__PURE__*/React.createElement("p", {
-      style: { fontSize: 12, color: "var(--texto-fraco)", marginTop: 14, textAlign: "center" }
-    }, "Processando…"),
+    processando && /*#__PURE__*/React.createElement("div", { style: { marginTop: 14 } },
+      /*#__PURE__*/React.createElement(BarraProgresso, { rotulo: "Processando…" })),
 
     erro && /*#__PURE__*/React.createElement("div", {
       style: {
@@ -6499,7 +6522,7 @@ function validarPlanoAntesDeAplicar(plano, banco) {
 // Valida tudo antes de gravar; se a gravação falhar no meio, devolve no erro
 // (relatorioParcial) exatamente o que já foi aplicado e o que ficou pendente.
 async function aplicarImportacaoHierarquia(plano, banco, onProgresso) {
-  (onProgresso || (() => {}))("Validando antes de gravar…");
+  (onProgresso || (() => {}))("Validando antes de gravar…", 3);
   const problemas = validarPlanoAntesDeAplicar(plano, banco);
   if (problemas.length) {
     throw new Error(`A validação encontrou ${problemas.length} problema(s) e nada foi gravado:\n• ` +
@@ -6527,7 +6550,7 @@ async function aplicarImportacaoHierarquiaInterno(plano, banco, onProgresso, apl
   const progresso = onProgresso || (() => {});
 
   // ── 1) Cria diretorias novas ─────────────────────────────────────────────
-  progresso("Criando diretorias novas…");
+  progresso("Criando diretorias novas…", 10);
   const dirPorChave = new Map(); // "supId::NOME" -> registro (existente ou recém-criado)
   banco.diretorias.forEach(d => dirPorChave.set(`${d.superintendencia_id}::${d.nome.trim().toUpperCase()}`, d));
   for (const nova of plano.diretoriasNovas) {
@@ -6546,7 +6569,7 @@ async function aplicarImportacaoHierarquiaInterno(plano, banco, onProgresso, apl
 
   // ── 2) Cria gerências novas (usando ids reais de diretoria, inclusive as
   //      recém-criadas no passo anterior) ─────────────────────────────────
-  progresso("Criando gerências novas…");
+  progresso("Criando gerências novas…", 20);
   const gerPorChave = new Map(); // "dirId::NOME" -> registro
   banco.gerencias.forEach(g => gerPorChave.set(`${g.diretoria_id}::${g.nome.trim().toUpperCase()}`, g));
   for (const nova of plano.gerenciasNovas) {
@@ -6584,7 +6607,7 @@ async function aplicarImportacaoHierarquiaInterno(plano, banco, onProgresso, apl
   }
 
   // ── 2b) Atualiza o responsável (gerente/diretor) de estruturas que já existiam ──
-  progresso(`Atualizando ${(plano.responsaveisAtualizados || []).length} responsável(is)…`);
+  progresso(`Atualizando ${(plano.responsaveisAtualizados || []).length} responsável(is)…`, 30);
   for (const r of (plano.responsaveisAtualizados || [])) {
     const { error } = await supa.from(r.tipo === "diretoria" ? "diretorias" : "gerencias").update({ responsavel_nome: r.para }).eq("id", r.id);
     if (error) throw new Error(`Falha ao atualizar o responsável da ${r.tipo} "${r.nome}": ${extrairMensagemErro(error)}`);
@@ -6605,7 +6628,7 @@ async function aplicarImportacaoHierarquiaInterno(plano, banco, onProgresso, apl
     return saida;
   })();
   // ── 4) Atualiza funcionários existentes ─────────────────────────────────
-  progresso(`Atualizando ${plano.funcionariosAtualizados.length} funcionário(s)…`);
+  progresso(`Atualizando ${plano.funcionariosAtualizados.length} funcionário(s)…`, 40);
   const falhasEmail = []; // logins cujo e-mail não pôde ser trocado no Auth (cadastro mantém o e-mail antigo)
   for (const at of atualizadosOrdenados) {
     const ids = resolverIds(at);
@@ -6670,7 +6693,7 @@ async function aplicarImportacaoHierarquiaInterno(plano, banco, onProgresso, apl
   }
 
   // ── 3) Cria funcionários novos ───────────────────────────────────────────
-  progresso(`Criando ${plano.funcionariosNovos.length} funcionário(s) novo(s)…`);
+  progresso(`Criando ${plano.funcionariosNovos.length} funcionário(s) novo(s)…`, 60);
   for (const novo of plano.funcionariosNovos) {
     const { _superintendenciaId, _diretoriaNome, _gerenciaNome, ...campos } = novo;
     const ids = resolverIds(novo);
@@ -6702,7 +6725,7 @@ async function aplicarImportacaoHierarquiaInterno(plano, banco, onProgresso, apl
   // bloqueia a inativação em si se a Edge Function falhar) — falhas aqui
   // ficam registradas em `falhasRevogacao` e são reportadas ao usuário no
   // resumo, mas não interrompem a importação.
-  progresso(`Inativando ${plano.funcionariosInativados.length} funcionário(s)…`);
+  progresso(`Inativando ${plano.funcionariosInativados.length} funcionário(s)…`, 80);
   const falhasRevogacao = [];
   const idsInativadosAgora = new Set();
   for (const inativo of plano.funcionariosInativados) {
@@ -6736,7 +6759,7 @@ async function aplicarImportacaoHierarquiaInterno(plano, banco, onProgresso, apl
     !f.acesso_revogado
   );
   if (jaEramInativosComAcessoPendente.length > 0) {
-    progresso(`Revogando acesso de ${jaEramInativosComAcessoPendente.length} funcionário(s) já inativado(s) anteriormente…`);
+    progresso(`Revogando acesso de ${jaEramInativosComAcessoPendente.length} funcionário(s) já inativado(s) anteriormente…`, 90);
     for (const f of jaEramInativosComAcessoPendente) {
       const resultado = await chamarGerenciarAcesso("revogar_acesso", f, "importacao_planilha");
       if (!resultado.ok) {
@@ -6745,7 +6768,7 @@ async function aplicarImportacaoHierarquiaInterno(plano, banco, onProgresso, apl
     }
   }
 
-  progresso("Concluído.");
+  progresso("Concluído.", 100);
   return { falhasRevogacao, falhasEmail, revogadosRetroativos: jaEramInativosComAcessoPendente.map(f => ({ nome: nomeParaLog(f), matricula: f.matricula })) };
 }
 
@@ -7270,7 +7293,7 @@ function validarPlanoAdministrativo(plano) {
 
 // Valida tudo antes de gravar; se a gravação parar no meio, o erro diz o que já foi aplicado.
 async function aplicarImportacaoAdministrativa(plano, onProgresso) {
-  (onProgresso || (() => {}))("Validando antes de gravar…");
+  (onProgresso || (() => {}))("Validando antes de gravar…", 3);
   const problemas = validarPlanoAdministrativo(plano);
   if (problemas.length) {
     throw new Error(`A validação encontrou ${problemas.length} problema(s) e nada foi gravado:\n• ` +
@@ -7299,7 +7322,7 @@ async function aplicarImportacaoAdministrativaInterno(plano, onProgresso, aplica
   // diferente do banco). Reimportar a mesma planilha não escreve nada.
   // Dado auxiliar: se falhar, avisa e segue, sem derrubar a importação dos funcionários.
   const avisosEquipes = [];
-  progresso(`Conferindo ${plano.equipes.length} equipe(s)…`);
+  progresso(`Conferindo ${plano.equipes.length} equipe(s)…`, 8);
   const { data: equipesBanco, error: erroLeituraEquipes } = await supa.from("equipes_administrativo").select("*");
   const equipesNoBanco = new Map((erroLeituraEquipes ? [] : (equipesBanco || [])).map(e => [e.equipe_id, e]));
   for (const eq of plano.equipes) {
@@ -7319,7 +7342,7 @@ async function aplicarImportacaoAdministrativaInterno(plano, onProgresso, aplica
   if (avisosEquipes.length) console.warn("[importação administrativo] equipes não gravadas:", avisosEquipes);
   plano.avisosEquipes = avisosEquipes;
 
-  progresso(`Criando ${plano.funcionariosNovos.length} funcionário(s) novo(s)…`);
+  progresso(`Criando ${plano.funcionariosNovos.length} funcionário(s) novo(s)…`, 25);
   for (const novo of plano.funcionariosNovos) {
     const { _coordenadorMatricula, _snapshotBase, ...campos } = novo;
     const { data, error } = await supa.from("funcionarios_administrativo")
@@ -7337,7 +7360,7 @@ async function aplicarImportacaoAdministrativaInterno(plano, onProgresso, aplica
     });
   }
 
-  progresso(`Atualizando ${plano.funcionariosAtualizados.length} funcionário(s)…`);
+  progresso(`Atualizando ${plano.funcionariosAtualizados.length} funcionário(s)…`, 45);
   for (const at of plano.funcionariosAtualizados) {
     const { _coordenadorMatricula, ...campos } = at.campos;
     let emailAuthTrocado = false;
@@ -7365,7 +7388,7 @@ async function aplicarImportacaoAdministrativaInterno(plano, onProgresso, aplica
 
   // Segundo passe: resolve coordenador_id agora que todo mundo tem id real
   // (seja recém-criado, seja já existente).
-  progresso("Vinculando coordenadores…");
+  progresso("Vinculando coordenadores…", 65);
   // Também LIMPA o coordenador antigo quando o resultado da planilha é "nenhum", e só grava
   // quando o vínculo mudou (reimportar a mesma planilha não escreve nada).
   const itensCoordenacao = [
@@ -7400,7 +7423,7 @@ async function aplicarImportacaoAdministrativaInterno(plano, onProgresso, aplica
   plano.avisosCoordenacao = avisosCoordenacao;
   if (avisosCoordenacao.length) console.warn("[importação administrativo] vínculos não resolvidos:", avisosCoordenacao);
 
-  progresso(`Inativando ${plano.funcionariosInativados.length} funcionário(s)…`);
+  progresso(`Inativando ${plano.funcionariosInativados.length} funcionário(s)…`, 80);
   for (const inativo of plano.funcionariosInativados) {
     const { error } = await supa.from("funcionarios_administrativo")
       .update({ ativo: false })
@@ -7415,14 +7438,14 @@ async function aplicarImportacaoAdministrativaInterno(plano, onProgresso, aplica
   for (const f of plano.funcionariosInativados || []) if (f.auth_user_id && !f.acesso_revogado) alvosRevogar.set(f.id, f);
   plano.revogados = [];
   plano.falhasRevogacao = [];
-  if (alvosRevogar.size) progresso(`Revogando acesso de ${alvosRevogar.size} funcionário(s) inativo(s)…`);
+  if (alvosRevogar.size) progresso(`Revogando acesso de ${alvosRevogar.size} funcionário(s) inativo(s)…`, 92);
   for (const f of alvosRevogar.values()) {
     const r = await chamarGerenciarAcesso("revogar_acesso", f, "importacao_planilha");
     if (r.ok) plano.revogados.push({ nome: f.nome, matricula: f.matricula });
     else plano.falhasRevogacao.push({ nome: f.nome, matricula: f.matricula, motivo: r.erro });
   }
 
-  progresso("Concluído.");
+  progresso("Concluído.", 100);
 }
 
 function ModalImportarEquipeAdministrativa({ onClose, onConcluido }) {
@@ -7432,6 +7455,7 @@ function ModalImportarEquipeAdministrativa({ onClose, onConcluido }) {
   const [plano, setPlano] = useState(null);
   const [aplicando, setAplicando] = useState(false);
   const [etapaAtual, setEtapaAtual] = useState("");
+  const [pctAplicacao, setPctAplicacao] = useState(null);
   const [erro, setErro] = useState("");
   const [concluido, setConcluido] = useState(null);
   const [marcadosInativar, setMarcadosInativar] = useState(new Set());
@@ -7477,7 +7501,7 @@ function ModalImportarEquipeAdministrativa({ onClose, onConcluido }) {
     setAplicando(true);
     setErro("");
     try {
-      await aplicarImportacaoAdministrativa(plano, setEtapaAtual);
+      await aplicarImportacaoAdministrativa(plano, (t, p) => { setEtapaAtual(t); if (typeof p === "number") setPctAplicacao(p); });
       const resultadoLog = await registrarLogAcessosClient({
         acao: "importacao_planilha",
         origem: "importacao_planilha",
@@ -7507,7 +7531,7 @@ function ModalImportarEquipeAdministrativa({ onClose, onConcluido }) {
       setErro(extrairMensagemErro(err));
     } finally {
       setAplicando(false);
-      setEtapaAtual("");
+      setEtapaAtual(""); setPctAplicacao(null);
     }
   }
 
@@ -7547,7 +7571,7 @@ function ModalImportarEquipeAdministrativa({ onClose, onConcluido }) {
           onChange: e => selecionarArquivo(e.target.files?.[0] || null)
         })
       ),
-      carregando && /*#__PURE__*/React.createElement("p", { style: { fontSize: 12, color: "var(--texto-fraco)", marginTop: 14, textAlign: "center" } }, "Lendo planilha e estado atual…")
+      carregando && /*#__PURE__*/React.createElement("div", { style: { marginTop: 14 } }, /*#__PURE__*/React.createElement(BarraProgresso, { rotulo: "Lendo planilha e estado atual…" }))
     ),
 
     erro && /*#__PURE__*/React.createElement("div", {
@@ -7694,7 +7718,7 @@ function ModalImportarEquipeAdministrativa({ onClose, onConcluido }) {
     ),
 
     aplicando && /*#__PURE__*/React.createElement("div", { style: { marginTop: 16, textAlign: "center" } },
-      /*#__PURE__*/React.createElement("p", { style: { fontSize: 13, color: "var(--cinza-500)" } }, "⏳ ", etapaAtual || "Aplicando…"),
+      /*#__PURE__*/React.createElement(BarraProgresso, { valor: pctAplicacao, rotulo: "⏳ " + (etapaAtual || "Aplicando…") }),
       /*#__PURE__*/React.createElement("p", { style: { fontSize: 12, color: "var(--texto-fraco)", marginTop: 6 } }, "Não feche esta janela.")
     ),
 
@@ -7985,6 +8009,7 @@ function ModalImportarHierarquia({ onClose, onConcluido }) {
   const [banco, setBanco] = useState(null);
   const [aplicando, setAplicando] = useState(false);
   const [etapaAtual, setEtapaAtual] = useState("");
+  const [pctAplicacao, setPctAplicacao] = useState(null);
   const [erro, setErro] = useState("");
   const [concluido, setConcluido] = useState(null);
   const [falhaParcial, setFalhaParcial] = useState(null); // o que já foi aplicado quando a gravação parou no meio
@@ -8040,7 +8065,7 @@ function ModalImportarHierarquia({ onClose, onConcluido }) {
     setErro("");
     try {
       const planoFiltrado = filtrarPlanoPorSelecao(plano, diretoriasRejeitadas, gerenciasRejeitadas);
-      const { falhasRevogacao, falhasEmail, revogadosRetroativos } = await aplicarImportacaoHierarquia(planoFiltrado, banco, setEtapaAtual);
+      const { falhasRevogacao, falhasEmail, revogadosRetroativos } = await aplicarImportacaoHierarquia(planoFiltrado, banco, (t, p) => { setEtapaAtual(t); if (typeof p === "number") setPctAplicacao(p); });
       // IMPORTANTE: este registro precisa ser sempre gravado, mesmo quando a
       // importação só atualizou funcionários existentes (novos=0,
       // inativados=0) — é o único jeito de auditoria/histórico saberem que
@@ -8096,7 +8121,7 @@ function ModalImportarHierarquia({ onClose, onConcluido }) {
       }
     } finally {
       setAplicando(false);
-      setEtapaAtual("");
+      setEtapaAtual(""); setPctAplicacao(null);
     }
   }
 
@@ -8136,7 +8161,7 @@ function ModalImportarHierarquia({ onClose, onConcluido }) {
           onChange: e => selecionarArquivo(e.target.files?.[0] || null)
         })
       ),
-      carregando && /*#__PURE__*/React.createElement("p", { style: { fontSize: 12, color: "var(--texto-fraco)", marginTop: 14, textAlign: "center" } }, "Lendo planilha e estado atual…")
+      carregando && /*#__PURE__*/React.createElement("div", { style: { marginTop: 14 } }, /*#__PURE__*/React.createElement(BarraProgresso, { rotulo: "Lendo planilha e estado atual…" }))
     ),
 
     erro && /*#__PURE__*/React.createElement("div", {
@@ -8326,7 +8351,7 @@ function ModalImportarHierarquia({ onClose, onConcluido }) {
     })(),
 
     aplicando && /*#__PURE__*/React.createElement("div", { style: { marginTop: 16, textAlign: "center" } },
-      /*#__PURE__*/React.createElement("p", { style: { fontSize: 13, color: "var(--cinza-500)" } }, "⏳ ", etapaAtual || "Aplicando…"),
+      /*#__PURE__*/React.createElement(BarraProgresso, { valor: pctAplicacao, rotulo: "⏳ " + (etapaAtual || "Aplicando…") }),
       /*#__PURE__*/React.createElement("p", { style: { fontSize: 12, color: "var(--texto-fraco)", marginTop: 6 } }, "Não feche esta janela.")
     ),
 
@@ -14571,7 +14596,8 @@ function ArvoreHierarquia({ pode = () => true, ocorrencias = [], funcionariosUni
     if (criandoUsuarios) return;
     setCriandoUsuarios(true);
     setResumoUsuarios(null);
-    const acumulado = { criados: 0, jaExistiam: 0, falhas: [] };
+    const acumulado = { criados: 0, jaExistiam: 0, falhas: [], total: funcionarios.filter(f => !f.auth_user_id && EMAIL_VALIDO_REGEX.test((f.email || "").trim())).length };
+    setResumoUsuarios({ ...acumulado, emAndamento: true });
     const LOTE = 40;
     try {
       // Chama a Edge Function repetidas vezes, um lote pequeno por vez, até
@@ -14689,7 +14715,8 @@ function ArvoreHierarquia({ pode = () => true, ocorrencias = [], funcionariosUni
     if (criandoUsuariosAdmin) return;
     setCriandoUsuariosAdmin(true);
     setResumoUsuariosAdmin(null);
-    const acumulado = { criados: 0, jaExistiam: 0, falhas: [] };
+    const acumulado = { criados: 0, jaExistiam: 0, falhas: [], total: funcionariosAdmin.filter(f => f.ativo !== false && !f.auth_user_id && EMAIL_VALIDO_REGEX.test((f.email || "").trim())).length };
+    setResumoUsuariosAdmin({ ...acumulado, emAndamento: true });
     const LOTE = 40;
     try {
       for (let i = 0; i < 30; i++) { // trava de segurança: no máx. 30 lotes (1200 pessoas)
@@ -14896,6 +14923,8 @@ function ArvoreHierarquia({ pode = () => true, ocorrencias = [], funcionariosUni
           !resumoUsuarios.erro && /*#__PURE__*/React.createElement(React.Fragment, null,
             resumoUsuarios.emAndamento ? "⏳ Processando… " : "✅ Concluído. ",
             `${resumoUsuarios.criados} login(s) criado(s) · ${resumoUsuarios.jaExistiam} já existiam · ${(resumoUsuarios.falhas || []).length} falha(s).`,
+            resumoUsuarios.emAndamento && resumoUsuarios.total > 0 && /*#__PURE__*/React.createElement("div", { style: { marginTop: 8 } },
+              /*#__PURE__*/React.createElement(BarraProgresso, { valor: progressoLote(resumoUsuarios).pct, rotulo: "Processadas " + progressoLote(resumoUsuarios).feitos + " de " + progressoLote(resumoUsuarios).total })),
             resumoUsuarios.senha && /*#__PURE__*/React.createElement("div", { style: { marginTop: 4 } }, `Senha inicial padrão: ${resumoUsuarios.senha}`),
             // sem_email_count vem da Edge Function (contagem no servidor,
             // sempre a mais atual) — some quando chega a 0. Reforça o
@@ -15004,6 +15033,8 @@ function ArvoreHierarquia({ pode = () => true, ocorrencias = [], funcionariosUni
           !resumoUsuariosAdmin.erro && /*#__PURE__*/React.createElement(React.Fragment, null,
             resumoUsuariosAdmin.emAndamento ? "⏳ Processando… " : "✅ Concluído. ",
             `${resumoUsuariosAdmin.criados} login(s) criado(s) · ${resumoUsuariosAdmin.jaExistiam} já existiam · ${(resumoUsuariosAdmin.falhas || []).length} falha(s).`,
+            resumoUsuariosAdmin.emAndamento && resumoUsuariosAdmin.total > 0 && /*#__PURE__*/React.createElement("div", { style: { marginTop: 8 } },
+              /*#__PURE__*/React.createElement(BarraProgresso, { valor: progressoLote(resumoUsuariosAdmin).pct, rotulo: "Processadas " + progressoLote(resumoUsuariosAdmin).feitos + " de " + progressoLote(resumoUsuariosAdmin).total })),
             resumoUsuariosAdmin.senha && /*#__PURE__*/React.createElement("div", { style: { marginTop: 4 } }, `Senha inicial padrão: ${resumoUsuariosAdmin.senha}`),
             !!resumoUsuariosAdmin.semEmailCount && /*#__PURE__*/React.createElement("div", { style: { marginTop: 4 } },
               `${resumoUsuariosAdmin.semEmailCount} pessoa(s) sem e-mail cadastrado não foram tentadas — cadastre o e-mail em "Ver quem está sem e-mail válido" acima.`),
