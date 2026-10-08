@@ -5638,6 +5638,47 @@ function resolverEmailsImportacao(linhas, emailsComLoginPorMatricula) {
   return ajustes;
 }
 
+// ── Grafia suspeita (erro de digitação em diretoria/gerência) ─────────────
+function semAcentosHier(s) {
+  return String(s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().replace(/\s+/g, " ").trim();
+}
+// Dois nomes "parecidos": um é o outro + sufixo ("DUNAMIS SP"/"DUNAMIS") ou diferem
+// por poucas letras (ZENETI/ZENITE, TAURUS/TAUROS). Nomes curtos (AYA/AYLA) nunca
+// contam, para não confundir estruturas realmente diferentes.
+function grafiaParecidaHier(a, b) {
+  const x = semAcentosHier(a), y = semAcentosHier(b);
+  if (!x || !y || x === y) return false;
+  const menor = Math.min(x.length, y.length);
+  if (menor >= 5 && (x.startsWith(y + " ") || y.startsWith(x + " "))) return true;
+  const d = distanciaEdicaoTexto(x, y);
+  return (menor >= 6 && d <= 2) || (menor >= 5 && d <= 1);
+}
+// Mesma pessoa? Usado só no casamento por e-mail (quando a matrícula não foi achada):
+// mesmo CPF, ou pelo menos 2 palavras do nome em comum, ou primeiro e último nome iguais.
+// Evita juntar duas pessoas diferentes quando a coluna de e-mail da planilha está desalinhada.
+function mesmaPessoaHier(nomeA, cpfA, nomeB, cpfB) {
+  const dig = v => String(v || "").replace(/\D/g, "");
+  if (dig(cpfA).length >= 11 && dig(cpfA) === dig(cpfB)) return true;
+  const ta = semAcentosHier(nomeA).split(" ").filter(w => w.length > 1);
+  const tb = semAcentosHier(nomeB).split(" ").filter(w => w.length > 1);
+  if (!ta.length || !tb.length) return false;
+  const comuns = ta.filter(w => tb.includes(w)).length;
+  if (comuns >= 2) return true;
+  return ta[0] === tb[0] && ta[ta.length - 1] === tb[tb.length - 1];
+}
+// Valor mais frequente (ignora vazio, caixa e acento); devolve a grafia original.
+function nomeMaisFrequenteHier(nomes) {
+  const c = new Map();
+  (nomes || []).forEach(n => {
+    const t = String(n || "").trim(); if (!t) return;
+    const k = semAcentosHier(t); const e = c.get(k) || { nome: t, qtd: 0 };
+    e.qtd++; c.set(k, e);
+  });
+  let melhor = null;
+  c.forEach(e => { if (!melhor || e.qtd > melhor.qtd) melhor = e; });
+  return melhor ? melhor.nome : null;
+}
+
 // Monta o plano de sincronização. Não faz nenhuma chamada de rede.
 // Parâmetros:
 //  - linhasExcel: saída crua de lerArquivoExcel() (um objeto por linha)
@@ -5754,15 +5795,86 @@ function analisarImportacaoHierarquia(linhasExcel, banco) {
   // Remove do plano quem depende de uma superintendência inexistente —
   // não há como prosseguir com segurança para essas linhas.
   const linhasSemSup = [];
-  const linhasComSup = [];
+  const linhasComSupTodas = [];
   linhasValidas.forEach(l => {
     if (superintendenciasNaoEncontradas.has(l.superintendenciaNome)) {
       linhasSemSup.push(l);
       erros.push({ linha: l.numeroLinha, matricula: l.matricula, nome: l.nomeCompleto, motivo: `Superintendência "${l.superintendenciaNome}" não encontrada no sistema — nenhuma superintendência é criada automaticamente por este importador.` });
     } else {
-      linhasComSup.push(l);
+      linhasComSupTodas.push(l);
     }
   });
+
+  // ── 2b) Grafia suspeita: diretoria/gerência NOVA com nome parecido com outro
+  //      nome que tem MAIS pessoas na própria planilha é tratada como erro de
+  //      digitação e IGNORADA (não é criada, não é unificada, e as pessoas dessas
+  //      linhas ficam fora da rodada — sem criar, atualizar nem inativar).
+  //      Nome que já existe no banco nunca é considerado suspeito.
+  const ignoradasPorGrafia = new Map(); // linha -> info da estrutura ignorada
+  const estruturasIgnoradas = [];
+  const supNomePorId = new Map(banco.superintendencias.map(s => [String(s.id), s.nome]));
+  const dirBancoPorChave = new Map(banco.diretorias.map(d => [`${d.superintendencia_id}::${semAcentosHier(d.nome)}`, d]));
+  const gerBancoChaves = new Set(banco.gerencias.map(g => `${g.diretoria_id}::${semAcentosHier(g.nome)}`));
+  const dirContagem = new Map(); // supId -> Map(norm -> { nome, qtd })
+  linhasComSupTodas.forEach(l => {
+    if (!l.diretoriaNome) return;
+    const supId = resolverSuperintendencia(l).id;
+    if (!dirContagem.has(supId)) dirContagem.set(supId, new Map());
+    const m = dirContagem.get(supId); const k = semAcentosHier(l.diretoriaNome);
+    if (!m.has(k)) m.set(k, { nome: l.diretoriaNome, qtd: 0 });
+    m.get(k).qtd++;
+  });
+  const dirSuspeitas = new Map();
+  dirContagem.forEach((m, supId) => {
+    m.forEach((a, ka) => {
+      if (dirBancoPorChave.has(`${supId}::${ka}`)) return;
+      let venc = null;
+      m.forEach((b, kb) => { if (b.qtd > a.qtd && grafiaParecidaHier(ka, kb) && (!venc || b.qtd > venc.qtd)) venc = b; });
+      if (venc) {
+        const info = { tipo: "diretoria", nome: a.nome, contexto: supNomePorId.get(String(supId)) || "", qtd: a.qtd, vencedora: venc.nome, qtdVencedora: venc.qtd };
+        dirSuspeitas.set(`${supId}::${ka}`, info); estruturasIgnoradas.push(info);
+      }
+    });
+  });
+  linhasComSupTodas.forEach(l => {
+    if (!l.diretoriaNome) return;
+    const info = dirSuspeitas.get(`${resolverSuperintendencia(l).id}::${semAcentosHier(l.diretoriaNome)}`);
+    if (info) ignoradasPorGrafia.set(l, info);
+  });
+  const gerContagem = new Map(); // "supId::DIR" -> Map(norm -> { nome, qtd })
+  linhasComSupTodas.forEach(l => {
+    if (ignoradasPorGrafia.has(l) || !l.diretoriaNome || !l.gerenciaNome) return;
+    const kd = `${resolverSuperintendencia(l).id}::${semAcentosHier(l.diretoriaNome)}`;
+    if (!gerContagem.has(kd)) gerContagem.set(kd, new Map());
+    const m = gerContagem.get(kd); const k = semAcentosHier(l.gerenciaNome);
+    if (!m.has(k)) m.set(k, { nome: l.gerenciaNome, qtd: 0 });
+    m.get(k).qtd++;
+  });
+  const gerSuspeitas = new Map();
+  gerContagem.forEach((m, kd) => {
+    const dirBanco = dirBancoPorChave.get(kd);
+    m.forEach((a, ka) => {
+      if (dirBanco && gerBancoChaves.has(`${dirBanco.id}::${ka}`)) return;
+      let venc = null;
+      m.forEach((b, kb) => { if (b.qtd > a.qtd && grafiaParecidaHier(ka, kb) && (!venc || b.qtd > venc.qtd)) venc = b; });
+      if (venc) {
+        const info = { tipo: "gerência", nome: a.nome, contexto: kd.split("::")[1], qtd: a.qtd, vencedora: venc.nome, qtdVencedora: venc.qtd };
+        gerSuspeitas.set(`${kd}::${ka}`, info); estruturasIgnoradas.push(info);
+      }
+    });
+  });
+  linhasComSupTodas.forEach(l => {
+    if (ignoradasPorGrafia.has(l) || !l.diretoriaNome || !l.gerenciaNome) return;
+    const info = gerSuspeitas.get(`${resolverSuperintendencia(l).id}::${semAcentosHier(l.diretoriaNome)}::${semAcentosHier(l.gerenciaNome)}`);
+    if (info) ignoradasPorGrafia.set(l, info);
+  });
+  const linhasComSup = linhasComSupTodas.filter(l => !ignoradasPorGrafia.has(l));
+  const matriculasIgnoradasPorGrafia = new Set([...ignoradasPorGrafia.keys()].map(l => l.matricula));
+  const ignoradosPessoas = [...ignoradasPorGrafia.entries()].map(([l, i]) => ({
+    linha: l.numeroLinha, matricula: l.matricula, nome: l.nomeCompleto,
+    estrutura: `${i.tipo === "diretoria" ? "Diretoria" : "Gerência"} ${i.nome} (${i.qtd})`,
+    prevalece: `${i.vencedora} (${i.qtdVencedora})`
+  }));
 
   // ── 3) Diretorias: existentes vs. novas (por superintendência + nome, já
   //      trim()ados) ───────────────────────────────────────────────────────
@@ -5806,6 +5918,39 @@ function analisarImportacaoHierarquia(linhasExcel, banco) {
     }
   });
 
+  // ── 4b) Responsável (gerente/diretor) de cada estrutura: valor mais frequente
+  //      nas linhas da planilha. Estruturas novas já nascem com ele; as que já
+  //      existem são atualizadas se o nome mudou.
+  const respDirLista = new Map(), respGerLista = new Map();
+  linhasComSup.forEach(l => {
+    if (!l.diretoriaNome) return;
+    const kd = `${resolverSuperintendencia(l).id}::${l.diretoriaNome.toUpperCase()}`;
+    if (!respDirLista.has(kd)) respDirLista.set(kd, []);
+    respDirLista.get(kd).push(l.diretorNome);
+    if (l.gerenciaNome) {
+      const kg = `${kd}::${l.gerenciaNome.toUpperCase()}`;
+      if (!respGerLista.has(kg)) respGerLista.set(kg, []);
+      respGerLista.get(kg).push(l.gerenteNome);
+    }
+  });
+  diretoriasNovas.forEach(d => { const r = nomeMaisFrequenteHier(respDirLista.get(d.chave)); if (r) d.responsavel_nome = r; });
+  gerenciasNovas.forEach(g => { const r = nomeMaisFrequenteHier(respGerLista.get(g.chave)); if (r) g.responsavel_nome = r; });
+  const responsaveisAtualizados = [];
+  respDirLista.forEach((lista, kd) => {
+    const d = dirPorChave.get(kd); const para = nomeMaisFrequenteHier(lista);
+    if (d && para && semAcentosHier(d.responsavel_nome) !== semAcentosHier(para)) {
+      responsaveisAtualizados.push({ tipo: "diretoria", id: d.id, nome: d.nome, de: d.responsavel_nome || "", para });
+    }
+  });
+  respGerLista.forEach((lista, kg) => {
+    const [supId, dirNome, gerNome] = kg.split("::");
+    const dirE = dirPorChave.get(`${supId}::${dirNome}`); if (!dirE) return;
+    const g = gerPorChave.get(`${dirE.id}::${gerNome}`); const para = nomeMaisFrequenteHier(lista);
+    if (g && para && semAcentosHier(g.responsavel_nome) !== semAcentosHier(para)) {
+      responsaveisAtualizados.push({ tipo: "gerência", id: g.id, nome: `${g.nome} (${dirE.nome})`, de: g.responsavel_nome || "", para });
+    }
+  });
+
   // ── 5) Funcionários: casamento por matrícula, com fallback por e-mail ───
   const funcPorMatricula = new Map(banco.funcionariosTodos.map(f => [String(f.matricula).trim(), f]));
   const funcPorEmail = new Map(
@@ -5817,12 +5962,23 @@ function analisarImportacaoHierarquia(linhasExcel, banco) {
   const funcionariosSemAlteracao = []; // existe no banco e já está igual à planilha
   const funcionariosCasados = []; // { existente, l, item } — decidido depois que os resolvedores de vínculo existem
   const idsCasados = new Set(); // ids de quem casou com alguma linha (por matrícula OU e-mail)
-  const matriculasNaPlanilha = new Set();
+  // Quem teve a linha ignorada por grafia suspeita continua "presente": nunca é inativado por isso.
+  const matriculasNaPlanilha = new Set(matriculasIgnoradasPorGrafia);
+  const conflitosEmail = []; // e-mail da planilha que já está no cadastro de OUTRA pessoa (resolvido automaticamente)
+  const normEmailH = v => String(v ?? "").trim().toLowerCase();
+  // e-mail que cada matrícula terá segundo a planilha (para saber quem vai LIBERAR um e-mail)
+  const emailPlanilhaPorMatricula = new Map(linhasComSup.map(l => [String(l.matricula).trim(), normEmailH(l.email)]));
+  const emailsEmUsoH = new Set([...banco.funcionariosTodos.filter(f => f.email).map(f => normEmailH(f.email)), ...linhasComSup.filter(l => l.email).map(l => normEmailH(l.email))]);
 
   linhasComSup.forEach(l => {
     matriculasNaPlanilha.add(l.matricula);
     let existente = funcPorMatricula.get(l.matricula);
-    if (!existente && l.email) existente = funcPorEmail.get(l.email);
+    if (!existente && l.email) {
+      const porEmailBanco = funcPorEmail.get(l.email);
+      // Só junta se for a mesma pessoa; se não for (e-mail desalinhado na planilha),
+      // a linha segue como pessoa separada e a colisão é resolvida mais abaixo.
+      if (porEmailBanco && mesmaPessoaHier(l.nomeCompleto, l.cpf, porEmailBanco.nome_completo, porEmailBanco.cpf)) existente = porEmailBanco;
+    }
 
     const camposBase = {
       matricula: l.matricula,
@@ -5850,8 +6006,47 @@ function analisarImportacaoHierarquia(linhasExcel, banco) {
       _gerenciaNome: l.gerenciaNome || null
     };
 
+    // ── Colisão de e-mail com OUTRA pessoa do cadastro ──
+    // Acontece quando a coluna de e-mail da planilha está desalinhada e o cadastro
+    // guardou o e-mail de outra pessoa. Resolve sozinho:
+    //  • se o dono atual vai trocar de e-mail nesta mesma importação, o e-mail é
+    //    liberado (a atualização dele roda antes da criação desta linha);
+    //  • senão, uma pessoa NOVA recebe o e-mail com dígito (2, 3…) e uma pessoa
+    //    EXISTENTE mantém o e-mail que já tem.
+    if (camposPreenchidos.email) {
+      const emailL = normEmailH(camposPreenchidos.email);
+      const dono = funcPorEmail.get(emailL);
+      if (dono && (!existente || dono.id !== existente.id)) {
+        const matDono = String(dono.matricula).trim();
+        const donoLibera = emailPlanilhaPorMatricula.has(matDono) && emailPlanilhaPorMatricula.get(matDono) !== emailL;
+        const registro = { linha: l.numeroLinha, matricula: l.matricula, nome: l.nomeCompleto, email: camposPreenchidos.email, outroNome: dono.nome_completo, outraMatricula: dono.matricula };
+        const refAj = { matricula: l.matricula, nome: l.nomeCompleto, de: l.emailOriginal || camposPreenchidos.email };
+        if (donoLibera) {
+          registro.resolucao = `e-mail liberado: ${dono.nome_completo} (mat. ${dono.matricula}) troca de e-mail nesta importação`;
+          ajustesEmail.push({ ...refAj, para: camposPreenchidos.email, tipo: "e-mail estava no cadastro de outra pessoa, que será corrigida", mantido: true });
+        } else if (existente) {
+          delete camposPreenchidos.email;
+          registro.resolucao = `mantido o e-mail atual de ${l.nomeCompleto} (o da planilha pertence a ${dono.nome_completo})`;
+          ajustesEmail.push({ ...refAj, para: existente.email || "", tipo: "mantido — e-mail da planilha já é de outra pessoa do cadastro", mantido: true });
+        } else {
+          const [loc, dom] = emailL.split("@");
+          let n = 2, novoEmail = `${loc}${n}@${dom}`;
+          while (emailsEmUsoH.has(novoEmail)) { n++; novoEmail = `${loc}${n}@${dom}`; }
+          emailsEmUsoH.add(novoEmail);
+          camposPreenchidos.email = novoEmail; l.email = novoEmail;
+          registro.resolucao = `e-mail já era de ${dono.nome_completo} (mat. ${dono.matricula}): usado ${novoEmail}`;
+          ajustesEmail.push({ ...refAj, para: novoEmail, tipo: "e-mail já era de outra pessoa do cadastro (dígito)" });
+        }
+        conflitosEmail.push(registro);
+      }
+    }
+
     if (existente) {
       idsCasados.add(existente.id);
+      // Nome/apelido/cargo que só diferem por acento, caixa ou espaço: mantém o do banco.
+      ["nome_completo", "apelido", "cargo_origem"].forEach(k => {
+        if (camposPreenchidos[k] !== undefined && existente[k] && semAcentosHier(existente[k]) === semAcentosHier(camposPreenchidos[k])) delete camposPreenchidos[k];
+      });
       // Sem e-mail na planilha: o provisório só vale para quem ainda não tem
       // e-mail no cadastro. Quem já tem mantém o que está no banco.
       if (l.emailProvisorio && existente.email && String(existente.email).trim()) {
@@ -5976,6 +6171,9 @@ function analisarImportacaoHierarquia(linhasExcel, banco) {
           const nomeGerAtual = gerenciaPorId.get(existente.gerencia_id)?.nome || "(sem gerência)";
           if (gerLinha == null) mud.push({ campo: "gerência", de: nomeGerAtual, para: l.gerenciaNome + " (nova)" });
           else if (existente.gerencia_id == null || !mesmoId(existente.gerencia_id, gerLinha)) mud.push({ campo: "gerência", de: nomeGerAtual, para: l.gerenciaNome });
+        } else if (l.nivel === "vendedor" && existente.gerencia_id != null) {
+          // Planilha sem gerência para um vendedor: ele fica ligado direto à diretoria.
+          mud.push({ campo: "gerência", de: gerenciaPorId.get(existente.gerencia_id)?.nome || "?", para: "(direto na diretoria)" });
         }
       }
     }
@@ -6090,7 +6288,11 @@ function analisarImportacaoHierarquia(linhasExcel, banco) {
     funcionariosInativados,
     funcionariosProtegidos,
     ajustesEmail,
-    linhasIgnoradasIntencionalmente
+    linhasIgnoradasIntencionalmente,
+    responsaveisAtualizados,
+    ignoradosPessoas,
+    estruturasIgnoradas,
+    conflitosEmail
   };
 }
 
@@ -6245,7 +6447,83 @@ async function chamarCriarUsuarioIndividual(tabela, id) {
 function nomeParaLog(f) {
   return (f.apelido && String(f.apelido).trim()) ? String(f.apelido).trim().toUpperCase() : (f.nome_completo || f.nome || "");
 }
+// Confere o plano INTEIRO antes de gravar qualquer coisa: se algo não fechar
+// (diretoria/gerência que não existe nem será criada, matrícula ou e-mail que
+// colidem com outra pessoa, campo obrigatório vazio), devolve a lista de
+// problemas e a importação nem começa — evita parar no meio de ~300 gravações.
+function validarPlanoAntesDeAplicar(plano, banco) {
+  const problemas = [];
+  const up = v => String(v ?? "").trim().toUpperCase();
+  const dirChaves = new Set(banco.diretorias.map(d => `${d.superintendencia_id}::${up(d.nome)}`));
+  const dirChavePorId = new Map(banco.diretorias.map(d => [String(d.id), `${d.superintendencia_id}::${up(d.nome)}`]));
+  const gerChaves = new Set(banco.gerencias.map(g => `${dirChavePorId.get(String(g.diretoria_id))}::${up(g.nome)}`));
+  plano.diretoriasNovas.forEach(d => dirChaves.add(`${d.superintendencia_id}::${up(d.nome)}`));
+  plano.gerenciasNovas.forEach(g => {
+    const kd = `${g.superintendenciaIdRef}::${up(g.diretoriaNomeRef)}`;
+    if (!dirChaves.has(kd)) problemas.push(`Gerência "${g.nome}": a diretoria "${g.diretoriaNomeRef}" não existe nem será criada.`);
+    gerChaves.add(`${kd}::${up(g.nome)}`);
+  });
+  const conferirVinculo = (item, rotulo) => {
+    if (item._superintendenciaId == null) problemas.push(`${rotulo}: superintendência não resolvida.`);
+    if (!item._diretoriaNome) return;
+    const kd = `${item._superintendenciaId}::${up(item._diretoriaNome)}`;
+    if (!dirChaves.has(kd)) problemas.push(`${rotulo}: a diretoria "${item._diretoriaNome}" não existe nem será criada.`);
+    else if (item._gerenciaNome && !gerChaves.has(`${kd}::${up(item._gerenciaNome)}`)) problemas.push(`${rotulo}: a gerência "${item._gerenciaNome}" não existe nem será criada na diretoria "${item._diretoriaNome}".`);
+  };
+  const matBanco = new Map(banco.funcionariosTodos.map(f => [String(f.matricula).trim(), f]));
+  plano.funcionariosNovos.forEach(f => {
+    const r = `Novo ${f.nome_completo || "(sem nome)"} (mat. ${f.matricula})`;
+    if (!f.matricula || !f.nome_completo || !f.nivel) problemas.push(`${r}: faltam matrícula, nome ou nível.`);
+    const ja = matBanco.get(String(f.matricula).trim());
+    if (ja) problemas.push(`${r}: a matrícula já existe no banco (${ja.nome_completo}).`);
+    conferirVinculo(f, r);
+  });
+  plano.funcionariosAtualizados.forEach(f => conferirVinculo(f, `Atualização de ${f.nome} (mat. ${f.matriculaAnterior})`));
+  // E-mails: depois de aplicar o plano, ninguém pode ficar com e-mail repetido.
+  const norm = v => String(v ?? "").trim().toLowerCase();
+  const titulares = banco.funcionariosTodos.filter(f => f.email).map(f => ({ id: String(f.id), email: norm(f.email), nome: f.nome_completo, noPlano: false }));
+  const porId = new Map(titulares.map(x => [x.id, x]));
+  plano.funcionariosAtualizados.forEach(f => {
+    const x = porId.get(String(f.id));
+    if (x && f.campos?.email && norm(f.campos.email) !== x.email) { x.email = norm(f.campos.email); x.noPlano = true; }
+  });
+  plano.funcionariosNovos.forEach(f => { if (f.email) titulares.push({ id: "novo:" + f.matricula, email: norm(f.email), nome: f.nome_completo, noPlano: true }); });
+  const porEmail = new Map();
+  titulares.forEach(x => { if (!porEmail.has(x.email)) porEmail.set(x.email, []); porEmail.get(x.email).push(x); });
+  porEmail.forEach((lista, email) => {
+    if (lista.length > 1 && lista.some(x => x.noPlano)) problemas.push(`E-mail ${email} ficaria repetido entre: ${lista.map(x => x.nome).join(", ")}.`);
+  });
+  return problemas;
+}
+
+// Valida tudo antes de gravar; se a gravação falhar no meio, devolve no erro
+// (relatorioParcial) exatamente o que já foi aplicado e o que ficou pendente.
 async function aplicarImportacaoHierarquia(plano, banco, onProgresso) {
+  (onProgresso || (() => {}))("Validando antes de gravar…");
+  const problemas = validarPlanoAntesDeAplicar(plano, banco);
+  if (problemas.length) {
+    throw new Error(`A validação encontrou ${problemas.length} problema(s) e nada foi gravado:\n• ` +
+      problemas.slice(0, 15).join("\n• ") + (problemas.length > 15 ? `\n… e mais ${problemas.length - 15}.` : ""));
+  }
+  const aplicado = { diretorias: [], gerencias: [], responsaveis: [], novos: [], atualizados: [], inativados: [] };
+  try {
+    return await aplicarImportacaoHierarquiaInterno(plano, banco, onProgresso, aplicado);
+  } catch (e) {
+    e.relatorioParcial = {
+      aplicado,
+      pendentes: {
+        diretorias: plano.diretoriasNovas.length - aplicado.diretorias.length,
+        gerencias: plano.gerenciasNovas.length - aplicado.gerencias.length,
+        responsaveis: (plano.responsaveisAtualizados || []).length - aplicado.responsaveis.length,
+        novos: plano.funcionariosNovos.length - aplicado.novos.length,
+        atualizados: plano.funcionariosAtualizados.length - aplicado.atualizados.length,
+        inativados: plano.funcionariosInativados.length - aplicado.inativados.length
+      }
+    };
+    throw e;
+  }
+}
+async function aplicarImportacaoHierarquiaInterno(plano, banco, onProgresso, aplicado) {
   const progresso = onProgresso || (() => {});
 
   // ── 1) Cria diretorias novas ─────────────────────────────────────────────
@@ -6258,6 +6536,7 @@ async function aplicarImportacaoHierarquia(plano, banco, onProgresso) {
       .select().single();
     if (error) throw new Error(`Falha ao criar diretoria "${nova.nome}": ${extrairMensagemErro(error)}`);
     dirPorChave.set(`${nova.superintendencia_id}::${nova.nome.trim().toUpperCase()}`, data);
+    aplicado.diretorias.push(nova.nome);
     registrarLogAcessosClient({
       acao: "estrutura_criada",
       origem: "importacao_planilha",
@@ -6278,6 +6557,7 @@ async function aplicarImportacaoHierarquia(plano, banco, onProgresso) {
       .select().single();
     if (error) throw new Error(`Falha ao criar gerência "${nova.nome}": ${extrairMensagemErro(error)}`);
     gerPorChave.set(`${dir.id}::${nova.nome.trim().toUpperCase()}`, data);
+    aplicado.gerencias.push(nova.nome);
     registrarLogAcessosClient({
       acao: "estrutura_criada",
       origem: "importacao_planilha",
@@ -6303,33 +6583,31 @@ async function aplicarImportacaoHierarquia(plano, banco, onProgresso) {
     return ids;
   }
 
-  // ── 3) Cria funcionários novos ───────────────────────────────────────────
-  progresso(`Criando ${plano.funcionariosNovos.length} funcionário(s) novo(s)…`);
-  for (const novo of plano.funcionariosNovos) {
-    const { _superintendenciaId, _diretoriaNome, _gerenciaNome, ...campos } = novo;
-    const ids = resolverIds(novo);
-    const { data, error } = await supa.from("funcionarios_comercial")
-      .insert({ ...campos, ...ids })
-      .select().single();
-    if (error) throw new Error(`Falha ao criar funcionário "${nomeParaLog(novo)}" (matrícula ${novo.matricula}): ${extrairMensagemErro(error)}`);
-    registrarLogAcessosClient({
-      acao: "criar_funcionario",
-      funcionario_comercial_id: data?.id,
-      funcionario_nome: nomeParaLog(novo),
-      funcionario_matricula: novo.matricula,
-      origem: "importacao_planilha",
-      detalhe: {
-        superintendencia: novo._superintendenciaId ? banco.superintendencias?.find(s => s.id === novo._superintendenciaId)?.nome : null,
-        diretoria: _diretoriaNome || null,
-        gerencia: _gerenciaNome || null
-      }
-    });
+  // ── 2b) Atualiza o responsável (gerente/diretor) de estruturas que já existiam ──
+  progresso(`Atualizando ${(plano.responsaveisAtualizados || []).length} responsável(is)…`);
+  for (const r of (plano.responsaveisAtualizados || [])) {
+    const { error } = await supa.from(r.tipo === "diretoria" ? "diretorias" : "gerencias").update({ responsavel_nome: r.para }).eq("id", r.id);
+    if (error) throw new Error(`Falha ao atualizar o responsável da ${r.tipo} "${r.nome}": ${extrairMensagemErro(error)}`);
+    aplicado.responsaveis.push(r.nome);
   }
 
+  // Ordem das atualizações: quem LIBERA um e-mail (troca o seu) roda antes de quem vai
+  // usá-lo (outra atualização ou criação), senão o e-mail ainda estaria ocupado.
+  const atualizadosOrdenados = (() => {
+    const n = v => String(v ?? "").trim().toLowerCase();
+    let pend = [...plano.funcionariosAtualizados]; const saida = [];
+    while (pend.length) {
+      const antigos = new Map(pend.filter(x => x.emailAnterior).map(x => [n(x.emailAnterior), x]));
+      const livres = pend.filter(x => { const novo = x.campos?.email ? n(x.campos.email) : ""; if (!novo || novo === n(x.emailAnterior)) return true; const d = antigos.get(novo); return !d || d === x; });
+      if (!livres.length) { saida.push(...pend); break; } // ciclo (troca entre duas pessoas): segue na ordem original
+      saida.push(...livres); pend = pend.filter(x => !livres.includes(x));
+    }
+    return saida;
+  })();
   // ── 4) Atualiza funcionários existentes ─────────────────────────────────
   progresso(`Atualizando ${plano.funcionariosAtualizados.length} funcionário(s)…`);
   const falhasEmail = []; // logins cujo e-mail não pôde ser trocado no Auth (cadastro mantém o e-mail antigo)
-  for (const at of plano.funcionariosAtualizados) {
+  for (const at of atualizadosOrdenados) {
     const ids = resolverIds(at);
     const novoNivel = at.campos?.nivel; // presente sempre que a linha trouxe cargo — regra 5 não remove esse campo
     // Sobrescreve os ids de hierarquia quando eles puderam ser resolvidos a
@@ -6340,6 +6618,7 @@ async function aplicarImportacaoHierarquia(plano, banco, onProgresso) {
     if (ids.superintendencia_id != null) idsResolvidos.superintendencia_id = ids.superintendencia_id;
     if (at._diretoriaNome) { if (ids.diretoria_id != null) idsResolvidos.diretoria_id = ids.diretoria_id; }
     if (at._gerenciaNome) { if (ids.gerencia_id != null) idsResolvidos.gerencia_id = ids.gerencia_id; }
+    else if (at._diretoriaNome && novoNivel === "vendedor") idsResolvidos.gerencia_id = null; // direto na diretoria: não deixa o vínculo antigo
     // Além de preencher o que veio na planilha, zera explicitamente os
     // vínculos que o NOVO nível não usa mais — sem isso, uma promoção ou
     // despromoção (ex.: gerente virando diretor, diretor virando gerente)
@@ -6387,6 +6666,31 @@ async function aplicarImportacaoHierarquia(plano, banco, onProgresso) {
       }
       throw new Error(`Falha ao atualizar funcionário "${at.nome}": ${extrairMensagemErro(error)}`);
     }
+    aplicado.atualizados.push({ nome: at.nome, matricula: at.matriculaAnterior });
+  }
+
+  // ── 3) Cria funcionários novos ───────────────────────────────────────────
+  progresso(`Criando ${plano.funcionariosNovos.length} funcionário(s) novo(s)…`);
+  for (const novo of plano.funcionariosNovos) {
+    const { _superintendenciaId, _diretoriaNome, _gerenciaNome, ...campos } = novo;
+    const ids = resolverIds(novo);
+    const { data, error } = await supa.from("funcionarios_comercial")
+      .insert({ ...campos, ...ids })
+      .select().single();
+    if (error) throw new Error(`Falha ao criar funcionário "${nomeParaLog(novo)}" (matrícula ${novo.matricula}): ${extrairMensagemErro(error)}`);
+    aplicado.novos.push({ nome: nomeParaLog(novo), matricula: novo.matricula });
+    registrarLogAcessosClient({
+      acao: "criar_funcionario",
+      funcionario_comercial_id: data?.id,
+      funcionario_nome: nomeParaLog(novo),
+      funcionario_matricula: novo.matricula,
+      origem: "importacao_planilha",
+      detalhe: {
+        superintendencia: novo._superintendenciaId ? banco.superintendencias?.find(s => s.id === novo._superintendenciaId)?.nome : null,
+        diretoria: _diretoriaNome || null,
+        gerencia: _gerenciaNome || null
+      }
+    });
   }
 
   // ── 5) Inativa quem sumiu da planilha ────────────────────────────────────
@@ -6407,6 +6711,7 @@ async function aplicarImportacaoHierarquia(plano, banco, onProgresso) {
       .eq("id", inativo.id);
     if (error) throw new Error(`Falha ao inativar funcionário "${nomeParaLog(inativo)}": ${extrairMensagemErro(error)}`);
     idsInativadosAgora.add(inativo.id);
+    aplicado.inativados.push({ nome: nomeParaLog(inativo), matricula: inativo.matricula });
     if (inativo.auth_user_id) {
       const resultado = await chamarGerenciarAcesso("revogar_acesso", inativo, "importacao_planilha");
       if (!resultado.ok) {
@@ -7092,11 +7397,12 @@ function gerarResumoPreviaHierarquia(plano, planoFiltrado, banco, nomeArquivo, d
     "Matrícula": a.matricula, "Nome": a.nome, "Tipo": a.tipo, "E-mail na planilha": txt(a.de),
     "E-mail resultante": a.mantido ? "(mantido)" : txt(a.para), "Mantido sem correção": sim(!!a.mantido)
   }));
+  const dirNomesRej = new Set((plano.diretoriasNovas || []).filter(d => diretoriasRejeitadas?.has(d.chave)).map(d => d.nome.toUpperCase()));
   const linhasEstruturaNova = [
     ...(plano.diretoriasNovas || []).map(d => ({ "Tipo": "Diretoria", "Nome": d.nome, "Diretoria (pai)": "", "Responsável": txt(d.responsavel_nome),
       "Superintendência": nomeSup(d.superintendencia_id), "Desmarcada (não será criada)": sim(diretoriasRejeitadas?.has(d.chave)) })),
     ...(plano.gerenciasNovas || []).map(g => ({ "Tipo": "Gerência", "Nome": g.nome, "Diretoria (pai)": g.diretoriaNomeRef, "Responsável": txt(g.responsavel_nome),
-      "Superintendência": "", "Desmarcada (não será criada)": sim(gerenciasRejeitadas?.has(g.chave)) }))
+      "Superintendência": "", "Desmarcada (não será criada)": gerenciasRejeitadas?.has(g.chave) ? "SIM" : (dirNomesRej.has(g.diretoriaNomeRef.toUpperCase()) ? "SIM (diretoria desmarcada)" : "não") }))
   ];
   const linhasErros = (plano.erros || []).map(e => ({ "Linha": e.linha, "Matrícula": txt(e.matricula), "Nome": txt(e.nome), "Motivo": e.motivo }));
 
@@ -7132,6 +7438,7 @@ function gerarResumoPreviaHierarquia(plano, planoFiltrado, banco, nomeArquivo, d
       est.sup = nomeSup(at._superintendenciaId) || est.sup;
       if (at._diretoriaNome) est.dir = at._diretoriaNome;
       if (at._gerenciaNome) est.ger = at._gerenciaNome;
+      else if (at._diretoriaNome && nivel === "vendedor") est.ger = "";
       if (nivel === "superintendente") { est.dir = ""; est.ger = ""; }
       else if (nivel === "diretor") est.ger = "";
       ativo = (at.campos?.situacao || f.situacao || "ATIVO").toUpperCase() === "ATIVO";
@@ -7211,17 +7518,26 @@ function gerarResumoPreviaHierarquia(plano, planoFiltrado, banco, nomeArquivo, d
     ["Sem alteração", semAlteracao.length],
     ["Funcionários inativados", inativados.length],
     ["Líderes protegidos (fora da planilha, não serão inativados)", protegidos.length],
-    ["Diretorias novas (marcadas)", (plano.diretoriasNovas || []).length - dirRej.length],
-    ["Gerências novas (marcadas)", (plano.gerenciasNovas || []).length - gerRej.length],
+    ["Diretorias novas (serão criadas)", (planoFiltrado.diretoriasNovas || []).length],
+    ["Gerências novas (serão criadas)", (planoFiltrado.gerenciasNovas || []).length],
     ["E-mails ajustados", (plano.ajustesEmail || []).filter(a => !a.mantido).length],
     ["E-mails mantidos só sinalizados", (plano.ajustesEmail || []).filter(a => a.mantido).length],
     ["Diretorias desmarcadas pelo usuário", dirRej.join(", ") || "nenhuma"],
     ["Gerências desmarcadas pelo usuário", gerRej.join(", ") || "nenhuma"],
+    ["Pessoas ignoradas (grafia suspeita)", (plano.ignoradosPessoas || []).length],
+    ["Estruturas ignoradas (grafia suspeita)", (plano.estruturasIgnoradas || []).map(e => e.nome + " → " + e.vencedora).join("; ") || "nenhuma"],
+    ["Responsáveis atualizados", (plano.responsaveisAtualizados || []).length],
+    ["E-mails em conflito com outra pessoa (resolvidos)", (plano.conflitosEmail || []).map(c => c.nome + ": " + c.resolucao).join("; ") || "nenhum"],
     [],
     ["ALERTAS AUTOMÁTICOS"],
     ...alertas
   ];
 
+  const linhasIgnorados = (plano.ignoradosPessoas || []).map(i => ({
+    "Linha": i.linha, "Matrícula": i.matricula, "Nome": i.nome, "Estrutura ignorada": i.estrutura, "Prevalece (pessoas)": i.prevalece,
+    "O que acontece": "Fica fora desta importação (não é criada, atualizada nem inativada)"
+  }));
+  const linhasResponsaveis = (plano.responsaveisAtualizados || []).map(r => ({ "Tipo": r.tipo, "Estrutura": r.nome, "Responsável atual": txt(r.de), "Responsável na planilha": r.para }));
   const wb = XLSX.utils.book_new();
   const wsResumo = XLSX.utils.aoa_to_sheet(resumo);
   wsResumo["!cols"] = [{ wch: 66 }, { wch: 44 }];
@@ -7240,6 +7556,8 @@ function gerarResumoPreviaHierarquia(plano, planoFiltrado, banco, nomeArquivo, d
   aba("Protegidos", linhasProtegidos);
   aba("E-mails", linhasEmails);
   aba("Estrutura nova", linhasEstruturaNova);
+  aba("Ignorados (grafia)", linhasIgnorados);
+  aba("Responsáveis", linhasResponsaveis);
   aba("Erros", linhasErros);
   aba("Sem alteração", linhasSemAlt);
   XLSX.writeFile(wb, `previa-importacao-hierarquia-${new Date().toISOString().slice(0, 10)}.xlsx`);
@@ -7259,6 +7577,7 @@ function ModalImportarHierarquia({ onClose, onConcluido }) {
   const [etapaAtual, setEtapaAtual] = useState("");
   const [erro, setErro] = useState("");
   const [concluido, setConcluido] = useState(null);
+  const [falhaParcial, setFalhaParcial] = useState(null); // o que já foi aplicado quando a gravação parou no meio
   // Chaves de diretorias/gerências novas que o usuário desmarcou na tela de
   // resumo (não devem ser criadas — normalmente erro de digitação na
   // planilha, ex.: "CARCANJO" em vez do nome correto da gerência).
@@ -7270,6 +7589,7 @@ function ModalImportarHierarquia({ onClose, onConcluido }) {
     setPlano(null);
     setErro("");
     setConcluido(null);
+    setFalhaParcial(null);
     setDiretoriasRejeitadas(new Set());
     setGerenciasRejeitadas(new Set());
     if (!file) return;
@@ -7356,6 +7676,14 @@ function ModalImportarHierarquia({ onClose, onConcluido }) {
       onConcluido && onConcluido();
     } catch (err) {
       setErro(extrairMensagemErro(err));
+      if (err && err.relatorioParcial) {
+        // A gravação parou no meio: o plano ficou desatualizado (parte já foi aplicada),
+        // então some a tela de resumo e é preciso reenviar a planilha para reanalisar.
+        setFalhaParcial(err.relatorioParcial);
+        setPlano(null);
+        setArquivo(null);
+        onConcluido && onConcluido();
+      }
     } finally {
       setAplicando(false);
       setEtapaAtual("");
@@ -7402,8 +7730,24 @@ function ModalImportarHierarquia({ onClose, onConcluido }) {
     ),
 
     erro && /*#__PURE__*/React.createElement("div", {
-      style: { marginTop: 16, background: "var(--vermelho-100)", color: "var(--vermelho-800)", borderRadius: 12, padding: "10px 14px", fontSize: 13, fontWeight: 600 }
+      style: { marginTop: 16, background: "var(--vermelho-100)", color: "var(--vermelho-800)", borderRadius: 12, padding: "10px 14px", fontSize: 13, fontWeight: 600, whiteSpace: "pre-wrap" }
     }, "⚠️ ", erro),
+
+    falhaParcial && /*#__PURE__*/React.createElement("div", {
+      style: { marginTop: 12, background: "var(--amber-50)", color: "var(--amber-800)", borderRadius: 12, padding: "10px 14px", fontSize: 13 }
+    },
+      /*#__PURE__*/React.createElement("p", { style: { fontWeight: 700, marginBottom: 6 } }, "A gravação parou no meio. Já foi aplicado:"),
+      /*#__PURE__*/React.createElement("ul", { style: { paddingLeft: 18, marginBottom: 8, display: "flex", flexDirection: "column", gap: 2 } },
+        /*#__PURE__*/React.createElement("li", null, falhaParcial.aplicado.diretorias.length, " diretoria(s), ", falhaParcial.aplicado.gerencias.length, " gerência(s), ", falhaParcial.aplicado.responsaveis.length, " responsável(is)"),
+        /*#__PURE__*/React.createElement("li", null, falhaParcial.aplicado.novos.length, " funcionário(s) novo(s) criado(s)"),
+        /*#__PURE__*/React.createElement("li", null, falhaParcial.aplicado.atualizados.length, " atualizado(s) e ", falhaParcial.aplicado.inativados.length, " inativado(s)")
+      ),
+      /*#__PURE__*/React.createElement("p", { style: { fontWeight: 700, marginBottom: 4 } }, "Ficou pendente:"),
+      /*#__PURE__*/React.createElement("p", { style: { marginBottom: 8 } },
+        falhaParcial.pendentes.diretorias, " diretoria(s), ", falhaParcial.pendentes.gerencias, " gerência(s), ", falhaParcial.pendentes.responsaveis, " responsável(is), ",
+        falhaParcial.pendentes.novos, " novo(s), ", falhaParcial.pendentes.atualizados, " atualização(ões), ", falhaParcial.pendentes.inativados, " inativação(ões)."),
+      /*#__PURE__*/React.createElement("p", { style: { fontSize: 12 } }, "Corrija o motivo acima e envie a planilha de novo: a nova análise já considera o que foi gravado.")
+    ),
 
     plano && !aplicando && (() => {
       // Recalcula o plano com a seleção atual do usuário a cada render —
@@ -7436,7 +7780,28 @@ function ModalImportarHierarquia({ onClose, onConcluido }) {
           linhaResumo("Diretorias novas", planoFiltrado.diretoriasNovas.length, "roxo"),
           linhaResumo("Gerências novas", planoFiltrado.gerenciasNovas.length, "roxo"),
           linhaResumo("Linhas com erro (ignoradas)", plano.erros.length, "vermelho"),
-          linhaResumo("E-mails ajustados", (plano.ajustesEmail || []).filter(a => !a.mantido).length, "amber")
+          linhaResumo("E-mails ajustados", (plano.ajustesEmail || []).filter(a => !a.mantido).length, "amber"),
+          linhaResumo("Pessoas ignoradas (grafia suspeita)", (plano.ignoradosPessoas || []).length, "amber"),
+          linhaResumo("Responsáveis atualizados", (plano.responsaveisAtualizados || []).length, "azul")
+        ),
+
+        (plano.conflitosEmail || []).length > 0 && /*#__PURE__*/React.createElement("div", {
+          style: { background: "var(--azul-50)", color: "var(--azul-800)", borderRadius: 12, padding: "10px 14px", fontSize: 13 }
+        },
+          /*#__PURE__*/React.createElement("p", { style: { fontWeight: 700, marginBottom: 6 } },
+            "E-mails que já estavam no cadastro de outra pessoa — resolvidos automaticamente:"),
+          /*#__PURE__*/React.createElement("ul", { style: { paddingLeft: 18, display: "flex", flexDirection: "column", gap: 2, maxHeight: 120, overflow: "auto" } },
+            plano.conflitosEmail.map((c, i) => /*#__PURE__*/React.createElement("li", { key: i }, c.nome + " — " + c.resolucao)))
+        ),
+
+        (plano.estruturasIgnoradas || []).length > 0 && /*#__PURE__*/React.createElement("div", {
+          style: { background: "var(--amber-50)", color: "var(--amber-800)", borderRadius: 12, padding: "10px 14px", fontSize: 13 }
+        },
+          /*#__PURE__*/React.createElement("p", { style: { fontWeight: 700, marginBottom: 6 } },
+            "Ignoradas por grafia suspeita — as pessoas dessas linhas ficam fora desta importação (não são criadas, atualizadas nem inativadas):"),
+          /*#__PURE__*/React.createElement("ul", { style: { paddingLeft: 18, display: "flex", flexDirection: "column", gap: 2 } },
+            plano.estruturasIgnoradas.map((e, i) => /*#__PURE__*/React.createElement("li", { key: i },
+              (e.tipo === "diretoria" ? "Diretoria " : "Gerência ") + e.nome + " (" + e.qtd + " pessoa(s)) — prevalece " + e.vencedora + " (" + e.qtdVencedora + ")")))
         ),
 
         plano.diretoriasNovas.length > 0 && /*#__PURE__*/React.createElement("div", null,
