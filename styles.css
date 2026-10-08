@@ -465,6 +465,14 @@ button[style*="linear-gradient(135deg,var(--indigo-500)"]:not(:disabled):hover {
 @keyframes cp-entra  { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 @keyframes cp-modal  { from { opacity: 0; transform: translateY(10px) scale(.97); } to { opacity: 1; transform: none; } }
 @keyframes cp-barra  { from { transform: scaleX(0); } to { transform: none; } }
+@keyframes cp-indeterminada { 0% { transform: translateX(-100%); } 100% { transform: translateX(350%); } }
+
+/* Barra de progresso (componente BarraProgresso). Determinada: largura via
+   style inline. Indeterminada (.indeterminada): trecho que corre na trilha. */
+.cp-progresso { height: 8px; border-radius: 8px; background: var(--cinza-200); overflow: hidden; }
+.cp-progresso > div { height: 100%; border-radius: 8px; background: linear-gradient(90deg, var(--indigo-500), var(--roxo-500)); transition: width .35s var(--ease-saida); }
+.cp-progresso.indeterminada > div { width: 30%; transition: none; animation: cp-indeterminada 1.2s var(--ease-saida) infinite; }
+@media (prefers-reduced-motion: reduce) { .cp-progresso.indeterminada > div { animation: none; width: 100%; opacity: .45; } }
 @keyframes cp-linha  { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 
 /* Entrada da tela ao carregar o app (uma vez) */
