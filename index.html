@@ -155,6 +155,13 @@ const S = {
 const SUPA_URL  = "https://vteziaryedaycjorirod.supabase.co";
 const SUPA_KEY  = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ0ZXppYXJ5ZWRheWNqb3Jpcm9kIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2MzYwNjQsImV4cCI6MjA5NzIxMjA2NH0.swYa6kwbsWUeWI58M6G5sEJ_G7KL6SsV01EOe1CWb3c";
 const supa      = window.supabase.createClient(SUPA_URL, SUPA_KEY);
+// Token da sessão do usuário logado (exigido pelas Edge Functions administrativas).
+async function tokenSessao() {
+  const { data } = await supa.auth.getSession();
+  const t = data?.session?.access_token;
+  if (!t) throw new Error("Sessão expirada — faça login novamente.");
+  return t;
+}
 
 // URL da Edge Function que cria o usuário Auth automaticamente ao cadastrar funcionário
 const EDGE_CRIAR_USUARIO = `${SUPA_URL}/functions/v1/criar-usuario-funcionario`;
@@ -4222,12 +4229,13 @@ function ListaFuncionarios({
     let senhaCriada = "";
     let avisoAuth = "";
     try {
+      const token = await tokenSessao();
       const res = await fetch(EDGE_CRIAR_USUARIO, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           "apikey": SUPA_KEY,
-          "Authorization": `Bearer ${SUPA_KEY}`,
+          "Authorization": `Bearer ${token}`,
         },
         body: JSON.stringify({ nome: novoFunc.nome, funcionario_id: novoFunc.id }),
       });
@@ -14604,12 +14612,13 @@ function ArvoreHierarquia({ pode = () => true, ocorrencias = [], funcionariosUni
       // não sobrar ninguém sem login — evita timeout (504) ao tentar
       // processar os 581 numa chamada só.
       for (let i = 0; i < 30; i++) { // trava de segurança: no máx. 30 lotes (1200 pessoas)
+        const token = await tokenSessao();
         const res = await fetch(EDGE_CRIAR_USUARIOS_COMERCIAL_LOTE, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
             "apikey": SUPA_KEY,
-            "Authorization": `Bearer ${SUPA_KEY}`
+            "Authorization": `Bearer ${token}`
           },
           body: JSON.stringify({ limite: LOTE })
         });
@@ -14720,12 +14729,13 @@ function ArvoreHierarquia({ pode = () => true, ocorrencias = [], funcionariosUni
     const LOTE = 40;
     try {
       for (let i = 0; i < 30; i++) { // trava de segurança: no máx. 30 lotes (1200 pessoas)
+        const token = await tokenSessao();
         const res = await fetch(EDGE_CRIAR_USUARIOS_ADMINISTRATIVO_LOTE, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
             "apikey": SUPA_KEY,
-            "Authorization": `Bearer ${SUPA_KEY}`
+            "Authorization": `Bearer ${token}`
           },
           body: JSON.stringify({ limite: LOTE })
         });
