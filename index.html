@@ -339,6 +339,8 @@ async function lerSupa(key, fb, filtroFuncionarioId) {
       // easymob armazena chave/valor simples
       const obj = {};
       data.forEach(r => { obj[r.chave] = r.data; });
+      // A6: guarda a versão lida de cada print para não regravar os que não mudaram.
+      _baseServidor[`${SK_EASYMOB}_map`] = new Map(Object.entries(obj).map(([k, v]) => [k, JSON.stringify(v)]));
       return obj;
     }
     // `funcionarios_administrativo` (migração de ago/2026) usa colunas
@@ -351,7 +353,7 @@ async function lerSupa(key, fb, filtroFuncionarioId) {
     // `data` vier null/undefined (erro real). Array vazio é sucesso.
     if (data === null || data === undefined) return fb;
     const result = key === SK_FUNCS ? data : data.map(r => r.data);
-    if (key === SK_OCS) _baseServidor[key] = new Map(result.map(i => [String(i?.id), JSON.stringify(i)]));
+    if (key === SK_OCS || key === SK_NOTIFS) _baseServidor[key] = new Map(result.map(i => [String(i?.id), JSON.stringify(i)]));
     _cache[key] = result;
     salvarLS(key, result);
     return result;
@@ -382,7 +384,9 @@ salvarLS(key, val); // cache local imediato
     if (key === SK_EASYMOB || key === `${SK_EASYMOB}_map`) {
       // easymob é um objeto chave->valor
       if (typeof val !== "object" || !val) return { ok: true };
+      const baseEm = _baseServidor[`${SK_EASYMOB}_map`] || new Map();
       for (const [chave, dado] of Object.entries(val)) {
+        if (baseEm.get(chave) === JSON.stringify(dado)) continue; // A6: inalterado, não regrava
         // .select() força o Supabase a retornar a linha realmente gravada —
         // sem isso, um upsert bloqueado silenciosamente por RLS pode não
         // reportar `error` algum, mas também não persistir nada, fazendo a
@@ -396,6 +400,8 @@ salvarLS(key, val); // cache local imediato
           console.error("[EASYMOB UPSERT SEM RETORNO]", { chave, tamanhoDado: dado?.length });
           return { ok: false, erro: "O registro não foi confirmado pelo banco (possível bloqueio de permissão)." };
         }
+        baseEm.set(chave, JSON.stringify(dado));
+        _baseServidor[`${SK_EASYMOB}_map`] = baseEm;
       }
       return { ok: true };
     }
@@ -404,13 +410,23 @@ salvarLS(key, val); // cache local imediato
     if (!Array.isArray(val)) return { ok: true };
     // A1 (piloto em ocorrencias): gravação por registro. Upsert só dos itens que mudaram
     // desde a última leitura/gravação e delete só dos ids que o usuário removeu do estado.
-    if (key === SK_OCS) {
+    if (key === SK_OCS || key === SK_NOTIFS) {
       const base = _baseServidor[key] || new Map();
       const mudados = val.filter(i => base.get(String(i.id)) !== JSON.stringify(i));
       const idsAtuais = new Set(val.map(i => String(i.id)));
       const removidos = [...base.keys()].filter(id => !idsAtuais.has(id));
-      if (mudados.length) {
-        const { error } = await supa.from(table).upsert(mudados.map(i => ({ id: i.id, data: i })), { onConflict: "id" });
+      // Itens novos entram com INSERT (só exige a política de insert, importante p/ avisos que o
+      // próprio autor não pode ler, ex.: notificação para o admin); os já conhecidos, com upsert.
+      const novos = mudados.filter(i => !base.has(String(i.id)));
+      const alterados = mudados.filter(i => base.has(String(i.id)));
+      if (novos.length) {
+        const linhas = novos.map(i => ({ id: i.id, data: i }));
+        let { error } = await supa.from(table).insert(linhas);
+        if (error && error.code === "23505") ({ error } = await supa.from(table).upsert(linhas, { onConflict: "id" }));
+        if (error) return { ok: false, erro: error.message };
+      }
+      if (alterados.length) {
+        const { error } = await supa.from(table).upsert(alterados.map(i => ({ id: i.id, data: i })), { onConflict: "id" });
         if (error) return { ok: false, erro: error.message };
       }
       if (removidos.length) {
