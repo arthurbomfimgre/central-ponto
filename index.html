@@ -9,9 +9,9 @@
 
   <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
   <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js" integrity="sha384-EnyY0/GSHQGSxSgMwaIPzSESbqoOLSexfnSMN2AP+39Ckmn92stwABZynq1JyzdT" crossorigin="anonymous"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js" integrity="sha512-dlPw+ytv/6JyepmelABrgeYgHI0O+frEwgfnPdXDTOIZz+eDgfW07QXG02/O8COfivBdGNINy+Vex+lYmJ5rxw==" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js" integrity="sha384-TcHRA3zBbn+Lexh5n+Oil4guNPOS3rjNDpGRAN46u/s/mB2IZ50ceC6TYDU2yvgK" crossorigin="anonymous"></script>
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -220,17 +220,6 @@ const _baseServidor = {};
 // enquanto elas ainda não foram liberadas para todos. Não há mais "conta de
 // teste": todos entram como funcionários reais, com dados reais.
 const EMAILS_PREVIEW_HIERARQUIA = ["gre@portovale.com.br"];
-const LS_FLAG_CONTA_TESTE = "cp_conta_teste_ativa";
-function contaTesteAtiva() {
-  return lerLS(LS_FLAG_CONTA_TESTE, false) === true;
-}
-function ativarContaTeste() {
-  salvarLS(LS_FLAG_CONTA_TESTE, true);
-}
-function desativarContaTeste() {
-  try { localStorage.removeItem(LS_FLAG_CONTA_TESTE); } catch (_e) {}
-}
-
 // Fallback localStorage
 function lerLS(key, fb) {
   try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fb; } catch (_e) { return fb; }
@@ -513,12 +502,7 @@ salvarLS(key, val); // cache local imediato
 // salvarLS(key) e em _cache[key] — poluindo o cache local mesmo depois de a
 // flag de teste ser ativada. Bloquear a leitura/gravação real até
 // sessaoPronta === true elimina essa corrida por completo.
-function useSharedState(key, initial, sessaoPronta, contaTesteFlag, filtroFuncionarioId) {
-  // Conta de teste: nunca lê nem grava no Supabase. Todo o estado fica
-  // isolado sob uma chave própria no localStorage ("cp_teste_<key>"),
-  // começando vazio ([]/{} conforme o tipo do `initial`, nunca os dados
-  // reais de seed) e persistindo só nesse dispositivo entre login/logout.
-  const chaveTeste = `cp_teste_${key}`;
+function useSharedState(key, initial, sessaoPronta, filtroFuncionarioId) {
   const vazio = Array.isArray(initial) ? [] : (initial && typeof initial === "object" ? {} : initial);
 
   const [state, setRaw] = useState(() => {
@@ -527,38 +511,9 @@ function useSharedState(key, initial, sessaoPronta, contaTesteFlag, filtroFuncio
     // Começa vazio/neutro; o efeito abaixo (assim que sessaoPronta virar
     // true) é quem decide a fonte correta.
     if (!sessaoPronta) return vazio;
-    if (contaTesteAtiva()) return lerLS(chaveTeste, vazio);
     return _cache[key] ?? lerLS(key, initial);
   });
   const loaded = useRef(false);
-  // A flag de conta de teste é ativada de forma assíncrona (dentro de um
-  // useEffect de login/restauração de sessão), então pode passar a valer
-  // *depois* que este hook já rodou seu useState inicial acima — nesse
-  // caso o estado ficaria "preso" nos dados reais para sempre, mesmo com
-  // a flag ativa. Este efeito detecta a mudança e recarrega do
-  // localStorage isolado assim que ela acontece.
-  //
-  // IMPORTANTE: as dependências incluem `contaTesteFlag` (não só
-  // `sessaoPronta`). No login manual (tela de login, sem F5), a tela de
-  // login já é renderizada com sessaoPronta=true e usuario=null — ou
-  // seja, useSharedState já dispara sua carga real do Supabase enquanto
-  // o usuário ainda está digitando a senha. Quando o login como conta
-  // teste é concluído, `contaTesteAtiva()` muda de false->true, mas
-  // `sessaoPronta` continua true e não muda — então, sem essa dependência
-  // extra, este efeito nunca rodava de novo e o estado ficava travado nos
-  // dados reais já carregados durante a tela de login (só sumiam com F5,
-  // que reinicia sessaoPronta do zero). Passar um valor derivado do
-  // usuário logado (ex: contaTesteAtivaAgora) força este efeito a reagir
-  // exatamente no momento em que o login como conta teste se efetiva.
-  const modoTesteAnterior = useRef(null);
-  useEffect(() => {
-    if (!sessaoPronta) return;
-    const modoTesteAgora = contaTesteAtiva();
-    if (modoTesteAgora !== modoTesteAnterior.current) {
-      modoTesteAnterior.current = modoTesteAgora;
-      setRaw(modoTesteAgora ? lerLS(chaveTeste, vazio) : (_cache[key] ?? lerLS(key, initial)));
-    }
-  }, [sessaoPronta, contaTesteFlag]);
 
   // Carga inicial do Supabase — pulada inteiramente em modo teste, e
   // adiada até a sessão estar verificada (ver comentário acima do hook).
@@ -567,20 +522,18 @@ function useSharedState(key, initial, sessaoPronta, contaTesteFlag, filtroFuncio
   // dados reais voltem a ser buscados nesse caso.
   useEffect(() => {
     if (!sessaoPronta) return;
-    if (contaTesteAtiva()) return;
     lerSupa(key, initial, filtroFuncionarioId).then(val => {
       if (val !== null && val !== undefined) {
         setRaw(val);
         loaded.current = true;
       }
     });
-  }, [key, sessaoPronta, contaTesteFlag, filtroFuncionarioId]);
+  }, [key, sessaoPronta, filtroFuncionarioId]);
 
   // Polling a cada 3s para sincronizar entre dispositivos — desligado em
   // modo teste e enquanto a sessão ainda não foi verificada
   useEffect(() => {
     if (!sessaoPronta) return;
-    if (contaTesteAtiva()) return;
     // A6: não consulta o banco com a aba oculta (várias abas/janelas multiplicavam o tráfego)
     // e atualiza na hora quando a aba volta a ficar visível.
     const atualizar = async () => {
@@ -627,13 +580,6 @@ function useSharedState(key, initial, sessaoPronta, contaTesteFlag, filtroFuncio
     const next = typeof valOrFn === "function" ? valOrFn(stateRef.current) : valOrFn;
     stateRef.current = next;
     setRaw(next);
-    if (contaTesteAtiva()) {
-      // Grava só localmente, isolado da chave real — nunca chama o Supabase.
-      return Promise.resolve().then(() => {
-        salvarLS(chaveTeste, next);
-        return { ok: true };
-      });
-    }
     // Retorna a Promise do salvamento — chamadores que precisam confirmar
     // sucesso (ex: upload de print do EasyMob) podem usar `await`; os demais
     // continuam funcionando normalmente ao ignorar o retorno.
@@ -4084,7 +4030,6 @@ function ListaFuncionarios({
   setOcorrencias,
   mesFiltro,
   setMesFiltro,
-  contaTeste,
   usuario,
   gerenciasComercial = [],
   diretoriasComercial = []
@@ -8292,8 +8237,7 @@ function PerfilFuncionario({
   // por padrão, configurável na tela de Permissões.
   somenteLeituraPerfil = false,
   somenteLeituraPendencias = false,
-  sessaoPronta = true,
-  contaTesteAtivaAgora = false
+  sessaoPronta = true
 }) {
   const [filtroStatus, setFiltroStatus] = useState("Todos");
   const [modalCriar, setModalCriar] = useState(false);
@@ -8302,7 +8246,7 @@ function PerfilFuncionario({
   // inicial e o polling de 3s dentro de useSharedState nunca disparavam
   // (ambos exigem sessaoPronta truthy) — o admin nunca buscava o print do
   // EasyMob do Supabase, mesmo com o dado já gravado no banco.
-  const [easymobMap, setEasymobMap] = useSharedState(`${SK_EASYMOB}_map`, {}, sessaoPronta, contaTesteAtivaAgora);
+  const [easymobMap, setEasymobMap] = useSharedState(`${SK_EASYMOB}_map`, {}, sessaoPronta);
   const [sucesso, setSucesso] = useState("");
   const [confirmExcluirOc, setConfirmExcluirOc] = useState(null);
   const [editandoOc, setEditandoOc] = useState(null);
@@ -9367,8 +9311,7 @@ function PainelOcorrencias({
   isAdmin,
   mesFiltro,
   setMesFiltro,
-  sessaoPronta = true,
-  contaTesteAtivaAgora = false
+  sessaoPronta = true
 }) {
   const [modal, setModal] = useState(null);
   const [obs, setObs] = useState("");
@@ -9386,7 +9329,7 @@ function PainelOcorrencias({
   // Sem sessaoPronta/contaTesteAtivaAgora, a carga inicial e o polling de
   // useSharedState nunca disparavam — o print do EasyMob ficava gravado no
   // Supabase mas nunca era buscado para exibição aqui.
-  const [easymobMap] = useSharedState(`${SK_EASYMOB}_map`, {}, sessaoPronta, contaTesteAtivaAgora);
+  const [easymobMap] = useSharedState(`${SK_EASYMOB}_map`, {}, sessaoPronta);
   const tiposDisponiveis = useMemo(() => [...new Set(ocorrencias.map(o => o.tipo).filter(Boolean))].sort((a, b) => a.localeCompare(b, "pt-BR", {
     sensitivity: "base"
   })), [ocorrencias]);
@@ -10624,8 +10567,7 @@ function PortalFuncionario({
   addNotif,
   notifs,
   setNotifs,
-  sessaoPronta = true,
-  contaTesteAtivaAgora = false
+  sessaoPronta = true
 }) {
   // Desde a migração de ago/2026, os ids de `funcionarios_administrativo`
   // (UUID) e `funcionarios_comercial` (inteiro) nunca colidem — basta o id.
@@ -10669,7 +10611,7 @@ function PortalFuncionario({
   // Filtrado por funcLogado.id: esta é a tela do próprio funcionário, que só
   // precisa (e só deve ver) os próprios prints do EasyMob — não o mapa
   // inteiro de todos os funcionários (ver comentário em lerSupa).
-  const [easymobMap, setEasymobMap] = useSharedState(`${SK_EASYMOB}_map`, {}, sessaoPronta, contaTesteAtivaAgora, funcLogado.id);
+  const [easymobMap, setEasymobMap] = useSharedState(`${SK_EASYMOB}_map`, {}, sessaoPronta, funcLogado.id);
   const [enviandoEasymob, setEnviandoEasymob] = useState(null); // id da ocorrência em envio
   const [erroEasymob, setErroEasymob] = useState(null);
   const [trocandoTipo, setTrocandoTipo] = useState(null); // id da ocorrência com a grade de tipo reaberta
@@ -14675,7 +14617,6 @@ function App() {
       if (!atual) return;
       if (emailNovo && emailNovo === atual.email) return; // mesma conta: nada a fazer
       usuarioRef.current = null;
-      desativarContaTeste();
       setUsuario(null);
       setAvisoSessao(emailNovo ? "A conta foi trocada em outra aba deste navegador. Entre novamente." : "Sua sessão foi encerrada em outra aba deste navegador. Entre novamente.");
     }
@@ -14704,7 +14645,6 @@ function App() {
     usuarioRef.current = null;
     setAvisoSessao("");
     supa.auth.signOut();
-    desativarContaTeste();
     setUsuario(null);
     setModoRecuperacao(false);
   }
@@ -14720,22 +14660,15 @@ function App() {
   // qualquer login acontecer — inclusive antes de alguém logar como conta
   // teste. Só liberamos a busca real quando já sabemos quem logou.
   const sessaoPronta = !verificandoSessao && !!usuario;
-  // contaTesteAtivaAgora precisa ser calculado ANTES de passar para os
-  // hooks abaixo (não depois, como antes), pois agora é usado como
-  // dependência extra em useSharedState para garantir que o efeito de
-  // troca de fonte de dados reaja exatamente no instante em que o login
-  // como conta teste se efetiva — ver comentário detalhado dentro de
-  // useSharedState().
-  const contaTesteAtivaAgora = !!usuario?.contaTeste;
-  const [funcionarios, setFuncionarios] = useSharedState(SK_FUNCS, FUNCIONARIOS_BASE, sessaoPronta, contaTesteAtivaAgora);
+  const [funcionarios, setFuncionarios] = useSharedState(SK_FUNCS, FUNCIONARIOS_BASE, sessaoPronta);
   // Fallback agora é [] (lista vazia real), não mais os dados de teste
   // hardcoded de abril–julho (OCS_SJCABRIL/MAIO/JUNHO/JULHO, removidos).
   // Esses arrays só deveriam ter servido de seed único allá em 2026; com a
   // correção de lerSupa (que agora distingue "tabela vazia" de "erro de
   // leitura"), mantê-los aqui faria esses dados fantasmas reaparecerem
   // toda vez que `ocorrencias` estivesse genuinamente vazia no Supabase.
-  const [ocorrencias, setOcorrencias] = useSharedState(SK_OCS, [], sessaoPronta, contaTesteAtivaAgora);
-  const [notifs, setNotifs] = useSharedState(SK_NOTIFS, [], sessaoPronta, contaTesteAtivaAgora);
+  const [ocorrencias, setOcorrencias] = useSharedState(SK_OCS, [], sessaoPronta);
+  const [notifs, setNotifs] = useSharedState(SK_NOTIFS, [], sessaoPronta);
   // Dados da hierarquia comercial (funcionarios_comercial + estrutura de
   // gerências/diretorias/superintendências), usados para: (1) unificar com
   // a lista legada em `funcionarios` para todas as telas de admin/gestão, e
@@ -14756,22 +14689,18 @@ function App() {
   // Administrativo, ver vinculoFiltro em ListaFuncionarios) já permite
   // olhar cada lista separadamente na tela de Funcionários.
   const funcionariosExibidos = useMemo(() => {
-    // Conta de teste continua isolada em seu próprio localStorage — nunca
-    // mistura com dados reais da hierarquia comercial.
-    if (contaTesteAtivaAgora) return funcionarios;
     const unificados = [...funcionarios, ...dadosComercial.funcionarios.filter(f => (f.situacao || "ATIVO").toUpperCase() === "ATIVO").map(normalizarFuncComercial)];
     return filtrarPorEscopoGestor(unificados, usuario, dadosComercial);
-  }, [funcionarios, dadosComercial, usuario, contaTesteAtivaAgora]);
+  }, [funcionarios, dadosComercial, usuario]);
   // Variante COM inativos, usada só pela tela de gestão de Funcionários
   // (view "funcionarios"), onde agora exibimos ativos e inativos lado a
   // lado na árvore. Todas as outras telas (dashboard, relatórios, painel
   // de aprovação, portal) continuam usando `funcionariosExibidos` (só
   // ativos) — não faz sentido inflar essas com gente inativa.
   const funcionariosComInativos = useMemo(() => {
-    if (contaTesteAtivaAgora) return funcionarios;
     const unificados = [...funcionarios, ...dadosComercial.funcionarios.map(normalizarFuncComercial)];
     return filtrarPorEscopoGestor(unificados, usuario, dadosComercial);
-  }, [funcionarios, dadosComercial, usuario, contaTesteAtivaAgora]);
+  }, [funcionarios, dadosComercial, usuario]);
   const ocorrenciasExibidas = ocorrencias;
   const notifsExibidas = notifs;
   // Escopo de relatório — exclusivo do superintendente: um recorte OPCIONAL
@@ -15069,12 +14998,6 @@ ocorrenciasTodasDatas: ocorrenciasRelatorioTodasDatas,
         setOcorrencias: setOcorrencias,
         mesFiltro: mesFiltro,
         setMesFiltro: setMesFiltro,
-        // TEMPORÁRIO (2026-08-24): antes usava contaTesteAtivaAgora — agora
-        // que gre@ deixou de ser isolada em sandbox (ver comentário no
-        // fluxo de login), usamos previewHierarquia, que é a mesma flag
-        // exclusiva dessa conta, para manter "Importar Excel"/"Excluir
-        // Todos" visíveis mesmo operando com dados reais.
-        contaTeste: !!usuario?.previewHierarquia,
         usuario: usuario,
         gerenciasComercial: dadosComercial.gerencias,
         diretoriasComercial: dadosComercial.diretorias
@@ -15091,8 +15014,7 @@ ocorrenciasTodasDatas: ocorrenciasRelatorioTodasDatas,
         setMesFiltro: setMesFiltro,
         somenteLeituraPerfil: !pode("editar_perfil"),
         somenteLeituraPendencias: !pode("pendencias"),
-        sessaoPronta: sessaoPronta,
-        contaTesteAtivaAgora: contaTesteAtivaAgora
+        sessaoPronta: sessaoPronta
       });
       if (view === "relatorios") return /*#__PURE__*/React.createElement(PainelOcorrencias, {
         // Usa a base já recortada por gerência/diretoria (ocorrenciasRelatorio/
@@ -15113,8 +15035,7 @@ ocorrenciasTodasDatas: ocorrenciasRelatorioTodasDatas,
         isAdmin: isAdmin,
         mesFiltro: mesFiltro,
         setMesFiltro: setMesFiltro,
-        sessaoPronta: sessaoPronta,
-        contaTesteAtivaAgora: contaTesteAtivaAgora
+        sessaoPronta: sessaoPronta
       });
       if (view === "hierarquia" && previewHierarquia && isAdmin) return /*#__PURE__*/React.createElement(ArvoreHierarquia, {
         pode: pode,
@@ -15132,8 +15053,7 @@ ocorrenciasTodasDatas: ocorrenciasRelatorioTodasDatas,
         addNotif: addNotif,
         notifs: notifsExibidas,
         setNotifs: setNotifs,
-        sessaoPronta: sessaoPronta,
-        contaTesteAtivaAgora: contaTesteAtivaAgora
+        sessaoPronta: sessaoPronta
       });
     }
     if (view === "mural") return /*#__PURE__*/React.createElement(ProcessosPonto, { usuario: usuario, setView: setView, ocorrencias: ocorrenciasExibidas, funcionarios: funcionariosExibidos, gerencias: dadosComercial.gerencias, diretorias: dadosComercial.diretorias });
@@ -15147,8 +15067,7 @@ ocorrenciasTodasDatas: ocorrenciasRelatorioTodasDatas,
       addNotif: addNotif,
       notifs: notifsExibidas,
       setNotifs: setNotifs,
-      sessaoPronta: sessaoPronta,
-      contaTesteAtivaAgora: contaTesteAtivaAgora
+      sessaoPronta: sessaoPronta
     });
   }
   return /*#__PURE__*/React.createElement("div", {
