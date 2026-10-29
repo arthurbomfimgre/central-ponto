@@ -2432,7 +2432,19 @@ function TelaLogin({
       setStatusRecuperar(extrairMensagemErro(e));
     }
   }
+  // A7: envolve o login em try/finally — qualquer exceção inesperada (rede, consulta
+  // ao banco) agora mostra erro e sempre destrava o botão (setLoading(false)).
   async function handle() {
+    try {
+      await executarLogin();
+    } catch (e) {
+      console.error("Falha no login:", e);
+      setErro("Não foi possível entrar agora. Verifique sua conexão e tente novamente.");
+    } finally {
+      setLoading(false);
+    }
+  }
+  async function executarLogin() {
     setErro("");
     setLoading(true);
     // E-mail de login: aceita o e-mail completo OU só "primeiro.sobrenome",
@@ -2448,7 +2460,11 @@ function TelaLogin({
       password: senha
     });
     if (error) {
-      setErro("Usuário ou senha incorretos.");
+      // A7: só credencial inválida vira "senha incorreta"; rede/limite/servidor têm mensagem própria.
+      const st = error.status;
+      if (st === 429) setErro("Muitas tentativas. Aguarde um minuto e tente novamente.");
+      else if (!st || st >= 500 || /fetch|network/i.test(error.message || "")) setErro("Não foi possível conectar ao servidor. Verifique sua conexão e tente novamente.");
+      else setErro("Usuário ou senha incorretos.");
       setLoading(false);
       return;
     }
@@ -9835,14 +9851,21 @@ function PainelOcorrencias({
     /*#__PURE__*/React.createElement("td", { style: { padding: "10px 16px", fontSize: 12, fontWeight: 600, color: "var(--cinza-900)" } }, tipoIcon(o.tipo), " ", o.tipo,
       ehErroReg && (easymob ? /*#__PURE__*/React.createElement("button", {
         onClick: () => {
+          // Só abre se for imagem em data URL; monta a <img> por DOM (sem document.write)
+          // para que um valor adulterado em `easymob` nunca vire HTML/JS executável.
+          if (typeof easymob !== "string" || !/^data:image\/(png|jpe?g|webp|gif);base64,[A-Za-z0-9+\/=]+$/i.test(easymob)) {
+            alert("Print inválido ou em formato não suportado.");
+            return;
+          }
           const win = window.open("", "_blank");
           if (!win) return;
-          win.document.write(
-            '<html><head><title>Print EasyMob</title></head>' +
-            '<body style="margin:0;background:#111;display:flex;align-items:center;justify-content:center;min-height:100vh;">' +
-            '<img src="' + easymob + '" style="max-width:100%;max-height:100vh;" /></body></html>'
-          );
-          win.document.close();
+          const doc = win.document;
+          doc.title = "Print EasyMob";
+          doc.body.style.cssText = "margin:0;background:#111;display:flex;align-items:center;justify-content:center;min-height:100vh;";
+          const img = doc.createElement("img");
+          img.src = easymob;
+          img.style.cssText = "max-width:100%;max-height:100vh;";
+          doc.body.appendChild(img);
         },
         style: { display: "block", marginTop: 4, background: "var(--verde-100)", color: "var(--verde-700)", border: "none", borderRadius: 8, padding: "3px 8px", fontSize: 11, fontWeight: 600, cursor: "pointer" }
       }, "📱 Ver print") : /*#__PURE__*/React.createElement("span", { style: { display: "block", marginTop: 4, fontSize: 11, color: o.easymobEnviado ? "var(--verde-700)" : "var(--amber-600)", fontWeight: 600 } }, o.easymobEnviado ? "✅ Print enviado" : "⚠️ Sem print"))),
@@ -15449,6 +15472,7 @@ function App() {
   useEffect(() => {
     let ativo = true;
     (async () => {
+      try {
       const { data } = await supa.auth.getSession();
       if (!ativo) return;
       const email = data?.session?.user?.email;
@@ -15467,6 +15491,15 @@ function App() {
         });
       } else if (email) {
         let func = funcionarios.find(f => emailFuncionario(f) === email);
+        // A4: no F5, `funcionarios` ainda está vazio (sessaoPronta=false no 1º render).
+        // Faz a mesma busca direta do login manual, senão a equipe administrativa
+        // (só em funcionarios_administrativo) seria deslogada ao recarregar.
+        if (!func) {
+          try {
+            const funcsAtualizados = await lerSupa(SK_FUNCS, FUNCIONARIOS_BASE);
+            func = funcsAtualizados.find(f => emailFuncionario(f) === email);
+          } catch (e) { console.error("Restaurar sessão (administrativo):", e); }
+        }
         // Não achou no administrativo: tenta a hierarquia comercial
         // (funcionarios_comercial), igual ao fluxo de login.
         if (!func) {
@@ -15495,7 +15528,11 @@ function App() {
           });
         }
       }
-      if (ativo) setVerificandoSessao(false);
+      } catch (e) {
+        console.error("Restaurar sessão:", e);
+      } finally {
+        if (ativo) setVerificandoSessao(false);
+      }
     })();
     return () => {
       ativo = false;
