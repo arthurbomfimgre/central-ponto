@@ -215,16 +215,11 @@ const _cache = {};
 // "substituir a tabela" (que apagava registros criados por outras pessoas).
 const _baseServidor = {};
 
-// ─── CONTA DE TESTE ─────────────────────────────────────────────────────────
-// E-mails cadastrados aqui logam como admin, mas nunca tocam no Supabase:
-// todo o estado (funcionários, ocorrências, notificações) é isolado em
-// localStorage sob um prefixo próprio, começando sempre "zerado" e
-// persistindo apenas no navegador daquele dispositivo — mesmo depois de
-// deslogar/logar de novo. Os dados reais de produção nunca são lidos nem
-// alterados por essa conta.
-const CONTAS_TESTE = {
-  "gre@portovale.com.br": { nome: "GRE", cargo: "Gestão de Relacionamento Estratégico" }
-};
+// ─── PREVIEW DA HIERARQUIA ──────────────────────────────────────────────────
+// Só estes e-mails veem as telas novas da hierarquia comercial (aba Hierarquia)
+// enquanto elas ainda não foram liberadas para todos. Não há mais "conta de
+// teste": todos entram como funcionários reais, com dados reais.
+const EMAILS_PREVIEW_HIERARQUIA = ["gre@portovale.com.br"];
 const LS_FLAG_CONTA_TESTE = "cp_conta_teste_ativa";
 function contaTesteAtiva() {
   return lerLS(LS_FLAG_CONTA_TESTE, false) === true;
@@ -586,7 +581,10 @@ function useSharedState(key, initial, sessaoPronta, contaTesteFlag, filtroFuncio
   useEffect(() => {
     if (!sessaoPronta) return;
     if (contaTesteAtiva()) return;
-    const id = setInterval(async () => {
+    // A6: não consulta o banco com a aba oculta (várias abas/janelas multiplicavam o tráfego)
+    // e atualiza na hora quando a aba volta a ficar visível.
+    const atualizar = async () => {
+      if (typeof document !== "undefined" && document.hidden) return;
       const fresh = await lerSupa(key, null, filtroFuncionarioId);
       if (fresh !== null && fresh !== undefined) {
         setRaw(prev => {
@@ -594,8 +592,13 @@ function useSharedState(key, initial, sessaoPronta, contaTesteFlag, filtroFuncio
           return ps !== fs ? fresh : prev;
         });
       }
-    }, 3000);
-    return () => clearInterval(id);
+    };
+    const id = setInterval(atualizar, 3000);
+    document.addEventListener("visibilitychange", atualizar);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener("visibilitychange", atualizar);
+    };
   }, [key, sessaoPronta, filtroFuncionarioId]);
 
   // Ref sempre sincronizado com o `state` mais recente. Necessário porque
@@ -1504,6 +1507,9 @@ const PAPEL_ADMINISTRATIVO_PARA_NIVEL = {
   membro: "admin_membro"
 };
 function resolverNivel(func) {
+  // Admin fixo (ADMIN_EMAILS_FIXO) é sempre admin_geral, mesmo que a linha em
+  // funcionarios_administrativo tenha papel "membro" (ex.: gre@, que antes entrava por conta de teste).
+  if (ehAdminFuncionario(func)) return "admin_geral";
   if (func?.nivel) return func.nivel;
   if (func?.papel && PAPEL_ADMINISTRATIVO_PARA_NIVEL[func.papel]) {
     return PAPEL_ADMINISTRATIVO_PARA_NIVEL[func.papel];
@@ -2520,33 +2526,6 @@ function TelaLogin({
     // só é populada de fato pelo useEffect assíncrono do useSharedState, que
     // pode ainda não ter terminado. Por isso, buscamos a lista mais recente
     // direto do Supabase aqui antes de desistir, evitando essa falsa negativa.
-    // Conta de teste: por padrão nunca casa com a lista real de funcionários
-    // e loga isolada — ver CONTAS_TESTE. TEMPORÁRIO (pedido em 2026-08-24):
-    // gre@ deixou de ativar o isolamento (ativarContaTeste()) e contaTeste
-    // aqui é `false`, para que useSharedState trate como conta real e ela
-    // veja/edite os dados de verdade do Supabase durante os testes da nova
-    // tela de Relatórios. Para reverter ao sandbox isolado: descomentar a
-    // chamada a ativarContaTeste() e voltar contaTeste para `true`.
-    if (CONTAS_TESTE[email]) {
-      // ativarContaTeste(); // desativado temporariamente — ver comentário acima
-      onLogin({
-        id: "admin_teste",
-        nome: CONTAS_TESTE[email].nome,
-        cargo: CONTAS_TESTE[email].cargo,
-        role: "admin",
-        nivel: "admin_geral",
-        funcionario_id: "teste",
-        email,
-        contaTeste: false, // temporário — era `true`
-        // Só esta conta (gre@portovale.com.br) vê as telas novas da
-        // hierarquia comercial enquanto elas ainda estão em construção —
-        // nenhum outro admin/funcionário real é afetado até decidirmos
-        // liberar de vez.
-        previewHierarquia: true
-      });
-      setLoading(false);
-      return;
-    }
     let func = funcionarios.find(f => emailFuncionario(f) === email);
     if (!func) {
       const funcsAtualizados = await lerSupa(SK_FUNCS, FUNCIONARIOS_BASE);
@@ -2582,7 +2561,8 @@ function TelaLogin({
       // hierarquia/nível comercial) ou de `funcionarios_administrativo`.
       // Não é mais desambiguação de colisão de id (isso não existe desde a
       // migração de ago/2026) — só identifica a origem para o resto da UI.
-      origemComercial: !!func.origemComercial
+      origemComercial: !!func.origemComercial,
+      previewHierarquia: EMAILS_PREVIEW_HIERARQUIA.includes(email)
     };
     onLogin(user);
     setLoading(false);
@@ -5108,7 +5088,7 @@ function ModalImportarPontoDP({ funcionarios, ocorrencias, setOcorrencias, addNo
         ? `Você recebeu uma nova pendência do dia (${fmtDate(ocsDoFunc[0].data)}). Especifique o motivo no card.`
         : `Você recebeu ${qtd} novas pendências do dia. Especifique o motivo de cada uma no card.`;
       addNotif({
-        id: Date.now() + Math.random(),
+        id: Date.now() + Math.floor(Math.random() * 1000), // A9: inteiro (id fracionário falha em coluna bigint)
         icon: "📋",
         title: qtd === 1 ? "Nova pendência" : "Novas pendências",
         body,
@@ -14842,20 +14822,7 @@ function App() {
       const { data } = await supa.auth.getSession();
       if (!ativo) return;
       const email = data?.session?.user?.email;
-      if (email && CONTAS_TESTE[email]) {
-        // ativarContaTeste(); // desativado temporariamente — ver comentário no fluxo de login manual
-        setUsuario({
-          id: "admin_teste",
-          nome: CONTAS_TESTE[email].nome,
-          cargo: CONTAS_TESTE[email].cargo,
-          role: "admin",
-          nivel: "admin_geral",
-          funcionario_id: "teste",
-          email,
-          contaTeste: false, // temporário — era `true`
-          previewHierarquia: true
-        });
-      } else if (email) {
+      if (email) {
         let func = funcionarios.find(f => emailFuncionario(f) === email);
         // A4: no F5, `funcionarios` ainda está vazio (sessaoPronta=false no 1º render).
         // Faz a mesma busca direta do login manual, senão a equipe administrativa
@@ -14890,7 +14857,8 @@ function App() {
             // ou de `funcionarios_administrativo` — não é mais
             // desambiguação de colisão de id (não existe mais desde a
             // migração de ago/2026), só identifica a origem para a UI.
-            origemComercial: !!func.origemComercial
+            origemComercial: !!func.origemComercial,
+            previewHierarquia: EMAILS_PREVIEW_HIERARQUIA.includes(email)
           });
         }
       }
@@ -14957,7 +14925,7 @@ function App() {
     return base;
   }, [ocorrenciasExibidas, isGestor, funcionariosExibidos, usuario, gerenciasEscopoRelatorio, funcionariosRelatorio]);
   // Gate explícito: enquanto as telas da hierarquia comercial nova estão em
-  // construção, só a conta gre@portovale.com.br (CONTAS_TESTE) as
+  // construção, só os e-mails de EMAILS_PREVIEW_HIERARQUIA as
   // enxerga. Nenhum admin/funcionário real vê nada diferente até este flag
   // ser removido de propósito, quando as telas estiverem prontas para todo
   // mundo.
