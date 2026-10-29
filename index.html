@@ -213,6 +213,10 @@ const KEY_TABLE = {
 
 // Cache local para evitar flickering
 const _cache = {};
+// A1: última versão conhecida de cada registro de `ocorrencias` no servidor (id -> JSON).
+// Permite gravar SÓ o que mudou e apagar SÓ o que o usuário removeu, em vez de
+// "substituir a tabela" (que apagava registros criados por outras pessoas).
+const _baseServidor = {};
 
 // ─── CONTA DE TESTE ─────────────────────────────────────────────────────────
 // E-mails cadastrados aqui logam como admin, mas nunca tocam no Supabase:
@@ -347,6 +351,7 @@ async function lerSupa(key, fb, filtroFuncionarioId) {
     // `data` vier null/undefined (erro real). Array vazio é sucesso.
     if (data === null || data === undefined) return fb;
     const result = key === SK_FUNCS ? data : data.map(r => r.data);
+    if (key === SK_OCS) _baseServidor[key] = new Map(result.map(i => [String(i?.id), JSON.stringify(i)]));
     _cache[key] = result;
     salvarLS(key, result);
     return result;
@@ -397,6 +402,27 @@ salvarLS(key, val); // cache local imediato
 
     // Para listas: upsert cada item pelo id
     if (!Array.isArray(val)) return { ok: true };
+    // A1 (piloto em ocorrencias): gravação por registro. Upsert só dos itens que mudaram
+    // desde a última leitura/gravação e delete só dos ids que o usuário removeu do estado.
+    if (key === SK_OCS) {
+      const base = _baseServidor[key] || new Map();
+      const mudados = val.filter(i => base.get(String(i.id)) !== JSON.stringify(i));
+      const idsAtuais = new Set(val.map(i => String(i.id)));
+      const removidos = [...base.keys()].filter(id => !idsAtuais.has(id));
+      if (mudados.length) {
+        const { error } = await supa.from(table).upsert(mudados.map(i => ({ id: i.id, data: i })), { onConflict: "id" });
+        if (error) return { ok: false, erro: error.message };
+      }
+      if (removidos.length) {
+        const { error } = await supa.from(table).delete().in("id", removidos.map(Number));
+        if (error) return { ok: false, erro: error.message };
+      }
+      const novoBase = new Map(base);
+      mudados.forEach(i => novoBase.set(String(i.id), JSON.stringify(i)));
+      removidos.forEach(id => novoBase.delete(id));
+      _baseServidor[key] = novoBase;
+      return { ok: true };
+    }
     // `funcionarios_administrativo` usa id UUID (não numérico) — a
     // sentinela -999999 usada pelas outras tabelas (id inteiro) não serve
     // aqui; um filtro sempre-verdadeiro (`id.not.is.null`) tem o mesmo
