@@ -293,6 +293,19 @@ function comprimirImagem(dataUrl, maxLado = 1280, qualidade = 0.75) {
   });
 }
 
+// A5: lê a tabela inteira em lotes de 1.000 (.range), ordenada por id. O Supabase limita
+// cada resposta (padrão 1.000 linhas) e trunca em silêncio; esta função não trunca.
+async function selecionarTudo(tabela, colunas = "*") {
+  const TAM = 1000;
+  let tudo = [];
+  for (let de = 0; de < 200000; de += TAM) {
+    const { data, error } = await supa.from(tabela).select(colunas).order("id", { ascending: true }).range(de, de + TAM - 1);
+    if (error) return { data: null, error };
+    tudo = tudo.concat(data || []);
+    if (!data || data.length < TAM) break;
+  }
+  return { data: tudo, error: null };
+}
 // Ler do Supabase (retorna array de objetos ou valor easymob)
 //
 // `filtroFuncionarioId`, quando informado, restringe a leitura da tabela
@@ -345,7 +358,10 @@ async function lerSupa(key, fb, filtroFuncionarioId) {
     // esquecimentos, atestados, etc.) em vez do padrão `data jsonb` solto
     // que as outras tabelas de useSharedState usam — não há coluna `data`
     // aqui, então lê-se a linha inteira direto.
-    const { data } = await supa.from(table).select(key === SK_FUNCS ? "*" : "data");
+    const colsLeitura = key === SK_FUNCS ? "*" : "data";
+    let resLeitura = await selecionarTudo(table, colsLeitura);
+    if (resLeitura.error) resLeitura = await supa.from(table).select(colsLeitura); // fallback: leitura simples
+    const { data } = resLeitura;
     // CORRIGIDO (mesmo motivo do bloco easymob acima): só usar `fb` quando
     // `data` vier null/undefined (erro real). Array vazio é sucesso.
     if (data === null || data === undefined) return fb;
@@ -1570,16 +1586,6 @@ function hoje() {
 }
 function agoraISO() {
   return new Date().toISOString();
-}
-function fmtHora(iso) {
-  try {
-    return new Date(iso).toLocaleTimeString("pt-BR", {
-      hour: "2-digit",
-      minute: "2-digit"
-    });
-  } catch (_e) {
-    return "";
-  }
 }
 function fmtDateHora(iso) {
   try {
@@ -4819,16 +4825,6 @@ function ListaFuncionarios({
 // dia a dia. Quando o e-mail estiver ausente ou fora do padrão esperado,
 // caímos de volta para o nome completo da planilha (ver
 // extrairNomeCurtoDoEmail, logo abaixo).
-const MAPA_COLUNAS_IMPORT_EXCEL = {
-  matricula: "Matricula",
-  nome: "Colaborador",
-  cargo: "Cargo",
-  setor: "Area",
-  situacao: "Situacao",
-  supervisor: "Supervisor",
-  gerencia: "Gerencia",
-  emailProfissional: "e-mail Profissional"
-};
 
 // Extrai um nome "curto" (dois nomes) a partir do e-mail profissional
 // corporativo, no padrão nome.sobrenome@portovaleconsorcios.com.br —
@@ -7312,7 +7308,7 @@ function ModalImportarEquipeAdministrativa({ onClose, onConcluido }) {
     try {
       const [linhas, funcRes, sondaSnapshot] = await Promise.all([
         lerArquivoExcel(file),
-        supa.from("funcionarios_administrativo").select("*"),
+        selecionarTudo("funcionarios_administrativo"),
         supa.from("funcionarios_administrativo").select("importacao_snapshot").limit(1)
       ]);
       if (funcRes.error) throw funcRes.error;
@@ -7874,7 +7870,7 @@ function ModalImportarHierarquia({ onClose, onConcluido }) {
         supa.from("gerencias").select("*"),
         // Inclui inativos de propósito — necessário para o diff de
         // inativação não reprocessar quem já está inativo.
-        supa.from("funcionarios_comercial").select("*")
+        selecionarTudo("funcionarios_comercial")
       ]);
       const erroBanco = supRes.error || dirRes.error || gerRes.error || funcRes.error;
       if (erroBanco) throw erroBanco;
@@ -10638,448 +10634,6 @@ function DuvidasProcessos({ setView }) {
 }
 
 
-// ── LEGADO: MuralRecados mantido para compatibilidade (não é mais exibido) ──
-function MuralRecados({
-  usuario,
-  funcionarios
-}) {
-  const [recados, setRecados] = useSharedState(SK_RECADOS, []);
-  const [texto, setTexto] = useState("");
-  const [fixar, setFixar] = useState(false);
-  const [editId, setEditId] = useState(null);
-  const [editTexto, setEditTexto] = useState("");
-  const isAdmin = usuario.role === "admin";
-  function postar() {
-    if (!texto.trim()) return;
-    const novo = {
-      id: Date.now(),
-      autorId: usuario.funcionario_id || "admin",
-      autorNome: usuario.nome,
-      autorCargo: usuario.cargo,
-      texto: texto.trim(),
-      fixado: isAdmin && fixar,
-      criadoEm: agoraISO(),
-      reacoes: {}
-    };
-    setRecados(prev => [novo, ...prev]);
-    setTexto("");
-    setFixar(false);
-  }
-  function excluir(id) {
-    setRecados(prev => prev.filter(r => r.id !== id));
-  }
-  function salvarEdit(id) {
-    if (!editTexto.trim()) return;
-    setRecados(prev => prev.map(r => r.id === id ? {
-      ...r,
-      texto: editTexto.trim(),
-      editadoEm: agoraISO()
-    } : r));
-    setEditId(null);
-    setEditTexto("");
-  }
-  function reagir(id, emoji) {
-    setRecados(prev => prev.map(r => {
-      if (r.id !== id) return r;
-      const key = `${usuario.funcionario_id || "admin"}_${emoji}`;
-      const reacoes = {
-        ...r.reacoes
-      };
-      if (reacoes[key]) delete reacoes[key];else reacoes[key] = emoji;
-      return {
-        ...r,
-        reacoes
-      };
-    }));
-  }
-  const EMOJIS = ["👍", "❤️", "😂", "🎉", "👀"];
-  function contarReacoes(reacoes) {
-    const counts = {};
-    Object.values(reacoes || {}).forEach(e => {
-      counts[e] = (counts[e] || 0) + 1;
-    });
-    return counts;
-  }
-  const fixados = recados.filter(r => r.fixado);
-  const normais = recados.filter(r => !r.fixado);
-  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-    style: {
-      marginBottom: 24
-    }
-  }, /*#__PURE__*/React.createElement("h1", {
-    style: {
-      fontSize: 24,
-      fontWeight: 700,
-      color: "var(--cinza-900)",
-      margin: 0
-    }
-  }, "Mural de Recados"), /*#__PURE__*/React.createElement("p", {
-    style: {
-      color: "var(--cinza-500)",
-      marginTop: 4,
-      fontSize: 15
-    }
-  }, "Comunicados e mensagens da equipe")), /*#__PURE__*/React.createElement("div", {
-    style: {
-      background: "var(--cor-branco)",
-      border: "1px solid var(--cinza-100)",
-      borderRadius: 20,
-      padding: 20,
-      marginBottom: 20,
-      boxShadow: "0 1px 3px var(--sombra-leve)"
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: "flex",
-      gap: 12,
-      alignItems: "flex-start"
-    }
-  }, /*#__PURE__*/React.createElement(Avatar, {
-    nome: usuario.nome,
-    id: usuario.funcionario_id || 1,
-    size: 38
-  }), /*#__PURE__*/React.createElement("div", {
-    style: {
-      flex: 1
-    }
-  }, /*#__PURE__*/React.createElement("textarea", {
-    value: texto,
-    onChange: e => setTexto(e.target.value),
-    placeholder: "Escreva um recado para a equipe…",
-    onKeyDown: e => {
-      if (e.key === "Enter" && e.ctrlKey) postar();
-    },
-    style: {
-      width: "100%",
-      minHeight: 80,
-      borderRadius: 14,
-      border: "1px solid var(--cinza-200)",
-      padding: "12px 14px",
-      fontSize: 15,
-      resize: "vertical",
-      fontFamily: "inherit",
-      boxSizing: "border-box",
-      outline: "none",
-      lineHeight: 1.5
-    }
-  }), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: "flex",
-      justifyContent: "space-between",
-      alignItems: "center",
-      marginTop: 10
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: "flex",
-      alignItems: "center",
-      gap: 8
-    }
-  }, isAdmin && /*#__PURE__*/React.createElement("label", {
-    style: {
-      display: "flex",
-      alignItems: "center",
-      gap: 6,
-      fontSize: 13,
-      color: "var(--cinza-500)",
-      cursor: "pointer"
-    }
-  }, /*#__PURE__*/React.createElement("input", {
-    type: "checkbox",
-    checked: fixar,
-    onChange: e => setFixar(e.target.checked),
-    style: {
-      accentColor: "var(--indigo-500)"
-    }
-  }), "📌 Fixar no topo"), /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontSize: 12,
-      color: "var(--texto-fraco)"
-    }
-  }, "Ctrl+Enter para postar")), /*#__PURE__*/React.createElement("button", {
-    onClick: postar,
-    disabled: !texto.trim(),
-    style: {
-      padding: "9px 20px",
-      borderRadius: 14,
-      border: "none",
-      background: texto.trim() ? "linear-gradient(135deg,var(--indigo-500),var(--roxo-500))" : "var(--cinza-200)",
-      color: texto.trim() ? "var(--cor-branco)" : "var(--cinza-400)",
-      fontSize: 13,
-      fontWeight: 700,
-      cursor: texto.trim() ? "pointer" : "not-allowed"
-    }
-  }, "Publicar"))))), fixados.length > 0 && /*#__PURE__*/React.createElement("div", {
-    style: {
-      marginBottom: 12
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 11,
-      fontWeight: 700,
-      color: "var(--texto-fraco)",
-      
-      letterSpacing: 0,
-      marginBottom: 8,
-      display: "flex",
-      alignItems: "center",
-      gap: 6
-    }
-  }, "📌 Fixados"), fixados.map(r => /*#__PURE__*/React.createElement(RecadoCard, {
-    key: r.id,
-    r: r,
-    usuario: usuario,
-    isAdmin: isAdmin,
-    onExcluir: excluir,
-    onEditar: (id, t) => {
-      setEditId(id);
-      setEditTexto(t);
-    },
-    editId: editId,
-    editTexto: editTexto,
-    setEditTexto: setEditTexto,
-    onSalvar: salvarEdit,
-    onCancelarEdit: () => {
-      setEditId(null);
-      setEditTexto("");
-    },
-    onReagir: reagir,
-    EMOJIS: EMOJIS,
-    contarReacoes: contarReacoes,
-    fixado: true
-  }))), normais.length === 0 && fixados.length === 0 && /*#__PURE__*/React.createElement("div", {
-    style: {
-      background: "var(--cor-branco)",
-      border: "1px solid var(--cinza-100)",
-      borderRadius: 20,
-      padding: 48,
-      textAlign: "center",
-      color: "var(--texto-fraco)",
-      fontSize: 15
-    }
-  }, "📭 Nenhum recado ainda. Seja o primeiro a postar!"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: "flex",
-      flexDirection: "column",
-      gap: 10
-    }
-  }, normais.map(r => /*#__PURE__*/React.createElement(RecadoCard, {
-    key: r.id,
-    r: r,
-    usuario: usuario,
-    isAdmin: isAdmin,
-    onExcluir: excluir,
-    onEditar: (id, t) => {
-      setEditId(id);
-      setEditTexto(t);
-    },
-    editId: editId,
-    editTexto: editTexto,
-    setEditTexto: setEditTexto,
-    onSalvar: salvarEdit,
-    onCancelarEdit: () => {
-      setEditId(null);
-      setEditTexto("");
-    },
-    onReagir: reagir,
-    EMOJIS: EMOJIS,
-    contarReacoes: contarReacoes,
-    fixado: false
-  }))));
-}
-const RecadoCard = React.memo(function RecadoCard({
-  r,
-  usuario,
-  isAdmin,
-  onExcluir,
-  onEditar,
-  editId,
-  editTexto,
-  setEditTexto,
-  onSalvar,
-  onCancelarEdit,
-  onReagir,
-  EMOJIS,
-  contarReacoes,
-  fixado
-}) {
-  const isOwn = r.autorId === usuario.funcionario_id || r.autorId === "admin" && usuario.role === "admin";
-  const counts = contarReacoes(r.reacoes);
-  const meKey = `${usuario.funcionario_id || "admin"}`;
-  const minhasReacoes = Object.entries(r.reacoes || {}).filter(([k]) => k.startsWith(meKey + "_")).map(([, v]) => v);
-  return /*#__PURE__*/React.createElement("div", {
-    style: {
-      background: "var(--cor-branco)",
-      border: `1px solid ${fixado ? "var(--indigo-100)" : "var(--cinza-100)"}`,
-      borderRadius: 20,
-      padding: 20,
-      boxShadow: fixado ? "0 2px 12px var(--indigo-transparente)" : "0 1px 3px var(--sombra-leve)"
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: "flex",
-      gap: 12,
-      alignItems: "flex-start"
-    }
-  }, /*#__PURE__*/React.createElement(Avatar, {
-    nome: r.autorNome,
-    id: r.autorId === "admin" ? 1 : r.autorId || 1,
-    size: 36
-  }), /*#__PURE__*/React.createElement("div", {
-    style: {
-      flex: 1
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: "flex",
-      justifyContent: "space-between",
-      alignItems: "flex-start",
-      flexWrap: "wrap",
-      gap: 6
-    }
-  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontWeight: 700,
-      fontSize: 15,
-      color: "var(--cinza-900)"
-    }
-  }, r.autorNome.split(" ").slice(0, 2).join(" ")), fixado && /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontSize: 11,
-      background: "var(--indigo-100)",
-      color: "var(--indigo-600)",
-      padding: "1px 8px",
-      borderRadius: 20,
-      fontWeight: 700,
-      marginLeft: 8
-    }
-  }, "📌 Fixado"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 11,
-      color: "var(--texto-fraco)",
-      marginTop: 2
-    }
-  }, r.autorCargo, " · ", fmtDateHora(r.criadoEm), r.editadoEm ? " (editado)" : "")), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: "flex",
-      gap: 6
-    }
-  }, isOwn && editId !== r.id && /*#__PURE__*/React.createElement("button", {
-    onClick: () => onEditar(r.id, r.texto),
-    style: {
-      background: "var(--cinza-50)",
-      border: "none",
-      borderRadius: 8,
-      padding: "5px 10px",
-      fontSize: 12,
-      color: "var(--cinza-500)",
-      cursor: "pointer",
-      fontWeight: 500
-    }
-  }, "✏️ Editar"), (isAdmin || isOwn) && /*#__PURE__*/React.createElement("button", {
-    onClick: () => onExcluir(r.id),
-    style: {
-      background: "var(--vermelho-100)",
-      border: "none",
-      borderRadius: 8,
-      padding: "5px 10px",
-      fontSize: 12,
-      color: "var(--vermelho-600)",
-      cursor: "pointer",
-      fontWeight: 500
-    }
-  }, "🗑️"))), editId === r.id ? /*#__PURE__*/React.createElement("div", {
-    style: {
-      marginTop: 10
-    }
-  }, /*#__PURE__*/React.createElement("textarea", {
-    value: editTexto,
-    onChange: e => setEditTexto(e.target.value),
-    style: {
-      width: "100%",
-      minHeight: 70,
-      borderRadius: 14,
-      border: "1px solid var(--indigo-500)",
-      padding: "10px 12px",
-      fontSize: 15,
-      resize: "vertical",
-      fontFamily: "inherit",
-      boxSizing: "border-box",
-      outline: "none"
-    }
-  }), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: "flex",
-      gap: 8,
-      marginTop: 8,
-      justifyContent: "flex-end"
-    }
-  }, /*#__PURE__*/React.createElement("button", {
-    onClick: onCancelarEdit,
-    style: {
-      padding: "7px 16px",
-      borderRadius: 8,
-      border: "1px solid var(--cinza-200)",
-      background: "var(--cor-branco)",
-      fontSize: 12,
-      cursor: "pointer",
-      color: "var(--cinza-500)",
-      fontWeight: 500
-    }
-  }, "Cancelar"), /*#__PURE__*/React.createElement("button", {
-    onClick: () => onSalvar(r.id),
-    style: {
-      padding: "7px 16px",
-      borderRadius: 8,
-      border: "none",
-      background: "var(--indigo-500)",
-      color: "var(--cor-branco)",
-      fontSize: 12,
-      cursor: "pointer",
-      fontWeight: 700
-    }
-  }, "Salvar"))) : /*#__PURE__*/React.createElement("p", {
-    style: {
-      fontSize: 15,
-      color: "var(--cinza-700)",
-      lineHeight: 1.6,
-      margin: "10px 0 12px",
-      whiteSpace: "pre-wrap"
-    }
-  }, r.texto), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: "flex",
-      gap: 6,
-      alignItems: "center",
-      flexWrap: "wrap"
-    }
-  }, EMOJIS.map(e => {
-    const ativo = minhasReacoes.includes(e);
-    return /*#__PURE__*/React.createElement("button", {
-      key: e,
-      onClick: () => onReagir(r.id, e),
-      style: {
-        padding: "3px 10px",
-        borderRadius: 20,
-        border: `1.5px solid ${ativo ? "var(--indigo-500)" : "var(--cinza-200)"}`,
-        background: ativo ? "var(--marca-50)" : "var(--cor-branco)",
-        cursor: "pointer",
-        fontSize: 13,
-        display: "flex",
-        alignItems: "center",
-        gap: 4,
-        transition: "all .12s"
-      }
-    }, e, counts[e] > 0 && /*#__PURE__*/React.createElement("span", {
-      style: {
-        fontSize: 11,
-        fontWeight: 700,
-        color: ativo ? "var(--indigo-500)" : "var(--cinza-500)"
-      }
-    }, counts[e]));
-  })))));
-});
-
 // ─── PORTAL DO FUNCIONÁRIO ────────────────────────────────────────────────────
 function PortalFuncionario({
   ocorrencias,
@@ -11894,7 +11448,7 @@ function useArvoreComercialData(sessaoPronta = true) {
         supa.from("superintendencias").select("*"),
         supa.from("diretorias").select("*"),
         supa.from("gerencias").select("*"),
-        supa.from("funcionarios_comercial").select("*")
+        selecionarTudo("funcionarios_comercial")
       ]);
       const erro = supRes.error || dirRes.error || gerRes.error || funcRes.error;
       if (erro) throw erro;
@@ -12086,7 +11640,7 @@ function useArvoreAdministrativaData(sessaoPronta = true) {
 
   async function buscar(ativoRef) {
     try {
-      const { data, error } = await supa.from("funcionarios_administrativo").select("*");
+      const { data, error } = await selecionarTudo("funcionarios_administrativo");
       if (error) throw error;
       if (ativoRef && !ativoRef.current) return;
       setEstado({
