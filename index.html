@@ -163,8 +163,6 @@ async function tokenSessao() {
   return t;
 }
 
-// URL da Edge Function que cria o usuário Auth automaticamente ao cadastrar funcionário
-const EDGE_CRIAR_USUARIO = `${SUPA_URL}/functions/v1/criar-usuario-funcionario`;
 // Cria em lote os usuários Auth de todos os funcionários comerciais que
 // ainda não têm auth_user_id (ver componente ArvoreHierarquia). Só a conta
 // de teste gre@portovale.com.br vê o botão que dispara isso.
@@ -179,8 +177,7 @@ const EDGE_CRIAR_USUARIOS_ADMINISTRATIVO_LOTE = `${SUPA_URL}/functions/v1/criar-
 // auto-revogação ao importar planilha (ver aplicarImportacaoHierarquia).
 const EDGE_GERENCIAR_ACESSO = `${SUPA_URL}/functions/v1/admin-gerenciar-acesso`;
 // Cria um único login (table-agnostic, dentro de uma allowlist) para uma
-// linha de funcionarios_comercial ou funcionarios_administrativo. Diferente
-// de EDGE_CRIAR_USUARIO (legado, só funcionarios) — usada pelos modais de
+// linha de funcionarios_comercial ou funcionarios_administrativo. Usada pelos modais de
 // perfil para o botão "Criar login" individual.
 const EDGE_CRIAR_USUARIO_INDIVIDUAL = `${SUPA_URL}/functions/v1/criar-usuario-individual`;
 
@@ -4144,19 +4141,11 @@ function ListaFuncionarios({
   // podem criar, editar ou excluir funcionários — só admin_geral e gerente
   // (dentro da própria equipe) podem.
   const somenteLeituraGestor = ["diretor", "superintendente"].includes(usuario?.nivel);
-  const [modalAdd, setModalAdd] = useState(false);
   const [confirmExcluir, setConfirmExcluir] = useState(null);
   const [confirmExcluirTodos, setConfirmExcluirTodos] = useState(false);
   const [textoConfirmTodos, setTextoConfirmTodos] = useState("");
   const [excluindoTodos, setExcluindoTodos] = useState(false);
-  const [novo, setNovo] = useState({
-    nome: "",
-    cargo: "",
-    setor: ""
-  });
-  const [err, setErr] = useState("");
   const [sucesso, setSucesso] = useState("");
-  const [salvando, setSalvando] = useState(false);
   // .filter(Boolean) é essencial aqui: se algum funcionário tiver cargo
   // null/undefined (comum em importações incompletas), o array mistura
   // string e null, e null.localeCompare() no .sort() abaixo lança
@@ -4241,85 +4230,6 @@ function ListaFuncionarios({
       return { ...d, gerencias: gerenciasMontadas, semGerencia, totalAtivos, totalInativos };
     });
   }, [usaVisaoArvore, usuario, diretoriasComercial, gerenciasComercial, lista, funcionarios]);
-  async function adicionar() {
-    if (!novo.nome.trim() || !novo.cargo.trim()) {
-      setErr("Preencha nome e cargo.");
-      return;
-    }
-    setSalvando(true);
-    setErr("");
-    const nextId = Math.max(...funcionarios.map(f => f.id)) + 1;
-    const pfxMap = {
-      "INTELIGÊNCIA COMERCIAL": "IC",
-      "BACKOFFICE GRE": "BG",
-      "POS CONTEMPLACAO": "PC",
-      "GRE": "COM"
-    };
-    const pfx = pfxMap[novo.setor] || "FUN";
-    const count = funcionarios.filter(f => f.setor === novo.setor).length + 1;
-    const mat = `${pfx}-${String(count).padStart(3, "0")}`;
-    const novoFunc = {
-      id: nextId,
-      nome: novo.nome.toUpperCase(),
-      matricula: mat,
-      setor: novo.setor,
-      cargo: novo.cargo.toUpperCase(),
-      ativo: true,
-      esquecimentos: 0,
-      atestados: 0,
-      faltas: 0,
-      banco_horas: 0,
-      erros_registro: 0,
-      abonos: 0,
-      integracoes: 0
-    };
-
-    // ── 1. Salva o funcionário na tabela do banco ──────────────────────────
-    const resultado = await setFuncionarios(prev => [...prev, novoFunc]);
-    if (resultado && resultado.ok === false) {
-      setSalvando(false);
-      setErr(`Falha ao salvar no banco: ${resultado.erro}`);
-      return;
-    }
-
-    // ── 2. Chama a Edge Function para criar o usuário Auth ─────────────────
-    let emailCriado = "";
-    let senhaCriada = "";
-    let avisoAuth = "";
-    try {
-      const token = await tokenSessao();
-      const res = await fetch(EDGE_CRIAR_USUARIO, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "apikey": SUPA_KEY,
-          "Authorization": `Bearer ${token}`,
-        },
-        body: JSON.stringify({ nome: novoFunc.nome, funcionario_id: novoFunc.id }),
-      });
-      const json = await res.json();
-      if (json.ok) {
-        emailCriado = json.email;
-        senhaCriada = json.senha_inicial;
-      } else {
-        avisoAuth = `⚠️ Funcionário salvo, mas o login não foi criado: ${json.erro}`;
-      }
-    } catch (e) {
-      avisoAuth = "⚠️ Funcionário salvo, mas não foi possível criar o login (Edge Function indisponível).";
-    }
-
-    setSalvando(false);
-    setModalAdd(false);
-    setNovo({ nome: "", cargo: "", setor: "" });
-    setErr("");
-
-    if (avisoAuth) {
-      setSucesso(avisoAuth);
-    } else {
-      setSucesso(`✅ ${novoFunc.nome} cadastrado! Login: ${emailCriado} · Senha: ${senhaCriada}`);
-    }
-    setTimeout(() => setSucesso(""), 9000);
-  }
   function confirmarExcluir() {
     if (!confirmExcluir) return;
     const nome = confirmExcluir.nome;
@@ -4735,146 +4645,7 @@ function ListaFuncionarios({
         color: "var(--cinza-700)", cursor: "pointer"
       }
     }, "Limpar filtros")
-  )), modalAdd && /*#__PURE__*/React.createElement(Modal, {
-    title: "Adicionar funcionário",
-    onClose: () => {
-      setModalAdd(false);
-      setErr("");
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: "flex",
-      flexDirection: "column",
-      gap: 16
-    }
-  }, [["Nome completo", "nome", "Ex.: JOAO SILVA"]].map(([lbl, field, ph]) => /*#__PURE__*/React.createElement("div", {
-    key: field
-  }, /*#__PURE__*/React.createElement("label", {
-    style: {
-      fontSize: 13,
-      fontWeight: 600,
-      color: "var(--cinza-700)",
-      display: "block",
-      marginBottom: 6
-    }
-  }, lbl), /*#__PURE__*/React.createElement("input", {
-    value: novo[field],
-    onChange: e => setNovo(p => ({
-      ...p,
-      [field]: e.target.value
-    })),
-    placeholder: ph,
-    style: {
-      width: "100%",
-      padding: "10px 14px",
-      borderRadius: 14,
-      border: "1px solid var(--cinza-200)",
-      fontSize: 13,
-      outline: "none",
-      boxSizing: "border-box",
-      background: "var(--cor-branco)"
-    }
-  }))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
-    style: {
-      fontSize: 13,
-      fontWeight: 600,
-      color: "var(--cinza-700)",
-      display: "block",
-      marginBottom: 6
-    }
-  }, "Cargo"), /*#__PURE__*/React.createElement("select", {
-    value: novo.cargo,
-    onChange: e => setNovo(p => ({
-      ...p,
-      cargo: e.target.value
-    })),
-    style: {
-      width: "100%",
-      padding: "10px 14px",
-      borderRadius: 14,
-      border: "1px solid var(--cinza-200)",
-      fontSize: 13,
-      background: "var(--cor-branco)",
-      boxSizing: "border-box",
-      cursor: "pointer"
-    }
-  }, /*#__PURE__*/React.createElement("option", {
-    value: ""
-  }, "Selecione um cargo…"), cargosDisponiveis.map(c => /*#__PURE__*/React.createElement("option", {
-    key: c,
-    value: c
-  }, c)))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
-    style: {
-      fontSize: 13,
-      fontWeight: 600,
-      color: "var(--cinza-700)",
-      display: "block",
-      marginBottom: 6
-    }
-  }, "Setor"), /*#__PURE__*/React.createElement("select", {
-    value: novo.setor,
-    onChange: e => setNovo(p => ({
-      ...p,
-      setor: e.target.value
-    })),
-    style: {
-      width: "100%",
-      padding: "10px 14px",
-      borderRadius: 14,
-      border: "1px solid var(--cinza-200)",
-      fontSize: 13,
-      background: "var(--cor-branco)",
-      boxSizing: "border-box"
-    }
-  }, /*#__PURE__*/React.createElement("option", { value: "" }, "Selecione um setor…"), setoresDisponiveis.map(s => /*#__PURE__*/React.createElement("option", {
-    key: s
-  }, s)))), err && /*#__PURE__*/React.createElement("div", {
-    style: {
-      background: "var(--vermelho-100)",
-      borderRadius: 14,
-      padding: "10px 14px",
-      fontSize: 13,
-      color: "var(--vermelho-600)"
-    }
-  }, err), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: "flex",
-      gap: 10,
-      justifyContent: "flex-end"
-    }
-  }, /*#__PURE__*/React.createElement("button", {
-    onClick: () => {
-      setModalAdd(false);
-      setErr("");
-    },
-    style: {
-      padding: "10px 20px",
-      borderRadius: 14,
-      border: "1px solid var(--cinza-200)",
-      background: "var(--cor-branco)",
-      fontSize: 13,
-      cursor: "pointer",
-      fontWeight: 600,
-      color: "var(--cinza-500)"
-    }
-  }, "Cancelar"), /*#__PURE__*/React.createElement("button", {
-    onClick: adicionar,
-    disabled: salvando,
-    style: {
-      padding: "10px 20px",
-      borderRadius: 14,
-      border: "none",
-      background: salvando ? "var(--cinza-300)" : "linear-gradient(135deg,var(--indigo-500),var(--roxo-500))",
-      color: "var(--cor-branco)",
-      fontSize: 13,
-      cursor: salvando ? "not-allowed" : "pointer",
-      fontWeight: 700,
-      opacity: salvando ? 0.8 : 1,
-      display: "flex",
-      alignItems: "center",
-      gap: 6
-    }
-  }, salvando ? "⏳ Salvando..." : "✅ Adicionar")))), confirmExcluir && /*#__PURE__*/React.createElement(Modal, {
+  )), confirmExcluir && /*#__PURE__*/React.createElement(Modal, {
     title: "⚠️ Excluir funcionário",
     onClose: () => setConfirmExcluir(null),
     maxWidth: 460
@@ -6508,8 +6279,7 @@ async function chamarGerenciarAcesso(acao, funcionario, origem, extra) {
 }
 
 // Cria um login individual para uma linha de uma tabela permitida
-// (funcionarios_comercial ou funcionarios_administrativo). Table-agnostic
-// de verdade — diferente de EDGE_CRIAR_USUARIO (legado, só funcionarios).
+// (funcionarios_comercial ou funcionarios_administrativo). Table-agnostic.
 async function chamarCriarUsuarioIndividual(tabela, id) {
   try {
     const { data: sessao } = await supa.auth.getSession();
