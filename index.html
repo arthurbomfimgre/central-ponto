@@ -9165,11 +9165,29 @@ const TITULO_BLOCO_SEMANA = {
   Verificado: "Verificados da semana",
   Rejeitado: "Rejeitados da semana"
 };
+// Abre o print do EasyMob numa nova aba. Só aceita imagem em data URL e monta a <img>
+// por DOM (sem document.write), para que valor adulterado nunca vire HTML/JS.
+function abrirPrintEasymob(easymob) {
+  if (typeof easymob !== "string" || !/^data:image\/(png|jpe?g|webp|gif);base64,[A-Za-z0-9+\/=]+$/i.test(easymob)) {
+    alert("Print inválido ou em formato não suportado.");
+    return;
+  }
+  const win = window.open("", "_blank");
+  if (!win) return;
+  const doc = win.document;
+  doc.title = "Print EasyMob";
+  doc.body.style.cssText = "margin:0;background:#111;display:flex;align-items:center;justify-content:center;min-height:100vh;";
+  const img = doc.createElement("img");
+  img.src = easymob;
+  img.style.cssText = "max-width:100%;max-height:100vh;";
+  doc.body.appendChild(img);
+}
 function BlocoPendenciasRecentes({
   itens,
   funcionarios,
   onAcao,
-  filtro
+  filtro,
+  easymobMap = {}
 }) {
   if (itens.length === 0) return null;
   const qtdCorrecao = filtro === "Pendente" ? itens.filter(o => o.status === "Pendente").length : 0;
@@ -9229,6 +9247,7 @@ function BlocoPendenciasRecentes({
     const urgente = o.status === "Pendente";
     const dias = diasDesde(o.data);
     const podeVerif = o.status === "Corrigido" || (o.status === "Pendente" && o.criadoPor === "funcionario");
+    const easymob = easymobMap[`${func.id}_${o.id}`];
     return /*#__PURE__*/React.createElement("div", {
       key: o.id,
       style: {
@@ -9283,7 +9302,30 @@ function BlocoPendenciasRecentes({
         display: "inline-block",
         marginTop: 3
       }
-    }, "👤 Aviso do colaborador")), /*#__PURE__*/React.createElement("div", {
+    }, "👤 Aviso do colaborador"), o.tipo === TIPO_EXIGE_EASYMOB && (easymob ? /*#__PURE__*/React.createElement("button", {
+      onClick: () => abrirPrintEasymob(easymob),
+      title: "Ver print enviado",
+      style: {
+        display: "block",
+        marginTop: 4,
+        background: "var(--verde-100)",
+        color: "var(--verde-700)",
+        border: "none",
+        borderRadius: 8,
+        padding: "3px 8px",
+        fontSize: 11,
+        fontWeight: 600,
+        cursor: "pointer"
+      }
+    }, "📱 Ver print") : /*#__PURE__*/React.createElement("span", {
+      style: {
+        display: "block",
+        marginTop: 4,
+        fontSize: 11,
+        color: o.easymobEnviado ? "var(--verde-700)" : "var(--amber-600)",
+        fontWeight: 600
+      }
+    }, o.easymobEnviado ? "✅ Print enviado" : "⚠️ Sem print"))), /*#__PURE__*/React.createElement("div", {
       style: {
         display: "flex",
         flexDirection: "column",
@@ -9617,23 +9659,7 @@ function PainelOcorrencias({
     /*#__PURE__*/React.createElement("td", { style: { padding: "10px 16px", fontSize: 12, color: "var(--cinza-500)" } }, func?.setor || "—"),
     /*#__PURE__*/React.createElement("td", { style: { padding: "10px 16px", fontSize: 12, fontWeight: 600, color: "var(--cinza-900)" } }, tipoIcon(o.tipo), " ", o.tipo,
       ehErroReg && (easymob ? /*#__PURE__*/React.createElement("button", {
-        onClick: () => {
-          // Só abre se for imagem em data URL; monta a <img> por DOM (sem document.write)
-          // para que um valor adulterado em `easymob` nunca vire HTML/JS executável.
-          if (typeof easymob !== "string" || !/^data:image\/(png|jpe?g|webp|gif);base64,[A-Za-z0-9+\/=]+$/i.test(easymob)) {
-            alert("Print inválido ou em formato não suportado.");
-            return;
-          }
-          const win = window.open("", "_blank");
-          if (!win) return;
-          const doc = win.document;
-          doc.title = "Print EasyMob";
-          doc.body.style.cssText = "margin:0;background:#111;display:flex;align-items:center;justify-content:center;min-height:100vh;";
-          const img = doc.createElement("img");
-          img.src = easymob;
-          img.style.cssText = "max-width:100%;max-height:100vh;";
-          doc.body.appendChild(img);
-        },
+        onClick: () => abrirPrintEasymob(easymob),
         style: { display: "block", marginTop: 4, background: "var(--verde-100)", color: "var(--verde-700)", border: "none", borderRadius: 8, padding: "3px 8px", fontSize: 11, fontWeight: 600, cursor: "pointer" }
       }, "📱 Ver print") : /*#__PURE__*/React.createElement("span", { style: { display: "block", marginTop: 4, fontSize: 11, color: o.easymobEnviado ? "var(--verde-700)" : "var(--amber-600)", fontWeight: 600 } }, o.easymobEnviado ? "✅ Print enviado" : "⚠️ Sem print"))),
     /*#__PURE__*/React.createElement("td", { style: { padding: "10px 16px" } }, /*#__PURE__*/React.createElement(Badge, { status: o.status })),
@@ -9711,6 +9737,7 @@ function PainelOcorrencias({
       filtro: filtroStatus,
       itens: pendenciasSemana,
       funcionarios: funcionarios,
+      easymobMap: easymobMap,
       onAcao: (o, acao) => setModal({ ...o, acao })
     }),
     tabela,
