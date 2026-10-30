@@ -524,6 +524,65 @@ salvarLS(key, val); // cache local imediato
   }
 }
 
+// Id inteiro e único dentro da sessão (milissegundos, crescente). Antes, `Date.now() + i` e
+// `Date.now() + random(1000)` colidiam em lotes (ex.: uma notificação por colaborador na importação
+// do DP): ids repetidos sobrescrevem a linha no banco e a notificação some sem aviso.
+let _ultimoIdGerado = 0;
+function gerarIdUnico() {
+  const t = Date.now();
+  _ultimoIdGerado = t > _ultimoIdGerado ? t : _ultimoIdGerado + 1;
+  return _ultimoIdGerado;
+}
+
+// Limita a lista de notificações SEM apagar as que ainda não foram lidas. O corte antigo
+// (`slice(0, 50)` sobre a lista inteira) removia do banco, para todo mundo, as notificações mais
+// antigas ainda não vistas pelos funcionários — por exemplo, importar pendências de mais de 50
+// colaboradores apagava as primeiras notificações do próprio lote. Agora só as já dispensadas são
+// descartadas (mantendo as 50 mais recentes), e há um teto de segurança para o total.
+function limitarNotifs(lista) {
+  const MAX_DISPENSADAS = 50, MAX_TOTAL = 500;
+  const porRecencia = [...lista].sort((a, b) => String(b?.ts || "").localeCompare(String(a?.ts || "")));
+  let dispensadas = 0;
+  return porRecencia.filter(n => !n?.dismissed || ++dispensadas <= MAX_DISPENSADAS).slice(0, MAX_TOTAL);
+}
+
+// Apaga do banco os prints (tabela easymob, chave "<funcionario_id>_<ocorrencia_id>") de ocorrências
+// que acabaram de ser removidas ou deixaram de exigir print. Sem isso o print ficava órfão no banco
+// (a gravação do mapa só faz upsert) e o admin continuava baixando a imagem. Melhor esforço: nunca
+// lança erro nem bloqueia a tela; se a tabela não tiver política de DELETE, o banco apaga 0 linhas.
+async function apagarPrintsDeOcorrencias(ocs) {
+  const chaves = [...new Set((ocs || []).filter(o => o && o.funcionario_id != null && o.id != null).map(o => `${o.funcionario_id}_${o.id}`))];
+  if (!chaves.length) return { ok: true, apagados: 0 };
+  let apagados = 0;
+  try {
+    for (let i = 0; i < chaves.length; i += 40) {
+      const { data, error } = await supa.from("easymob").delete().in("chave", chaves.slice(i, i + 40)).select("chave");
+      if (error) {
+        console.warn("[EASYMOB] não foi possível apagar prints órfãos:", error.message);
+        return { ok: false, erro: error.message, apagados };
+      }
+      apagados += (data || []).length;
+    }
+    return { ok: true, apagados };
+  } catch (e) {
+    console.warn("[EASYMOB] falha ao apagar prints órfãos:", e);
+    return { ok: false, erro: e?.message || "falha de conexão", apagados };
+  }
+}
+
+// Exclui ocorrências e, SÓ depois de o banco confirmar, apaga os prints delas. Ponto único para
+// qualquer tela que exclua ocorrências: quem usar isto não esquece de limpar os prints órfãos nem
+// de checar o resultado da gravação. Devolve { ok: true } ou { ok: false, erro }.
+async function excluirOcorrenciasEPrints(setOcorrencias, ocs) {
+  const lista = (ocs || []).filter(Boolean);
+  if (!lista.length) return { ok: true };
+  const ids = new Set(lista.map(o => o.id));
+  const resultado = await setOcorrencias(prev => prev.filter(o => !ids.has(o.id)));
+  if (resultado && resultado.ok === false) return resultado;
+  apagarPrintsDeOcorrencias(lista);
+  return { ok: true };
+}
+
 // Hook principal — carrega do Supabase, mantém sincronia via polling
 //
 // `sessaoPronta` (booleano) indica se a verificação inicial de sessão
@@ -2952,8 +3011,10 @@ function ModalCriarPendencia({
   const [data, setData] = useState(hoje());
   const [obs, setObs] = useState("");
   const [err, setErr] = useState("");
+  const [enviando, setEnviando] = useState(false);
   const funcAtivos = funcionarios.filter(f => f.ativo).sort((a, b) => a.nome.localeCompare(b.nome));
-  function submeter() {
+  async function submeter() {
+    if (enviando) return; // evita criar a pendência em duplicidade com cliques repetidos
     if (!funcId) {
       setErr("Selecione um colaborador.");
       return;
@@ -2970,12 +3031,19 @@ function ModalCriarPendencia({
     // usa inteiro). `funcId` não pode passar por Number() — administrativo
     // usa id UUID (string), só comercial é numérico.
     const funcSelecionado = funcPreSelecionado || funcAtivos.find(f => String(f.id) === String(funcId));
-    onCriar({
+    setEnviando(true);
+    setErr("");
+    const resultado = await onCriar({
       funcionario_id: funcSelecionado?.id,
       origemFuncionario: funcSelecionado?.origemComercial ? "comercial" : "administrativo",
       data,
       obs
     });
+    setEnviando(false);
+    if (resultado && resultado.ok === false) {
+      setErr(`A pendência não foi salva: ${resultado.erro || "falha ao salvar"}`);
+      return;
+    }
     onClose();
   }
   return /*#__PURE__*/React.createElement(Modal, {
@@ -3133,7 +3201,9 @@ function ModalCriarPendencia({
     }
   }, "Cancelar"), /*#__PURE__*/React.createElement("button", {
     onClick: submeter,
+    disabled: enviando,
     style: {
+      opacity: enviando ? 0.6 : 1,
       padding: "11px 22px",
       borderRadius: 14,
       border: "none",
@@ -3146,7 +3216,7 @@ function ModalCriarPendencia({
       alignItems: "center",
       gap: 8
     }
-  }, /*#__PURE__*/React.createElement("span", null, "➕"), " Criar e enviar ao colaborador"))));
+  }, /*#__PURE__*/React.createElement("span", null, "➕"), enviando ? " Enviando…" : " Criar e enviar ao colaborador"))));
 }
 
 // Tipo livre usado quando o colaborador escolhe "Outros" no aviso ao gestor
@@ -3571,7 +3641,7 @@ function Dashboard({
   const alerta = funcionarios.filter(f => contagens[f.id].esquecimentos === 2).length;
   const limite = funcionarios.filter(f => contagens[f.id].esquecimentos === 3).length;
   const excedido = funcionarios.filter(f => contagens[f.id].esquecimentos >= 4).length;
-  function criarPendencia({
+  async function criarPendencia({
     funcionario_id,
     origemFuncionario,
     data,
@@ -3601,7 +3671,8 @@ function Dashboard({
       novo: false,
       novoParaFunc: true
     };
-    setOcorrencias(prev => [...prev, oc]);
+    const resultado = await setOcorrencias(prev => [...prev, oc]);
+    if (resultado && resultado.ok === false) return resultado; // o modal mostra o erro e continua aberto
     if (func) addNotif({
       id: Date.now(),
       icon: "📋",
@@ -3610,6 +3681,7 @@ function Dashboard({
       ts: agora,
       paraFunc: func.id
     });
+    return { ok: true };
   }
   return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     style: {
@@ -4061,9 +4133,7 @@ function ListaFuncionarios({
   setView,
   setFuncSelecionado,
   funcionarios,
-  setFuncionarios,
   ocorrencias,
-  setOcorrencias,
   mesFiltro,
   setMesFiltro,
   usuario,
@@ -4107,11 +4177,6 @@ function ListaFuncionarios({
   // Diretor e superintendente têm acesso de visão à hierarquia, mas não
   // podem criar, editar ou excluir funcionários — só admin_geral e gerente
   // (dentro da própria equipe) podem.
-  const somenteLeituraGestor = ["diretor", "superintendente"].includes(usuario?.nivel);
-  const [confirmExcluir, setConfirmExcluir] = useState(null);
-  const [confirmExcluirTodos, setConfirmExcluirTodos] = useState(false);
-  const [textoConfirmTodos, setTextoConfirmTodos] = useState("");
-  const [excluindoTodos, setExcluindoTodos] = useState(false);
   const [sucesso, setSucesso] = useState("");
   // .filter(Boolean) é essencial aqui: se algum funcionário tiver cargo
   // null/undefined (comum em importações incompletas), o array mistura
@@ -4197,33 +4262,6 @@ function ListaFuncionarios({
       return { ...d, gerencias: gerenciasMontadas, semGerencia, totalAtivos, totalInativos };
     });
   }, [usaVisaoArvore, usuario, diretoriasComercial, gerenciasComercial, lista, funcionarios]);
-  function confirmarExcluir() {
-    if (!confirmExcluir) return;
-    const nome = confirmExcluir.nome;
-    setOcorrencias(prev => prev.filter(o => o.funcionario_id !== confirmExcluir.id));
-    setFuncionarios(prev => prev.filter(f => f.id !== confirmExcluir.id));
-    setSucesso(`${nome} foi removido do sistema.`);
-    setTimeout(() => setSucesso(""), 3500);
-    setConfirmExcluir(null);
-  }
-  // Exclusão em massa — restrita à conta de teste (ver botão abaixo, que só
-  // aparece quando contaTeste é true). Remove todos os funcionários e todas
-  // as ocorrências vinculadas a eles, de uma vez. Exige que o admin digite
-  // "EXCLUIR" no campo de confirmação antes de habilitar o botão final,
-  // como proteção extra contra clique acidental numa ação irreversível
-  // desse tamanho.
-  async function excluirTodosFuncionarios() {
-    if (textoConfirmTodos.trim().toUpperCase() !== "EXCLUIR") return;
-    setExcluindoTodos(true);
-    const totalFuncs = funcionarios.length;
-    await setOcorrencias([]);
-    await setFuncionarios([]);
-    setExcluindoTodos(false);
-    setConfirmExcluirTodos(false);
-    setTextoConfirmTodos("");
-    setSucesso(`${totalFuncs} funcionário(s) e todas as ocorrências foram removidos.`);
-    setTimeout(() => setSucesso(""), 4500);
-  }
   return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     style: {
       display: "flex",
@@ -4377,9 +4415,7 @@ function ListaFuncionarios({
           onToggleGerencia: toggleAberto,
           contagens,
           setFuncSelecionado,
-          setView,
-          somenteLeituraGestor,
-          setConfirmExcluir
+          setView
         })),
         diretosSuperGestor.length > 0 && /*#__PURE__*/React.createElement("div", {
           key: "diretos-super",
@@ -4387,7 +4423,7 @@ function ListaFuncionarios({
         },
           /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, fontWeight: 600, color: "var(--cinza-500)", marginBottom: 6 } }, "Sem diretoria — reporta direto à superintendência"),
           diretosSuperGestor.map(f => /*#__PURE__*/React.createElement(LinhaFuncionarioArvore, {
-            key: f.id, f, contagens, setFuncSelecionado, setView, somenteLeituraGestor, setConfirmExcluir
+            key: f.id, f, contagens, setFuncSelecionado, setView
           }))
         ))
   ) : /*#__PURE__*/React.createElement("div", {
@@ -4544,19 +4580,7 @@ function ListaFuncionarios({
         fontWeight: 600,
         cursor: "pointer"
       }
-    }, "Ver perfil"), !somenteLeituraGestor && /*#__PURE__*/React.createElement("button", {
-      onClick: () => setConfirmExcluir(f),
-      style: {
-        background: "var(--vermelho-100)",
-        color: "var(--vermelho-600)",
-        border: "none",
-        borderRadius: 8,
-        padding: "6px 12px",
-        fontSize: 12,
-        fontWeight: 600,
-        cursor: "pointer"
-      }
-    }, "Excluir"))));
+    }, "Ver perfil"))));
   }))), !usaVisaoArvore && lista.length > 0 && /*#__PURE__*/React.createElement("div", {
     style: {
       padding: "14px 16px",
@@ -4612,162 +4636,7 @@ function ListaFuncionarios({
         color: "var(--cinza-700)", cursor: "pointer"
       }
     }, "Limpar filtros")
-  )), confirmExcluir && /*#__PURE__*/React.createElement(Modal, {
-    title: "⚠️ Excluir funcionário",
-    onClose: () => setConfirmExcluir(null),
-    maxWidth: 460
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: "flex",
-      flexDirection: "column",
-      gap: 18
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: "flex",
-      alignItems: "center",
-      gap: 14
-    }
-  }, /*#__PURE__*/React.createElement(Avatar, {
-    nome: confirmExcluir.nome,
-    id: confirmExcluir.id,
-    size: 52
-  }), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontWeight: 700,
-      fontSize: 15,
-      color: "var(--cinza-900)"
-    }
-  }, confirmExcluir.nome), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 13,
-      color: "var(--cinza-500)"
-    }
-  }, confirmExcluir.cargo, " · ", confirmExcluir.matricula), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 12,
-      color: "var(--texto-fraco)",
-      marginTop: 4
-    }
-  }, confirmExcluir.setor))), /*#__PURE__*/React.createElement("div", {
-    style: {
-      background: "var(--vermelho-100)",
-      border: "1px solid var(--vermelho-300)",
-      borderRadius: 14,
-      padding: "14px 16px",
-      fontSize: 13,
-      color: "var(--vermelho-800)",
-      lineHeight: 1.6
-    }
-  }, /*#__PURE__*/React.createElement("strong", null, "Esta ação é permanente e não pode ser desfeita."), /*#__PURE__*/React.createElement("br", null), "O funcionário e todas as suas ", ocorrencias.filter(o => o.funcionario_id === confirmExcluir.id).length, " ocorrências serão removidas do sistema."), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: "flex",
-      gap: 10,
-      justifyContent: "flex-end"
-    }
-  }, /*#__PURE__*/React.createElement("button", {
-    onClick: () => setConfirmExcluir(null),
-    style: {
-      padding: "10px 20px",
-      borderRadius: 14,
-      border: "1px solid var(--cinza-200)",
-      background: "var(--cor-branco)",
-      fontSize: 13,
-      cursor: "pointer",
-      fontWeight: 600,
-      color: "var(--cinza-500)"
-    }
-  }, "Cancelar"), /*#__PURE__*/React.createElement("button", {
-    onClick: confirmarExcluir,
-    style: {
-      padding: "10px 20px",
-      borderRadius: 14,
-      border: "none",
-      background: "var(--vermelho-600)",
-      color: "var(--cor-branco)",
-      fontSize: 13,
-      cursor: "pointer",
-      fontWeight: 700
-    }
-  }, "Sim, excluir permanentemente")))), confirmExcluirTodos && /*#__PURE__*/React.createElement(Modal, {
-    title: "⚠️ Excluir todos os funcionários",
-    onClose: () => {
-      setConfirmExcluirTodos(false);
-      setTextoConfirmTodos("");
-    },
-    maxWidth: 460
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: "flex",
-      flexDirection: "column",
-      gap: 18
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      background: "var(--vermelho-100)",
-      border: "1px solid var(--vermelho-300)",
-      borderRadius: 14,
-      padding: "14px 16px",
-      fontSize: 13,
-      color: "var(--vermelho-800)",
-      lineHeight: 1.6
-    }
-  }, /*#__PURE__*/React.createElement("strong", null, "Esta ação é permanente e não pode ser desfeita."), /*#__PURE__*/React.createElement("br", null), "Todos os ", funcionarios.length, " funcionário(s) e todas as ", ocorrencias.length, " ocorrências vinculadas a eles serão removidos do sistema."), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
-    style: {
-      display: "block",
-      fontSize: 13,
-      fontWeight: 600,
-      color: "var(--cinza-700)",
-      marginBottom: 8
-    }
-  }, "Digite ", /*#__PURE__*/React.createElement("strong", null, "EXCLUIR"), " para confirmar:"), /*#__PURE__*/React.createElement("input", {
-    type: "text",
-    value: textoConfirmTodos,
-    onChange: e => setTextoConfirmTodos(e.target.value),
-    placeholder: "EXCLUIR",
-    autoFocus: true,
-    style: {
-      width: "100%",
-      padding: "10px 14px",
-      borderRadius: 14,
-      border: "1px solid var(--cinza-200)",
-      fontSize: 15
-    }
-  })), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: "flex",
-      gap: 10,
-      justifyContent: "flex-end"
-    }
-  }, /*#__PURE__*/React.createElement("button", {
-    onClick: () => {
-      setConfirmExcluirTodos(false);
-      setTextoConfirmTodos("");
-    },
-    style: {
-      padding: "10px 20px",
-      borderRadius: 14,
-      border: "1px solid var(--cinza-200)",
-      background: "var(--cor-branco)",
-      fontSize: 13,
-      cursor: "pointer",
-      fontWeight: 600,
-      color: "var(--cinza-500)"
-    }
-  }, "Cancelar"), /*#__PURE__*/React.createElement("button", {
-    onClick: excluirTodosFuncionarios,
-    disabled: textoConfirmTodos.trim().toUpperCase() !== "EXCLUIR" || excluindoTodos,
-    style: {
-      padding: "10px 20px",
-      borderRadius: 14,
-      border: "none",
-      background: textoConfirmTodos.trim().toUpperCase() === "EXCLUIR" ? "var(--vermelho-600)" : "var(--cinza-300)",
-      color: "var(--cor-branco)",
-      fontSize: 13,
-      cursor: textoConfirmTodos.trim().toUpperCase() === "EXCLUIR" && !excluindoTodos ? "pointer" : "not-allowed",
-      fontWeight: 700
-    }
-  }, excluindoTodos ? "Excluindo..." : "Excluir todos permanentemente")))));
+  )));
 }
 
 // ─── IMPORTAR EXCEL (exclusivo da conta de teste) ────────────────────────────
@@ -5029,7 +4898,7 @@ function ModalImportarPontoDP({ funcionarios, ocorrencias, setOcorrencias, addNo
       prontasFinais.push({ func, dataISO: amb.dataISO, tipoPendenciaDP: amb.tipoPendenciaDP, marcador });
     });
     const novas = prontasFinais.map((item, i) => ({
-      id: Date.now() + i,
+      id: gerarIdUnico(),
       funcionario_id: item.func.id,
       origemFuncionario: item.func.origemComercial ? "comercial" : "administrativo",
       tipo: TIPO_PENDENTE_ESPECIFICACAO,
@@ -5069,7 +4938,7 @@ function ModalImportarPontoDP({ funcionarios, ocorrencias, setOcorrencias, addNo
         ? `Você recebeu uma nova pendência do dia (${fmtDate(ocsDoFunc[0].data)}). Especifique o motivo no card.`
         : `Você recebeu ${qtd} novas pendências do dia. Especifique o motivo de cada uma no card.`;
       addNotif({
-        id: Date.now() + Math.floor(Math.random() * 1000), // A9: inteiro (id fracionário falha em coluna bigint)
+        id: gerarIdUnico(),
         icon: "📋",
         title: qtd === 1 ? "Nova pendência" : "Novas pendências",
         body,
@@ -8284,6 +8153,7 @@ function PerfilFuncionario({
   // EasyMob do Supabase, mesmo com o dado já gravado no banco.
   const [easymobMap, setEasymobMap] = useSharedState(`${SK_EASYMOB}_map`, {}, sessaoPronta);
   const [sucesso, setSucesso] = useState("");
+  const [erroAcao, setErroAcao] = useState("");
   const [confirmExcluirOc, setConfirmExcluirOc] = useState(null);
   const [editandoOc, setEditandoOc] = useState(null);
   const [salvandoOc, setSalvandoOc] = useState(false);
@@ -8292,6 +8162,7 @@ function PerfilFuncionario({
   const [editando, setEditando] = useState(null);
   const [salvandoEdicao, setSalvandoEdicao] = useState(false);
   const [errEdicao, setErrEdicao] = useState("");
+  const [confirmAcessoPerfil, setConfirmAcessoPerfil] = useState(null); // "revogar" | "reativar" | null
   const cargosDisponiveis = useMemo(() => [...new Set(funcionarios.map(f => f.cargo).filter(Boolean))].sort((a, b) => a.localeCompare(b, "pt-BR", { sensitivity: "base" })), [funcionarios]);
   const setoresDisponiveis = useMemo(() => [...new Set(funcionarios.map(f => f.setor).filter(Boolean))].sort((a, b) => a.localeCompare(b, "pt-BR", { sensitivity: "base" })), [funcionarios]);
 
@@ -8315,23 +8186,115 @@ function PerfilFuncionario({
     setModalEditar(true);
   }
 
-  async function salvarEdicao() {
+  // Salva o cadastro e mantém o login (Auth) coerente com ele:
+  //  - e-mail alterado + pessoa com login → troca primeiro no Auth (atualizar_email);
+  //  - Ativo → Inativo (ou o inverso) + pessoa com login → revoga/reativa o acesso,
+  //    com confirmação explícita antes (mesmo padrão do perfil comercial).
+  // Se o cadastro não gravar depois do Auth ter mudado, o Auth é devolvido ao estado anterior.
+  async function salvarEdicao(jaConfirmado = false) {
+    if (salvandoEdicao) return;
     if (!editando.nome.trim() || !editando.cargo.trim() || !editando.matricula.trim()) {
       setErrEdicao("Nome, cargo e matrícula são obrigatórios.");
       return;
     }
+    const norm = v => String(v ?? "").trim().toLowerCase();
+    const emailNovo = norm(editando.email);
+    const emailAntes = norm(func.email);
+    const matriculaNova = String(editando.matricula).trim();
+    const temLogin = !!func.auth_user_id;
+    const emailMudou = emailNovo !== emailAntes;
+    const ativoAntes = !!func.ativo;
+    const ativoDepois = !!editando.ativo;
+    if (funcionarios.some(f => f.id !== func.id && String(f.matricula ?? "").trim() === matriculaNova)) {
+      setErrEdicao(`A matrícula ${matriculaNova} já pertence a outro funcionário.`);
+      return;
+    }
+    if (emailMudou && temLogin) {
+      if (!EMAIL_VALIDO_REGEX.test(emailNovo)) {
+        setErrEdicao("Informe um e-mail válido: esta pessoa já tem login e o e-mail é o que ela usa para entrar.");
+        return;
+      }
+      if (funcionarios.some(f => f.id !== func.id && norm(f.email) === emailNovo)) {
+        setErrEdicao("Este e-mail já está em uso por outro funcionário.");
+        return;
+      }
+    }
+    // O perfil de administrador do sistema é reconhecido pelo e-mail (ADMIN_EMAILS_FIXO):
+    // trocar o e-mail ou inativar/bloquear essa pessoa por aqui tiraria o acesso de admin.
+    if (ehAdminFuncionario(func) && (emailMudou || (ativoAntes && !ativoDepois))) {
+      setErrEdicao("Administradores do sistema não podem ter e-mail alterado nem ser inativados por esta tela.");
+      return;
+    }
+    const vaiRevogar = temLogin && ativoAntes && !ativoDepois && !func.acesso_revogado;
+    const vaiReativar = temLogin && !ativoAntes && ativoDepois && !!func.acesso_revogado;
+    if (!jaConfirmado && (vaiRevogar || vaiReativar)) {
+      setConfirmAcessoPerfil(vaiRevogar ? "revogar" : "reativar");
+      return;
+    }
+    setConfirmAcessoPerfil(null);
     setSalvandoEdicao(true);
     setErrEdicao("");
+
+    const ref = { id: func.id, auth_user_id: func.auth_user_id, nome: func.nome, matricula: func.matricula };
+    let emailAuthTrocado = false;
+    let acaoAcesso = null;
+    async function desfazerAuth() {
+      let ok = true;
+      if (acaoAcesso) {
+        const r = await chamarGerenciarAcesso(acaoAcesso === "revogar_acesso" ? "reativar_acesso" : "revogar_acesso", ref);
+        if (!r.ok) ok = false;
+      }
+      if (emailAuthTrocado && emailAntes) {
+        const r = await chamarGerenciarAcesso("atualizar_email", ref, "manual", { novo_email: emailAntes, email_anterior: emailNovo });
+        if (!r.ok) ok = false;
+      }
+      return ok;
+    }
+    if (emailMudou && temLogin) {
+      const r = await chamarGerenciarAcesso("atualizar_email", ref, "manual", { novo_email: emailNovo, email_anterior: emailAntes });
+      if (!r.ok) {
+        setSalvandoEdicao(false);
+        setErrEdicao(`Não foi possível trocar o e-mail do login: ${r.erro} Nada foi alterado.`);
+        return;
+      }
+      emailAuthTrocado = true;
+    }
+    if (vaiRevogar || vaiReativar) {
+      const acao = vaiRevogar ? "revogar_acesso" : "reativar_acesso";
+      const r = await chamarGerenciarAcesso(acao, ref);
+      if (!r.ok) {
+        await desfazerAuth();
+        setSalvandoEdicao(false);
+        setErrEdicao(`Não foi possível ${vaiRevogar ? "revogar" : "reativar"} o acesso: ${r.erro} Nada foi alterado.`);
+        return;
+      }
+      acaoAcesso = acao;
+    }
     const resultado = await setFuncionarios(prev =>
-      prev.map(f => f.id === func.id ? { ...f, ...editando, nome: editando.nome.toUpperCase(), cargo: editando.cargo.toUpperCase() } : f)
+      prev.map(f => f.id === func.id ? {
+        ...f,
+        ...editando,
+        nome: editando.nome.toUpperCase(),
+        cargo: editando.cargo.toUpperCase(),
+        matricula: matriculaNova,
+        email: emailNovo || null,
+        // Grava junto o novo estado do acesso: o salvamento regrava a linha inteira e,
+        // sem isso, devolveria ao banco o valor antigo de acesso_revogado.
+        ...(acaoAcesso ? { acesso_revogado: acaoAcesso === "revogar_acesso" } : {})
+      } : f)
     );
     setSalvandoEdicao(false);
     if (resultado && resultado.ok === false) {
-      setErrEdicao(`Falha ao salvar: ${resultado.erro}`);
+      const restaurou = await desfazerAuth();
+      setErrEdicao(`Falha ao salvar: ${resultado.erro}` + (emailAuthTrocado || acaoAcesso
+        ? (restaurou ? " O login foi mantido como estava." : " Atenção: não foi possível devolver o login ao estado anterior — confira o acesso desta pessoa no Painel de Acessos.")
+        : ""));
       return;
     }
     setModalEditar(false);
-    setSucesso("Perfil atualizado com sucesso!");
+    setSucesso(acaoAcesso === "revogar_acesso" ? "Perfil atualizado e acesso revogado — o login foi bloqueado."
+      : acaoAcesso === "reativar_acesso" ? "Perfil atualizado e acesso reativado — o login voltou a funcionar."
+      : "Perfil atualizado com sucesso!");
     setTimeout(() => setSucesso(""), 3500);
   }
   const ocsFunc = ocorrencias.filter(o => o.funcionario_id === func.id);
@@ -8339,9 +8302,15 @@ function PerfilFuncionario({
   const contagem = contarOcorrencias(ocorrencias, func);
   const al = getAlert(contagem.esquecimentos);
   const total = contagem.total;
-  function excluirOcorrencia(oc) {
-    setOcorrencias(prev => prev.filter(o => o.id !== oc.id));
+  async function excluirOcorrencia(oc) {
+    setErroAcao("");
+    const resultado = await excluirOcorrenciasEPrints(setOcorrencias, [oc]);
     setConfirmExcluirOc(null);
+    if (resultado && resultado.ok === false) {
+      setErroAcao(`Não foi possível excluir a ocorrência: ${resultado.erro}`);
+      setTimeout(() => setErroAcao(""), 6000);
+      return;
+    }
     setSucesso("Ocorrência excluída com sucesso.");
     setTimeout(() => setSucesso(""), 3000);
   }
@@ -8386,7 +8355,7 @@ function PerfilFuncionario({
     setSucesso("Pendência corrigida/atualizada com sucesso!");
     setTimeout(() => setSucesso(""), 3500);
   }
-  function criarPendencia({
+  async function criarPendencia({
     funcionario_id,
     origemFuncionario,
     data,
@@ -8399,6 +8368,12 @@ function PerfilFuncionario({
     // (undefined?.origemComercial é falsy), gravando origem errada mesmo
     // quando o funcionário escolhido era do comercial.
     const func = funcionarios.find(f => f.id === funcionario_id);
+    if (!func) {
+      setErroAcao("Funcionário não encontrado para criar a pendência.");
+      setTimeout(() => setErroAcao(""), 6000);
+      return;
+    }
+    setErroAcao("");
     const oc = {
       id: Date.now(),
       funcionario_id,
@@ -8417,7 +8392,8 @@ function PerfilFuncionario({
       novo: false,
       novoParaFunc: true
     };
-    setOcorrencias(prev => [...prev, oc]);
+    const resultadoOc = await setOcorrencias(prev => [...prev, oc]);
+    if (resultadoOc && resultadoOc.ok === false) return resultadoOc; // o modal mostra o erro e continua aberto
     addNotif({
       id: Date.now(),
       icon: "📋",
@@ -8463,7 +8439,19 @@ function PerfilFuncionario({
       color: "var(--verde-700)",
       fontWeight: 600
     }
-  }, "✅ ", sucesso), /*#__PURE__*/React.createElement("div", {
+  }, "✅ ", sucesso), erroAcao && /*#__PURE__*/React.createElement("div", {
+    role: "alert",
+    style: {
+      background: "var(--vermelho-100)",
+      border: "1px solid var(--vermelho-300)",
+      borderRadius: 14,
+      padding: "12px 16px",
+      marginBottom: 16,
+      fontSize: 13,
+      color: "var(--vermelho-600)",
+      fontWeight: 600
+    }
+  }, "⚠️ ", erroAcao), /*#__PURE__*/React.createElement("div", {
     style: {
       background: "var(--cor-branco)",
       border: "1px solid var(--cinza-100)",
@@ -8544,7 +8532,7 @@ function PerfilFuncionario({
       alignItems: "center",
       gap: 6
     }
-  }, "➕ Pendência do dia"), !somenteLeituraPerfil && /*#__PURE__*/React.createElement("button", {
+  }, "➕ Pendência do dia"), !somenteLeituraPerfil && !func.origemComercial && /*#__PURE__*/React.createElement("button", {
     onClick: abrirEditar,
     style: {
       padding: "10px 18px",
@@ -8806,7 +8794,7 @@ function PerfilFuncionario({
       color: "var(--cinza-500)"
     }
   }, /*#__PURE__*/React.createElement("strong", null, func.nome), " — ", modalEasyMob.oc.tipo, " · ", fmtDate(modalEasyMob.oc.data)), /*#__PURE__*/React.createElement("img", {
-    src: modalEasyMob.img,
+    src: printEasymobValido(modalEasyMob.img) ? modalEasyMob.img : "",
     alt: "EasyMob",
     style: {
       width: "100%",
@@ -8903,7 +8891,26 @@ function PerfilFuncionario({
       cursor: "pointer",
       fontWeight: 700
     }
-  }, "Sim, excluir permanentemente")))), editandoOc && /*#__PURE__*/React.createElement(Modal, {
+  }, "Sim, excluir permanentemente")))), confirmAcessoPerfil && /*#__PURE__*/React.createElement(Modal, {
+    title: confirmAcessoPerfil === "revogar" ? "🔒 Inativar e revogar acesso" : "🔓 Reativar e liberar acesso",
+    onClose: () => setConfirmAcessoPerfil(null),
+    maxWidth: 460
+  }, /*#__PURE__*/React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 18 } },
+    /*#__PURE__*/React.createElement("div", {
+      style: { background: "var(--amber-100, var(--cinza-50))", border: "1px solid var(--cinza-200)", borderRadius: 14, padding: "14px 16px", fontSize: 13, color: "var(--cinza-700)", lineHeight: 1.6 }
+    }, /*#__PURE__*/React.createElement("strong", null, func.nome), /*#__PURE__*/React.createElement("br", null),
+      confirmAcessoPerfil === "revogar"
+        ? "Ao salvar, o login desta pessoa será bloqueado e ela deixará de conseguir entrar no sistema."
+        : "Ao salvar, o login desta pessoa será liberado e ela voltará a conseguir entrar no sistema."),
+    /*#__PURE__*/React.createElement("div", { style: { display: "flex", gap: 10, justifyContent: "flex-end" } },
+      /*#__PURE__*/React.createElement("button", {
+        onClick: () => setConfirmAcessoPerfil(null),
+        style: { padding: "10px 20px", borderRadius: 14, border: "1px solid var(--cinza-200)", background: "var(--cor-branco)", fontSize: 13, cursor: "pointer", fontWeight: 600, color: "var(--cinza-500)" }
+      }, "Voltar"),
+      /*#__PURE__*/React.createElement("button", {
+        onClick: () => salvarEdicao(true),
+        style: { padding: "10px 20px", borderRadius: 14, border: "none", background: "linear-gradient(135deg,var(--indigo-500),var(--roxo-500))", color: "var(--cor-branco)", fontSize: 13, cursor: "pointer", fontWeight: 700 }
+      }, confirmAcessoPerfil === "revogar" ? "Salvar e revogar acesso" : "Salvar e reativar acesso")))), editandoOc && /*#__PURE__*/React.createElement(Modal, {
     title: "✏️ Corrigir pendência",
     onClose: () => { setEditandoOc(null); setErroEditOc(""); },
     maxWidth: 480
@@ -9120,7 +9127,7 @@ function PerfilFuncionario({
       style: { padding: "10px 20px", borderRadius: 10, border: "1px solid var(--cinza-200)", background: "var(--cor-branco)", fontSize: 13, cursor: "pointer", fontWeight: 600, color: "var(--cinza-500)" }
     }, "Cancelar"),
     /*#__PURE__*/React.createElement("button", {
-      onClick: salvarEdicao,
+      onClick: () => salvarEdicao(),
       disabled: salvandoEdicao,
       style: {
         padding: "10px 20px", borderRadius: 12, border: "none",
@@ -9472,18 +9479,34 @@ function PainelOcorrencias({
     } : o)), 2000);
   }, [ocorrencias]);
 
-  function verificar(id) {
+  // Avisa (e devolve true) quando o banco recusou a gravação: antes a tela dava a ação por feita,
+  // fechava o modal e ainda notificava o funcionário mesmo sem nada ter sido salvo.
+  function avisarFalhaGravacao(resultado, titulo) {
+    if (resultado && resultado.ok === false) {
+      addNotif({
+        id: Date.now(),
+        icon: "⚠️",
+        title: titulo,
+        body: resultado.erro || "Não foi possível salvar no servidor. Tente novamente.",
+        ts: agoraISO()
+      });
+      return true;
+    }
+    return false;
+  }
+  async function verificar(id) {
     const agora = agoraISO();
     const oc = ocorrencias.find(o => o.id === id);
     if (!oc) return;
     const func = resolverFuncionarioDaOcorrencia(funcionarios, oc);
-    setOcorrencias(prev => prev.map(o => o.id === id ? {
+    const resultado = await setOcorrencias(prev => prev.map(o => o.id === id ? {
       ...o,
       status: "Verificado",
       observacaoAdmin: obs || o.observacaoAdmin,
       novo: false,
       atualizadoEm: agora
     } : o));
+    if (avisarFalhaGravacao(resultado, "Falha ao verificar correção")) return; // mantém o modal aberto
     if (func) addNotif({
       id: Date.now(),
       icon: "✅",
@@ -9496,18 +9519,19 @@ function PainelOcorrencias({
     setModal(null);
     setObs("");
   }
-  function rejeitar(id) {
+  async function rejeitar(id) {
     const agora = agoraISO();
     const oc = ocorrencias.find(o => o.id === id);
     if (!oc) return;
     const func = resolverFuncionarioDaOcorrencia(funcionarios, oc);
-    setOcorrencias(prev => prev.map(o => o.id === id ? {
+    const resultado = await setOcorrencias(prev => prev.map(o => o.id === id ? {
       ...o,
       status: "Rejeitado",
       observacaoAdmin: obs,
       novo: false,
       atualizadoEm: agora
     } : o));
+    if (avisarFalhaGravacao(resultado, "Falha ao rejeitar correção")) return; // mantém o modal aberto
     if (func) addNotif({
       id: Date.now(),
       icon: "❌",
@@ -9519,8 +9543,20 @@ function PainelOcorrencias({
     setModal(null);
     setObs("");
   }
-  function excluir(id) {
-    setOcorrencias(prev => prev.filter(o => o.id !== id));
+  async function excluir(id) {
+    const oc = ocorrencias.find(o => o.id === id);
+    const resultado = await excluirOcorrenciasEPrints(setOcorrencias, oc ? [oc] : []);
+    if (resultado && resultado.ok === false) {
+      // Mantém o modal aberto e avisa: antes a tela dava a pendência por excluída mesmo com o banco recusando.
+      addNotif({
+        id: Date.now(),
+        icon: "⚠️",
+        title: "Falha ao excluir pendência",
+        body: resultado.erro || "Não foi possível excluir a pendência no servidor. Tente novamente.",
+        ts: agoraISO()
+      });
+      return;
+    }
     setModal(null);
     setObs("");
   }
@@ -9529,7 +9565,7 @@ function PainelOcorrencias({
   // em pendências de outros meses. Ação destrutiva, por isso passa por
   // modalExcluirTodas (confirmação) antes de rodar.
   async function excluirTodasDoMes() {
-    const idsDoMes = new Set(ocorrenciasDoMes.map(o => o.id));
+    const ocsDoMes = ocorrenciasDoMes.slice();
     setExcluindoTodasDoMes(true);
     // IMPORTANTE: setOcorrencias (useSharedState) retorna uma Promise com
     // { ok, erro } — sem aguardar e checar isso, uma falha no Supabase
@@ -9537,7 +9573,7 @@ function PainelOcorrencias({
     // aplicava o filtro localmente (parecia ter dado certo) mas o banco
     // continuava com os dados antigos, que voltavam no próximo reload ou
     // no polling de 3s do useSharedState.
-    const resultado = await setOcorrencias(prev => prev.filter(o => !idsDoMes.has(o.id)));
+    const resultado = await excluirOcorrenciasEPrints(setOcorrencias, ocsDoMes);
     setExcluindoTodasDoMes(false);
     if (!resultado?.ok) {
       addNotif({
@@ -10637,7 +10673,8 @@ function DuvidasProcessos({ setView }) {
 
 
 // ─── PORTAL DO FUNCIONÁRIO ────────────────────────────────────────────────────
-function PortalFuncionario({
+function PortalFuncionarioConteudo({
+  funcLogado,
   ocorrencias,
   setOcorrencias,
   usuarioLogado,
@@ -10651,28 +10688,6 @@ function PortalFuncionario({
   // Desde a migração de ago/2026, os ids de `funcionarios_administrativo`
   // (UUID) e `funcionarios_comercial` (inteiro) nunca colidem — basta o id.
   const [verTodasNotifs, setVerTodasNotifs] = useState(false);
-  const funcLogado = funcionarios.find(f => f.id === usuarioLogado.funcionario_id) || funcionarios[0];
-  // Conta de teste (ou qualquer cenário sem nenhum funcionário cadastrado):
-  // não há dono do portal para exibir. Em vez de deixar o restante do
-  // componente quebrar tentando ler `funcLogado.id`/`.nome` de undefined
-  // (o que gerava tela em branco), mostra um aviso simples e para aqui.
-  if (!funcLogado) {
-    return /*#__PURE__*/React.createElement("div", {
-      style: {
-        minHeight: "60vh",
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "center",
-        gap: 8,
-        color: "var(--texto-fraco)",
-        fontSize: 13,
-        fontWeight: 500,
-        textAlign: "center",
-        padding: 24
-      }
-    }, /*#__PURE__*/React.createElement("div", { style: { fontSize: 24 } }, "🗂️"), /*#__PURE__*/React.createElement("div", null, "Nenhum funcionário cadastrado neste ambiente."), /*#__PURE__*/React.createElement("div", null, "Esta é uma conta de teste — o Portal fica disponível assim que houver ao menos um funcionário."));
-  }
   // O funcionário pode navegar entre meses (mesFiltro), como no painel do
   // admin. Por padrão começa no mês atual. Pendências/correções ainda em
   // aberto (Pendente ou Corrigido aguardando verificação) continuam visíveis
@@ -10693,6 +10708,19 @@ function PortalFuncionario({
   const [easymobMap, setEasymobMap] = useSharedState(`${SK_EASYMOB}_map`, {}, sessaoPronta, funcLogado.id);
   const [enviandoEasymob, setEnviandoEasymob] = useState(null); // id da ocorrência em envio
   const [erroEasymob, setErroEasymob] = useState(null);
+  // Erro de gravação das ações do funcionário (corrigir, especificar tipo, avisar gestor).
+  // Antes essas ações mostravam sucesso mesmo quando o banco recusava a gravação.
+  const [erroPortal, setErroPortal] = useState("");
+  function falhaPortal(resultado, acao) {
+    if (resultado && resultado.ok === false) {
+      setModal(null);
+      setErroPortal(`Não foi possível ${acao}: ${resultado.erro || "falha ao salvar"}. Verifique sua conexão e tente novamente.`);
+      setTimeout(() => setErroPortal(""), 7000);
+      return true;
+    }
+    setErroPortal("");
+    return false;
+  }
   const [trocandoTipo, setTrocandoTipo] = useState(null); // id da ocorrência com a grade de tipo reaberta
   const easyRef = useRef(null);
   const [previaEasymob, setPreviaEasymob] = useState(null); // { ocId, dataUrl } — imagem escolhida, aguardando confirmação
@@ -10729,12 +10757,12 @@ function PortalFuncionario({
       novoParaFunc: false
     } : o)), 1500);
   }, []);
-  function marcarCorrigido(oc) {
+  async function marcarCorrigido(oc) {
     const agora = agoraISO();
     const ehErroReg = oc.tipo === TIPO_EXIGE_EASYMOB;
     const easymob = easymobMap[`${funcLogado.id}_${oc.id}`];
     if (ehErroReg && !easymob) return;
-    setOcorrencias(prev => prev.map(o => o.id === oc.id ? {
+    const resultado = await setOcorrencias(prev => prev.map(o => o.id === oc.id ? {
       ...o,
       status: "Corrigido",
       resposta: "Corrigido no sistema Vibe.",
@@ -10743,6 +10771,7 @@ function PortalFuncionario({
       novo: true,
       novoParaFunc: false
     } : o));
+    if (falhaPortal(resultado, "enviar a correção")) return;
     addNotif({
       id: Date.now(),
       icon: "✍️",
@@ -10754,19 +10783,21 @@ function PortalFuncionario({
     setSucesso("corrigido");
     setTimeout(() => setSucesso(false), 3500);
   }
-  function especificarTipo(oc, tipoEscolhido) {
+  async function especificarTipo(oc, tipoEscolhido) {
     const agora = agoraISO();
     const eraEspecificacaoInicial = oc.tipo === TIPO_PENDENTE_ESPECIFICACAO;
     const tipoMudouDeExigirEasymob = oc.tipo === TIPO_EXIGE_EASYMOB && tipoEscolhido !== TIPO_EXIGE_EASYMOB;
-    setOcorrencias(prev => prev.map(o => o.id === oc.id ? {
+    const resultado = await setOcorrencias(prev => prev.map(o => o.id === oc.id ? {
       ...o,
       tipo: tipoEscolhido,
       atualizadoEm: agora
     } : o));
+    if (falhaPortal(resultado, "salvar o tipo da pendência")) return;
     // Se o tipo deixou de exigir o print do EasyMob (ex: trocou de "Erro de
     // Registro" para "Esquecimento"), remove o print salvo dessa ocorrência
     // — evita um print "órfão" salvo sem propósito.
     if (tipoMudouDeExigirEasymob) {
+      apagarPrintsDeOcorrencias([{ funcionario_id: funcLogado.id, id: oc.id }]);
       setEasymobMap(prev => {
         const novo = { ...prev };
         delete novo[`${funcLogado.id}_${oc.id}`];
@@ -10838,7 +10869,7 @@ function PortalFuncionario({
       setEnviandoEasymob(null);
     }
   }
-  function criarAvisoGestor({
+  async function criarAvisoGestor({
     tipo,
     data,
     obs
@@ -10862,7 +10893,8 @@ function PortalFuncionario({
       novo: true,
       novoParaFunc: false
     };
-    setOcorrencias(prev => [...prev, oc]);
+    const resultado = await setOcorrencias(prev => [...prev, oc]);
+    if (falhaPortal(resultado, "enviar o aviso ao gestor")) return;
     addNotif({
       id: Date.now(),
       icon: "📢",
@@ -11017,7 +11049,19 @@ function PortalFuncionario({
     type: "button",
     onClick: () => setVerTodasNotifs(v => !v),
     style: { alignSelf: "flex-start", background: "none", border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600, color: "var(--marca-500)", padding: "2px 0" }
-  }, verTodasNotifs ? "Mostrar menos" : `Ver todas (${notifsAtivas.length})`)), sucesso && /*#__PURE__*/React.createElement("div", {
+  }, verTodasNotifs ? "Mostrar menos" : `Ver todas (${notifsAtivas.length})`)), erroPortal && /*#__PURE__*/React.createElement("div", {
+    role: "alert",
+    style: {
+      background: "var(--vermelho-100)",
+      border: "1px solid var(--vermelho-300)",
+      borderRadius: 14,
+      padding: "12px 16px",
+      marginBottom: 16,
+      fontSize: 13,
+      color: "var(--vermelho-600)",
+      fontWeight: 600
+    }
+  }, "⚠️ ", erroPortal), sucesso && /*#__PURE__*/React.createElement("div", {
     style: {
       background: "var(--verde-100)",
       border: "1px solid var(--verde-200)",
@@ -11419,6 +11463,34 @@ const NIVEL_COR = {
   coordenador: { bg: "var(--indigo-100)", texto: "var(--indigo-600)" },
   membro: { bg: "var(--cinza-100)", texto: "var(--cinza-600)" }
 };
+// Resolve de quem é o portal ANTES de montar o conteúdo. Antes, se o cadastro do usuário não estava na
+// lista, o portal caía em `funcionarios[0]` e mostrava (e deixava agir como) outra pessoa; além disso o
+// retorno antecipado ficava antes dos hooks, o que quebra a regra de ordem dos hooks do React.
+// `funcionarioProprio` vem do App já sem o filtro de escopo (um superintendente, por exemplo, não
+// aparece na própria lista filtrada).
+function PortalFuncionario(props) {
+  const { funcionarios = [], usuarioLogado, funcionarioProprio } = props;
+  const funcLogado = funcionarioProprio || funcionarios.find(f => f.id === usuarioLogado?.funcionario_id);
+  if (!funcLogado) {
+    return /*#__PURE__*/React.createElement("div", {
+      style: {
+        minHeight: "60vh",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 8,
+        color: "var(--texto-fraco)",
+        fontSize: 13,
+        fontWeight: 500,
+        textAlign: "center",
+        padding: 24
+      }
+    }, /*#__PURE__*/React.createElement("div", { style: { fontSize: 24 } }, "🗂️"), /*#__PURE__*/React.createElement("div", null, "Não encontramos o seu cadastro de funcionário."), /*#__PURE__*/React.createElement("div", null, "Se você acabou de entrar, aguarde alguns segundos ou recarregue a página. Se continuar assim, avise o administrador."));
+  }
+  return /*#__PURE__*/React.createElement(PortalFuncionarioConteudo, { ...props, funcLogado: funcLogado, key: funcLogado.id });
+}
+
 function normalizarBusca(s) {
   return (s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
 }
@@ -12341,7 +12413,7 @@ function NoRaizAdministrativo({ busca, aberta, onToggle, estadoAberto, onToggleC
 // superintendente/diretor) — mesmo layout de dado (Avatar, Semáforo, badge
 // de situação, botões Ver perfil/Excluir) já usado na tabela plana, só que
 // como uma linha compacta dentro do nó de gerência expandido.
-const LinhaFuncionarioArvore = React.memo(function LinhaFuncionarioArvore({ f, contagens, setFuncSelecionado, setView, somenteLeituraGestor, setConfirmExcluir }) {
+const LinhaFuncionarioArvore = React.memo(function LinhaFuncionarioArvore({ f, contagens, setFuncSelecionado, setView }) {
   const al = getAlert(contagens[f.id].esquecimentos);
   return /*#__PURE__*/React.createElement("div", {
     style: {
@@ -12383,21 +12455,14 @@ const LinhaFuncionarioArvore = React.memo(function LinhaFuncionarioArvore({ f, c
           background: "var(--marca-50)", color: "var(--indigo-500)", border: "none",
           borderRadius: T.raio.sm, padding: `6px ${T.espaco[6]}px`, fontSize: T.fonte.sm, fontWeight: T.peso.forte, cursor: "pointer"
         }
-      }, "Ver perfil"),
-      !somenteLeituraGestor && /*#__PURE__*/React.createElement("button", {
-        onClick: () => setConfirmExcluir(f),
-        style: {
-          background: "var(--vermelho-100)", color: "var(--vermelho-600)", border: "none",
-          borderRadius: T.raio.sm, padding: `6px ${T.espaco[6]}px`, fontSize: T.fonte.sm, fontWeight: T.peso.forte, cursor: "pointer"
-        }
-      }, "Excluir")
+      }, "Ver perfil")
     )
   );
 });
 // Nó de gerência dentro da árvore de "Funcionários" — mesmo padrão visual
 // de CardGerencia, mas listando os vendedores já filtrados (busca/setor/
 // situação) via LinhaFuncionarioArvore em vez de LinhaPessoa.
-function CardGerenciaFuncionarios({ gerencia, aberta, onToggle, contagens, setFuncSelecionado, setView, somenteLeituraGestor, setConfirmExcluir }) {
+function CardGerenciaFuncionarios({ gerencia, aberta, onToggle, contagens, setFuncSelecionado, setView }) {
   return /*#__PURE__*/React.createElement("div", {
     style: { background: "var(--cinza-50)", border: "1px solid var(--cinza-100)", borderRadius: 12, overflow: "hidden" }
   },
@@ -12423,7 +12488,7 @@ function CardGerenciaFuncionarios({ gerencia, aberta, onToggle, contagens, setFu
       gerencia.vendedores.length === 0
         ? /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: "var(--texto-fraco)", padding: "6px 10px" } }, "Nenhum vendedor encontrado nesta gerência.")
         : gerencia.vendedores.map(f => /*#__PURE__*/React.createElement(LinhaFuncionarioArvore, {
-            key: f.id, f, contagens, setFuncSelecionado, setView, somenteLeituraGestor, setConfirmExcluir
+            key: f.id, f, contagens, setFuncSelecionado, setView
           }))
     )
   );
@@ -12431,7 +12496,7 @@ function CardGerenciaFuncionarios({ gerencia, aberta, onToggle, contagens, setFu
 // Nó de diretoria dentro da árvore de "Funcionários" — mesmo padrão visual
 // de NoDiretoria, contendo CardGerenciaFuncionarios por gerência mais um
 // grupo "Sem gerência" para quem reporta direto à diretoria.
-function NoDiretoriaFuncionarios({ diretoria, aberta, onToggle, gerenciasAbertas, onToggleGerencia, contagens, setFuncSelecionado, setView, somenteLeituraGestor, setConfirmExcluir }) {
+function NoDiretoriaFuncionarios({ diretoria, aberta, onToggle, gerenciasAbertas, onToggleGerencia, contagens, setFuncSelecionado, setView }) {
   const totalGerencias = diretoria.gerencias.length;
   return /*#__PURE__*/React.createElement("div", {
     style: { background: "var(--cor-branco)", border: "1px solid var(--cinza-100)", borderRadius: 16, overflow: "hidden", boxShadow: "0 1px 3px var(--sombra-leve)" }
@@ -12461,14 +12526,14 @@ function NoDiretoriaFuncionarios({ diretoria, aberta, onToggle, gerenciasAbertas
         key: g.id, gerencia: g,
         aberta: !!gerenciasAbertas[`g_${g.id}`],
         onToggle: () => onToggleGerencia(`g_${g.id}`),
-        contagens, setFuncSelecionado, setView, somenteLeituraGestor, setConfirmExcluir
+        contagens, setFuncSelecionado, setView
       })),
       diretoria.semGerencia.length > 0 && /*#__PURE__*/React.createElement("div", {
         style: { background: "var(--cinza-50)", border: "1px dashed var(--cinza-200)", borderRadius: 12, padding: "10px 12px" }
       },
         /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, fontWeight: 600, color: "var(--cinza-500)", marginBottom: 6 } }, "Sem gerência — reporta direto à diretoria"),
         diretoria.semGerencia.map(f => /*#__PURE__*/React.createElement(LinhaFuncionarioArvore, {
-          key: f.id, f, contagens, setFuncSelecionado, setView, somenteLeituraGestor, setConfirmExcluir
+          key: f.id, f, contagens, setFuncSelecionado, setView
         }))
       ),
       diretoria.gerencias.length === 0 && diretoria.semGerencia.length === 0 && /*#__PURE__*/React.createElement("div", {
@@ -14780,6 +14845,10 @@ function App() {
     const unificados = [...funcionarios, ...dadosComercial.funcionarios.map(normalizarFuncComercial)];
     return filtrarPorEscopoGestor(unificados, usuario, dadosComercial);
   }, [funcionarios, dadosComercial, usuario]);
+  // Cadastro do próprio usuário, SEM filtro de escopo — usado só pelo "Meu Portal".
+  const funcionarioPortal = useMemo(() => usuario?.funcionario_id == null ? null
+    : [...funcionarios, ...dadosComercial.funcionarios.map(normalizarFuncComercial)].find(f => f.id === usuario.funcionario_id) || null,
+  [funcionarios, dadosComercial, usuario]);
   const ocorrenciasExibidas = ocorrencias;
   const notifsExibidas = notifs;
   // Escopo de relatório — exclusivo do superintendente: um recorte OPCIONAL
@@ -14939,7 +15008,7 @@ function App() {
   // mundo.
   const previewHierarquia = !!usuario?.previewHierarquia;
   function addNotif(n) {
-    setNotifs(prev => [n, ...prev].slice(0, 50));
+    setNotifs(prev => limitarNotifs([n, ...prev]));
     if (!n.paraFunc || isAdmin) {
       const toast = {
         ...n,
@@ -15072,9 +15141,7 @@ ocorrenciasTodasDatas: ocorrenciasRelatorioTodasDatas,
         setView: setView,
         setFuncSelecionado: setFuncSelecionado,
         funcionarios: funcionariosComInativos,
-        setFuncionarios: setFuncionarios,
         ocorrencias: ocorrenciasFiltradas,
-        setOcorrencias: setOcorrencias,
         mesFiltro: mesFiltro,
         setMesFiltro: setMesFiltro,
         usuario: usuario,
@@ -15127,6 +15194,7 @@ ocorrenciasTodasDatas: ocorrenciasRelatorioTodasDatas,
         ocorrencias: ocorrenciasExibidas,
         setOcorrencias: setOcorrencias,
         usuarioLogado: usuario,
+        funcionarioProprio: funcionarioPortal,
         funcionarios: funcionariosExibidos,
         setFuncionarios: setFuncionarios,
         addNotif: addNotif,
@@ -15141,6 +15209,7 @@ ocorrenciasTodasDatas: ocorrenciasRelatorioTodasDatas,
       ocorrencias: ocorrenciasExibidas,
       setOcorrencias: setOcorrencias,
       usuarioLogado: usuario,
+        funcionarioProprio: funcionarioPortal,
       funcionarios: funcionariosExibidos,
       setFuncionarios: setFuncionarios,
       addNotif: addNotif,
