@@ -214,6 +214,10 @@ const _cache = {};
 // Permite gravar SÓ o que mudou e apagar SÓ o que o usuário removeu, em vez de
 // "substituir a tabela" (que apagava registros criados por outras pessoas).
 const _baseServidor = {};
+// A6: cache em memória dos prints do EasyMob (chave -> {u: updated_at, d: imagem}) e
+// flag de que a coluna `updated_at` não existe (então usa a leitura completa).
+const _easymobCache = new Map();
+let _easymobSemUpdatedAt = false;
 
 // ─── PREVIEW DA HIERARQUIA ──────────────────────────────────────────────────
 // Só estes e-mails veem as telas novas da hierarquia comercial (aba Hierarquia)
@@ -313,8 +317,40 @@ async function lerSupa(key, fb, filtroFuncionarioId) {
     // jeito que SK_EASYMOB (chave/valor simples), senão cai no ramo de baixo
     // que espera um array com campo `id`, formato incompatível com a tabela.
     if (key === SK_EASYMOB || key === `${SK_EASYMOB}_map`) {
+      const filtrarPorFunc = filtroFuncionarioId !== undefined && filtroFuncionarioId !== null;
+      // A6: leitura incremental. A cada poll busca só `chave` + `updated_at` (poucos bytes)
+      // e baixa a imagem (`data`) apenas dos prints novos ou alterados. Antes, cada poll
+      // de 3 s baixava TODOS os prints (~460 kB). Exige a coluna `updated_at` (ver
+      // easymob-updated-at.sql); sem ela, cai na leitura completa de sempre.
+      if (!_easymobSemUpdatedAt) {
+        let qMeta = supa.from(table).select("chave,updated_at");
+        if (filtrarPorFunc) qMeta = qMeta.like("chave", `${filtroFuncionarioId}_%`);
+        const { data: metas, error: erroMeta } = await qMeta;
+        if (erroMeta) {
+          _easymobSemUpdatedAt = true; // coluna ausente: usa a leitura completa
+        } else if (Array.isArray(metas)) {
+          const mudadas = metas
+            .filter(m => !_easymobCache.has(m.chave) || _easymobCache.get(m.chave).u !== m.updated_at)
+            .map(m => m.chave);
+          for (let i = 0; i < mudadas.length; i += 20) {
+            const { data: lote, error: erroLote } = await supa
+              .from(table).select("chave,data,updated_at").in("chave", mudadas.slice(i, i + 20));
+            if (erroLote || !Array.isArray(lote)) return fb;
+            lote.forEach(r => _easymobCache.set(r.chave, { u: r.updated_at, d: r.data }));
+          }
+          const vivas = new Set(metas.map(m => m.chave));
+          for (const k of [..._easymobCache.keys()]) if (!vivas.has(k)) _easymobCache.delete(k);
+          const objInc = {};
+          metas.forEach(m => {
+            const c = _easymobCache.get(m.chave);
+            if (c) objInc[m.chave] = c.d;
+          });
+          _baseServidor[`${SK_EASYMOB}_map`] = new Map(Object.entries(objInc).map(([k, v]) => [k, JSON.stringify(v)]));
+          return objInc;
+        }
+      }
       let query = supa.from(table).select("*");
-      if (filtroFuncionarioId !== undefined && filtroFuncionarioId !== null) {
+      if (filtrarPorFunc) {
         // `like` com wildcard no fim: a coluna `chave` é "<func_id>_<oc_id>",
         // então "<func_id>_%" casa só com as linhas deste funcionário.
         query = query.like("chave", `${filtroFuncionarioId}_%`);
