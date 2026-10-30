@@ -9175,7 +9175,8 @@ function BlocoPendenciasRecentes({
   onAcao,
   filtro,
   easymobMap = {},
-  onVerPrint
+  onVerPrint,
+  isAdmin = false
 }) {
   if (itens.length === 0) return null;
   const qtdCorrecao = filtro === "Pendente" ? itens.filter(o => o.status === "Pendente").length : 0;
@@ -9331,12 +9332,12 @@ function BlocoPendenciasRecentes({
         borderRadius: 20,
         fontWeight: 700
       }
-    }, "NOVO")), podeVerif && /*#__PURE__*/React.createElement("div", {
+    }, "NOVO")), (podeVerif || isAdmin) && /*#__PURE__*/React.createElement("div", {
       style: {
         display: "flex",
         gap: 6
       }
-    }, /*#__PURE__*/React.createElement("button", {
+    }, podeVerif && /*#__PURE__*/React.createElement("button", {
       onClick: () => onAcao(o, "verificar"),
       title: "Verificar",
       style: {
@@ -9349,7 +9350,7 @@ function BlocoPendenciasRecentes({
         fontWeight: 700,
         cursor: "pointer"
       }
-    }, "✓"), /*#__PURE__*/React.createElement("button", {
+    }, "✓"), podeVerif && /*#__PURE__*/React.createElement("button", {
       onClick: () => onAcao(o, "rejeitar"),
       title: "Rejeitar",
       style: {
@@ -9362,7 +9363,20 @@ function BlocoPendenciasRecentes({
         fontWeight: 700,
         cursor: "pointer"
       }
-    }, "✕")));
+    }, "✕")), isAdmin && /*#__PURE__*/React.createElement("button", {
+      onClick: () => onAcao(o, "excluir"),
+      title: "Excluir pendência",
+      style: {
+        background: "var(--cinza-100)",
+        color: "var(--texto-fraco)",
+        border: "none",
+        borderRadius: 8,
+        padding: "6px 10px",
+        fontSize: 12,
+        fontWeight: 700,
+        cursor: "pointer"
+      }
+    }, "🗑"));
   })));
 }
 
@@ -9728,6 +9742,7 @@ function PainelOcorrencias({
       funcionarios: funcionarios,
       easymobMap: easymobMap,
       onVerPrint: setVerPrint,
+      isAdmin: isAdmin,
       onAcao: (o, acao) => setModal({ ...o, acao })
     }),
     tabela,
