@@ -7,8 +7,8 @@
   <title>Central de Ponto</title>
   <link rel="icon" type="image/x-icon" href="favicon.ico">
 
-  <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
-  <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/react@18.2.0/umd/react.production.min.js" integrity="sha384-tMH8h3BGESGckSAVGZ82T9n90ztNXxvdwvdM6UoR56cYcf+0iGXBliJ29D+wZ/x8" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/react-dom@18.2.0/umd/react-dom.production.min.js" integrity="sha384-bm7MnzvK++ykSwVJ2tynSE5TRdN+xL418osEVF2DE/L/gfWHj91J2Sphe582B1Bh" crossorigin="anonymous"></script>
   <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js" integrity="sha384-EnyY0/GSHQGSxSgMwaIPzSESbqoOLSexfnSMN2AP+39Ckmn92stwABZynq1JyzdT" crossorigin="anonymous"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js" integrity="sha512-dlPw+ytv/6JyepmelABrgeYgHI0O+frEwgfnPdXDTOIZz+eDgfW07QXG02/O8COfivBdGNINy+Vex+lYmJ5rxw==" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js" integrity="sha384-TcHRA3zBbn+Lexh5n+Oil4guNPOS3rjNDpGRAN46u/s/mB2IZ50ceC6TYDU2yvgK" crossorigin="anonymous"></script>
@@ -386,7 +386,7 @@ async function lerSupa(key, fb, filtroFuncionarioId) {
     // `data` vier null/undefined (erro real). Array vazio é sucesso.
     if (data === null || data === undefined) return fb;
     const result = key === SK_FUNCS ? data : data.map(r => r.data);
-    if (key === SK_OCS || key === SK_NOTIFS) _baseServidor[key] = new Map(result.map(i => [String(i?.id), JSON.stringify(i)]));
+    if (key === SK_OCS || key === SK_NOTIFS || key === SK_FUNCS) _baseServidor[key] = new Map(result.map(i => [String(i?.id), JSON.stringify(i)]));
     _cache[key] = result;
     salvarLS(key, result);
     return result;
@@ -441,17 +441,18 @@ salvarLS(key, val); // cache local imediato
 
     // Para listas: upsert cada item pelo id
     if (!Array.isArray(val)) return { ok: true };
-    // A1 (piloto em ocorrencias): gravação por registro. Upsert só dos itens que mudaram
-    // desde a última leitura/gravação e delete só dos ids que o usuário removeu do estado.
-    if (key === SK_OCS || key === SK_NOTIFS) {
+    // A1: gravação por registro. Upsert só dos itens que mudaram desde a última leitura/gravação
+    // e delete só dos ids que o usuário removeu do estado. Cobre ocorrencias, notificacoes e
+    // funcionarios_administrativo (etapa 2: sem a base lida do servidor, nada é apagado).
+    if (key === SK_OCS || key === SK_NOTIFS || key === SK_FUNCS) {
       const base = _baseServidor[key] || new Map();
       const mudados = val.filter(i => base.get(String(i.id)) !== JSON.stringify(i));
       const idsAtuais = new Set(val.map(i => String(i.id)));
       const removidos = [...base.keys()].filter(id => !idsAtuais.has(id));
       // Itens novos entram com INSERT (só exige a política de insert, importante p/ avisos que o
       // próprio autor não pode ler, ex.: notificação para o admin); os já conhecidos, com upsert.
-      const novos = mudados.filter(i => !base.has(String(i.id)));
-      const alterados = mudados.filter(i => base.has(String(i.id)));
+      const novos = key === SK_FUNCS ? [] : mudados.filter(i => !base.has(String(i.id)));
+      const alterados = key === SK_FUNCS ? mudados : mudados.filter(i => base.has(String(i.id)));
       if (novos.length) {
         const linhas = novos.map(i => ({ id: i.id, data: i }));
         let { error } = await supa.from(table).insert(linhas);
@@ -459,11 +460,11 @@ salvarLS(key, val); // cache local imediato
         if (error) return { ok: false, erro: error.message };
       }
       if (alterados.length) {
-        const { error } = await supa.from(table).upsert(alterados.map(i => ({ id: i.id, data: i })), { onConflict: "id" });
+        const { error } = await supa.from(table).upsert(alterados.map(i => key === SK_FUNCS ? { ...i } : { id: i.id, data: i }), { onConflict: "id" });
         if (error) return { ok: false, erro: error.message };
       }
       if (removidos.length) {
-        const { error } = await supa.from(table).delete().in("id", removidos.map(Number));
+        const { error } = await supa.from(table).delete().in("id", key === SK_FUNCS ? removidos : removidos.map(Number));
         if (error) return { ok: false, erro: error.message };
       }
       const novoBase = new Map(base);
@@ -589,13 +590,12 @@ async function excluirOcorrenciasEPrints(setOcorrencias, ocs) {
 // (supa.auth.getSession(), que decide de forma ASSÍNCRONA se o login é de
 // conta de teste ou real) já terminou. Enquanto ela não terminar, este hook
 // NÃO pode buscar nem cachear dados reais do Supabase — porque, no cenário
-// de navegador limpo + sessão restaurada de conta teste, o componente App()
+// de navegador limpo + sessão restaurada, o componente App()
 // monta e os hooks useSharedState() já disparavam a busca real de forma
 // síncrona/imediata no primeiro render, antes do getSession() assíncrono
-// ainda descobrir e marcar contaTesteAtiva(). O resultado era um "flash" de
-// dados reais e, pior, esses dados reais chegavam a ser gravados em
-// salvarLS(key) e em _cache[key] — poluindo o cache local mesmo depois de a
-// flag de teste ser ativada. Bloquear a leitura/gravação real até
+// ainda ser verificado. O resultado era um "flash" de
+// dados reais e, pior, esses dados chegavam a ser gravados em
+// salvarLS(key) e em _cache[key] antes de a sessão ser validada. Bloquear a leitura/gravação real até
 // sessaoPronta === true elimina essa corrida por completo.
 function useSharedState(key, initial, sessaoPronta, filtroFuncionarioId) {
   const vazio = Array.isArray(initial) ? [] : (initial && typeof initial === "object" ? {} : initial);
@@ -610,11 +610,8 @@ function useSharedState(key, initial, sessaoPronta, filtroFuncionarioId) {
   });
   const loaded = useRef(false);
 
-  // Carga inicial do Supabase — pulada inteiramente em modo teste, e
-  // adiada até a sessão estar verificada (ver comentário acima do hook).
-  // Também repetida quando contaTesteFlag muda para false (ex: logout da
-  // conta teste seguido de login como conta real), garantindo que os
-  // dados reais voltem a ser buscados nesse caso.
+  // Carga inicial do Supabase — adiada até a sessão estar verificada
+  // (ver comentário acima do hook).
   useEffect(() => {
     if (!sessaoPronta) return;
     lerSupa(key, initial, filtroFuncionarioId).then(val => {
@@ -1302,6 +1299,23 @@ const NIVEL_LABEL_FALLBACK_CARGO = {
   admin_coordenador: "Coordenador",
   admin_membro: "Membro"
 };
+// Resolve o funcionário a partir do e-mail autenticado. Usada no login E na restauração de sessão
+// (F5), para que os dois fluxos nunca divirjam (causa do A4). Ordem: lista em memória ->
+// funcionarios_administrativo (leitura direta) -> funcionarios_comercial.
+async function resolverFuncionarioPorEmail(email, emMemoria) {
+  let func = (emMemoria || []).find(f => emailFuncionario(f) === email);
+  if (!func) {
+    try {
+      const atualizados = await lerSupa(SK_FUNCS, FUNCIONARIOS_BASE);
+      func = atualizados.find(f => emailFuncionario(f) === email);
+    } catch (e) { console.error("Resolver funcionário (administrativo):", e); }
+  }
+  if (!func) {
+    const { data: funcComercial } = await supa.from("funcionarios_comercial").select("*").eq("email", email).maybeSingle();
+    if (funcComercial) func = normalizarFuncComercial(funcComercial);
+  }
+  return func;
+}
 function normalizarFuncComercial(fc) {
   return {
     ...fc,
@@ -2567,18 +2581,7 @@ function TelaLogin({
     // só é populada de fato pelo useEffect assíncrono do useSharedState, que
     // pode ainda não ter terminado. Por isso, buscamos a lista mais recente
     // direto do Supabase aqui antes de desistir, evitando essa falsa negativa.
-    let func = funcionarios.find(f => emailFuncionario(f) === email);
-    if (!func) {
-      const funcsAtualizados = await lerSupa(SK_FUNCS, FUNCIONARIOS_BASE);
-      func = funcsAtualizados.find(f => emailFuncionario(f) === email);
-    }
-    // Não achou no administrativo (funcionarios_administrativo): tenta a
-    // hierarquia comercial (funcionarios_comercial), onde estão os 581
-    // vendedores/gestores.
-    if (!func) {
-      const { data: funcComercial } = await supa.from("funcionarios_comercial").select("*").eq("email", email).maybeSingle();
-      if (funcComercial) func = normalizarFuncComercial(funcComercial);
-    }
+    const func = await resolverFuncionarioPorEmail(email, funcionarios);
     if (!func) {
       setErro("Login válido, porém nenhum funcionário corresponde a este e-mail. Avise o administrador.");
       await supa.auth.signOut();
@@ -8147,7 +8150,7 @@ function PerfilFuncionario({
   const [filtroStatus, setFiltroStatus] = useState("Todos");
   const [modalCriar, setModalCriar] = useState(false);
   const [modalEasyMob, setModalEasyMob] = useState(null);
-  // Sem passar sessaoPronta/contaTesteAtivaAgora aqui, o efeito de carga
+  // Sem passar sessaoPronta aqui, o efeito de carga
   // inicial e o polling de 3s dentro de useSharedState nunca disparavam
   // (ambos exigem sessaoPronta truthy) — o admin nunca buscava o print do
   // EasyMob do Supabase, mesmo com o dado já gravado no banco.
@@ -9414,7 +9417,7 @@ function PainelOcorrencias({
   // comentário em App: ocorrenciasRelatorio) — é a base usada tanto para
   // exibir a lista quanto para "Excluir todas do mês".
   const ocorrenciasDoMes = ocorrencias;
-  // Sem sessaoPronta/contaTesteAtivaAgora, a carga inicial e o polling de
+  // Sem sessaoPronta, a carga inicial e o polling de
   // useSharedState nunca disparavam — o print do EasyMob ficava gravado no
   // Supabase mas nunca era buscado para exibição aqui.
   const [easymobMap] = useSharedState(`${SK_EASYMOB}_map`, {}, sessaoPronta);
@@ -10700,7 +10703,7 @@ function PortalFuncionarioConteudo({
   const contagemFunc = contarOcorrencias(ocorrenciasPortal, funcLogado);
   const [modal, setModal] = useState(null);
   const [sucesso, setSucesso] = useState(false);
-  // Sem sessaoPronta/contaTesteAtivaAgora, a carga inicial e o polling de
+  // Sem sessaoPronta, a carga inicial e o polling de
   // useSharedState nunca disparavam para este componente.
   // Filtrado por funcLogado.id: esta é a tela do próprio funcionário, que só
   // precisa (e só deve ver) os próprios prints do EasyMob — não o mapa
@@ -14900,22 +14903,9 @@ function App() {
       if (!ativo) return;
       const email = data?.session?.user?.email;
       if (email) {
-        let func = funcionarios.find(f => emailFuncionario(f) === email);
-        // A4: no F5, `funcionarios` ainda está vazio (sessaoPronta=false no 1º render).
-        // Faz a mesma busca direta do login manual, senão a equipe administrativa
-        // (só em funcionarios_administrativo) seria deslogada ao recarregar.
-        if (!func) {
-          try {
-            const funcsAtualizados = await lerSupa(SK_FUNCS, FUNCIONARIOS_BASE);
-            func = funcsAtualizados.find(f => emailFuncionario(f) === email);
-          } catch (e) { console.error("Restaurar sessão (administrativo):", e); }
-        }
-        // Não achou no administrativo: tenta a hierarquia comercial
-        // (funcionarios_comercial), igual ao fluxo de login.
-        if (!func) {
-          const { data: funcComercial } = await supa.from("funcionarios_comercial").select("*").eq("email", email).maybeSingle();
-          if (funcComercial) func = normalizarFuncComercial(funcComercial);
-        }
+        // A4: no F5, `funcionarios` ainda está vazio (sessaoPronta=false no 1º render); a função
+        // única faz a mesma busca do login (administrativo e comercial).
+        const func = await resolverFuncionarioPorEmail(email, funcionarios);
         if (func && ativo) {
           const nivel = resolverNivel(func);
           setUsuario({
