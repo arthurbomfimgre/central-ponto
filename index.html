@@ -231,6 +231,18 @@ function lerLS(key, fb) {
 function salvarLS(key, val) {
   try { localStorage.setItem(key, JSON.stringify(val)); } catch (_e) {}
 }
+// Apaga o cache local de dados (funcionários, ocorrências, prints, notificações,
+// recados) e o _cache em memória. Chamado ao sair: sem isso, os dados da conta
+// anterior ficam legíveis no navegador (aparelho compartilhado) e podem aparecer
+// para outro usuário caso a leitura do servidor falhe.
+function limparCacheLocal() {
+  try {
+    [SK_OCS, SK_FUNCS, SK_EASYMOB, SK_NOTIFS, SK_RECADOS].forEach(k => {
+      localStorage.removeItem(k);
+      delete _cache[k];
+    });
+  } catch (_e) {}
+}
 
 // Comprime/redimensiona uma imagem (foto do EasyMob) antes de enviar ao
 // Supabase. Fotos de celular sem compressão chegam a vários MB em base64,
@@ -1412,6 +1424,9 @@ const PERMISSOES_PADRAO = {
 // individual na tela de Permissões também libera o acesso normalmente (ver
 // pode() abaixo). Consulte este array só quando quiser ADICIONAR uma conta
 // fixa; para liberar caso a caso, prefira a tela de Permissões.
+// DECISÃO (06/11/2026): regra mantida de propósito. permissoes_excecao.funcionario_id
+// é bigint (só comporta ids de funcionarios_comercial); funcionarios_administrativo
+// usa uuid, então o GRE não pode receber exceção no banco. Não remover.
 const EMAILS_EDITAR_PENDENCIAS_FIXO = ["gre@portovale.com.br"];
 // Carrega `permissoes_papel` do Supabase e devolve `pode(chave)` já
 // resolvido para o nível do usuário logado. admin_geral sempre true, sem
@@ -14792,6 +14807,7 @@ function App() {
     usuarioRef.current = null;
     setAvisoSessao("");
     supa.auth.signOut();
+    limparCacheLocal();
     setUsuario(null);
     setModoRecuperacao(false);
   }
