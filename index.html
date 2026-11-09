@@ -210,10 +210,11 @@ const KEY_TABLE = {
 
 // Cache local para evitar flickering
 const _cache = {};
-// true entre o logout e o próximo login: leituras (inclusive o polling de 3 s e
-// respostas ainda em voo) não podem regravar _cache/localStorage com resposta de
-// sessão anônima. Ligado/desligado pelo efeito em [usuario] do App.
-let _leituraBloqueada = false;
+// true sempre que não há usuário logado (inclusive ao abrir a página, antes do login e
+// após o logout): leituras (polling de 3 s, respostas em voo) e gravações no
+// localStorage não podem ocorrer com sessão anônima, senão recriam as chaves cp_*
+// vazias/antigas. Desligado pelo efeito em [usuario] do App quando há usuário.
+let _leituraBloqueada = true;
 // A1: última versão conhecida de cada registro de `ocorrencias` no servidor (id -> JSON).
 // Permite gravar SÓ o que mudou e apagar SÓ o que o usuário removeu, em vez de
 // "substituir a tabela" (que apagava registros criados por outras pessoas).
@@ -233,6 +234,7 @@ function lerLS(key, fb) {
   try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fb; } catch (_e) { return fb; }
 }
 function salvarLS(key, val) {
+  if (_leituraBloqueada && key !== "cp_tema") return;
   try { localStorage.setItem(key, JSON.stringify(val)); } catch (_e) {}
 }
 // Apaga o cache local de dados (funcionários, ocorrências, prints, notificações,
@@ -14827,7 +14829,12 @@ function App() {
   function sair() {
     usuarioRef.current = null;
     setAvisoSessao("");
-    supa.auth.signOut();
+    // Recarrega a página após encerrar a sessão: zera também os dados em memória
+    // (nada da conta anterior sobra para o próximo login neste navegador).
+    Promise.resolve(supa.auth.signOut()).catch(() => {}).finally(() => {
+      limparCacheLocal();
+      window.location.reload();
+    });
     limparCacheLocal();
     setUsuario(null);
     setModoRecuperacao(false);
