@@ -210,6 +210,10 @@ const KEY_TABLE = {
 
 // Cache local para evitar flickering
 const _cache = {};
+// true entre o logout e o próximo login: leituras (inclusive o polling de 3 s e
+// respostas ainda em voo) não podem regravar _cache/localStorage com resposta de
+// sessão anônima. Ligado/desligado pelo efeito em [usuario] do App.
+let _leituraBloqueada = false;
 // A1: última versão conhecida de cada registro de `ocorrencias` no servidor (id -> JSON).
 // Permite gravar SÓ o que mudou e apagar SÓ o que o usuário removeu, em vez de
 // "substituir a tabela" (que apagava registros criados por outras pessoas).
@@ -321,6 +325,7 @@ async function selecionarTudo(tabela, colunas = "*") {
 // de gestão (admin), que legitimamente precisam ver prints de vários
 // funcionários.
 async function lerSupa(key, fb, filtroFuncionarioId) {
+  if (_leituraBloqueada) return fb;
   try {
     const table = KEY_TABLE[key];
     if (!table) return fb;
@@ -399,6 +404,7 @@ async function lerSupa(key, fb, filtroFuncionarioId) {
     if (data === null || data === undefined) return fb;
     const result = key === SK_FUNCS ? data : data.map(r => r.data);
     if (key === SK_OCS || key === SK_NOTIFS || key === SK_FUNCS) _baseServidor[key] = new Map(result.map(i => [String(i?.id), JSON.stringify(i)]));
+    if (_leituraBloqueada) return fb; // logout ocorreu durante a leitura
     _cache[key] = result;
     salvarLS(key, result);
     return result;
@@ -14759,6 +14765,21 @@ function App() {
   const [menuMobileAberto, setMenuMobileAberto] = useState(false);
   const [usuario, setUsuario] = useState(null);
   const [verificandoSessao, setVerificandoSessao] = useState(true);
+  // Logout (ou sessão encerrada em outra aba): bloqueia leituras e apaga o cache
+  // local. No próximo login libera e força uma releitura imediata.
+  const usuarioAnteriorRef = useRef(null);
+  useEffect(() => {
+    if (usuario) {
+      if (_leituraBloqueada) {
+        _leituraBloqueada = false;
+        try { document.dispatchEvent(new Event("visibilitychange")); } catch (_e) {}
+      }
+    } else if (usuarioAnteriorRef.current) {
+      _leituraBloqueada = true;
+      limparCacheLocal();
+    }
+    usuarioAnteriorRef.current = usuario;
+  }, [usuario]);
   // Quando o usuário clica no link de "redefinir senha" recebido por e-mail,
   // o Supabase Auth cria uma sessão temporária e dispara o evento
   // PASSWORD_RECOVERY. Capturamos isso para mostrar a tela de nova senha em
