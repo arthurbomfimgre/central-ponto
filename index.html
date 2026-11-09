@@ -1323,16 +1323,29 @@ const NIVEL_LABEL_FALLBACK_CARGO = {
 // (F5), para que os dois fluxos nunca divirjam (causa do A4). Ordem: lista em memória ->
 // funcionarios_administrativo (leitura direta) -> funcionarios_comercial.
 async function resolverFuncionarioPorEmail(email, emMemoria) {
-  let func = (emMemoria || []).find(f => emailFuncionario(f) === email);
-  if (!func) {
-    try {
-      const atualizados = await lerSupa(SK_FUNCS, FUNCIONARIOS_BASE);
-      func = atualizados.find(f => emailFuncionario(f) === email);
-    } catch (e) { console.error("Resolver funcionário (administrativo):", e); }
-  }
-  if (!func) {
-    const { data: funcComercial } = await supa.from("funcionarios_comercial").select("*").eq("email", email).maybeSingle();
-    if (funcComercial) func = normalizarFuncComercial(funcComercial);
+  // Só é chamada com sessão autenticada (login ou F5). Como `usuario` ainda é null
+  // nesse momento, a leitura estaria bloqueada e lerSupa devolveria a lista vazia;
+  // por isso libera aqui e volta a bloquear se o funcionário não for encontrado.
+  const estavaBloqueada = _leituraBloqueada;
+  _leituraBloqueada = false;
+  let func;
+  try {
+    func = (emMemoria || []).find(f => emailFuncionario(f) === email);
+    if (!func) {
+      try {
+        const atualizados = await lerSupa(SK_FUNCS, FUNCIONARIOS_BASE);
+        func = atualizados.find(f => emailFuncionario(f) === email);
+      } catch (e) { console.error("Resolver funcionário (administrativo):", e); }
+    }
+    if (!func) {
+      const { data: funcComercial } = await supa.from("funcionarios_comercial").select("*").eq("email", email).maybeSingle();
+      if (funcComercial) func = normalizarFuncComercial(funcComercial);
+    }
+  } finally {
+    if (!func && estavaBloqueada) {
+      _leituraBloqueada = true;
+      limparCacheLocal();
+    }
   }
   return func;
 }
